@@ -38,12 +38,16 @@ export function AddAssessmentDialog({
   const [isCorrect, setIsCorrect] = useState<boolean | null>(null)
   const [date, setDate] = useState(today())
   const [note, setNote] = useState('')
+  const [direction, setDirection] = useState<'long' | 'short' | null>(null)
+  const [elliottCount, setElliottCount] = useState('')
   const [loading, setLoading] = useState(false)
 
   const reset = () => {
     setIsCorrect(null)
     setDate(today())
     setNote('')
+    setDirection(null)
+    setElliottCount('')
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -59,6 +63,8 @@ export function AddAssessmentDialog({
         isCorrect,
         note,
         assessmentDate: new Date(date).toISOString(),
+        predictedDirection: direction,
+        elliottCount,
       })
       toast.success('Einschätzung erfasst')
       reset()
@@ -117,6 +123,48 @@ export function AddAssessmentDialog({
               <X className="size-6" />
               <span className="text-sm font-medium">Falsch</span>
             </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col gap-2">
+              <Label>Richtung (optional)</Label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDirection((d) => (d === 'long' ? null : 'long'))}
+                  className={cn(
+                    'rounded-lg border py-2 font-mono text-xs uppercase transition-colors',
+                    direction === 'long'
+                      ? 'border-positive/50 bg-positive/10 text-positive'
+                      : 'border-border text-muted-foreground',
+                  )}
+                >
+                  Long
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDirection((d) => (d === 'short' ? null : 'short'))}
+                  className={cn(
+                    'rounded-lg border py-2 font-mono text-xs uppercase transition-colors',
+                    direction === 'short'
+                      ? 'border-negative/50 bg-negative/10 text-negative'
+                      : 'border-border text-muted-foreground',
+                  )}
+                >
+                  Short
+                </button>
+              </div>
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="assessment-elliott">Wellenzählung (optional)</Label>
+              <Input
+                id="assessment-elliott"
+                value={elliottCount}
+                onChange={(e) => setElliottCount(e.target.value)}
+                placeholder="z. B. Welle 3 von (3)"
+                className="font-mono"
+              />
+            </div>
           </div>
 
           <div className="flex flex-col gap-2">

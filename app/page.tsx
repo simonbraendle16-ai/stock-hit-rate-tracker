@@ -1,81 +1,112 @@
 import { auth } from '@/lib/auth'
 import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
+import Link from 'next/link'
+import { getDisciplineStats, getUnifiedHitRateTimeline, listTrades } from '@/app/actions/trades'
+import { CockpitHeader } from '@/components/cockpit-header'
 import {
-  getOverallStats,
-  getStocksWithStats,
-  getHitRateTimeline,
-} from '@/app/actions/stocks'
-import { SignOutButton } from '@/components/sign-out-button'
-import { StatCards } from '@/components/stat-cards'
-import { DistributionChart } from '@/components/distribution-chart'
+  DisciplineBar,
+  CockpitStats,
+  FiveBeliefs,
+} from '@/components/discipline-overview'
+import { DouglasQuote } from '@/components/douglas-quote'
+import { RiskCalculator } from '@/components/risk-calculator'
 import { HitRateTimeline } from '@/components/hitrate-timeline'
-import { StockRanking } from '@/components/stock-ranking'
-import { AddStockDialog } from '@/components/add-stock-dialog'
-import { TrendingUp } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Plus, ArrowUpRight, ArrowDownRight } from 'lucide-react'
 
-export default async function DashboardPage() {
+export default async function CockpitPage() {
   const session = await auth.api.getSession({ headers: await headers() })
   if (!session?.user) redirect('/sign-in')
 
-  const [stats, stocks, timeline] = await Promise.all([
-    getOverallStats(),
-    getStocksWithStats(),
-    getHitRateTimeline(),
+  const [stats, timeline, trades] = await Promise.all([
+    getDisciplineStats(),
+    getUnifiedHitRateTimeline(),
+    listTrades(),
   ])
+  const recent = trades.slice(0, 6)
 
   return (
     <div className="min-h-svh bg-background">
-      <header className="border-b border-border bg-card/60 backdrop-blur-sm sticky top-0 z-10">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 sm:px-6">
-          <div className="flex items-center gap-3">
-            <div className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-              <TrendingUp className="size-5" />
-            </div>
-            <div>
-              <h1 className="text-sm font-semibold leading-tight text-foreground font-heading">
-                Trefferquote
-              </h1>
-              <p className="text-xs text-muted-foreground leading-tight">
-                Aktienanalyse-Bilanz
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="hidden text-sm text-muted-foreground sm:inline">
-              {session.user.name || session.user.email}
-            </span>
-            <SignOutButton />
-          </div>
-        </div>
-      </header>
-
+      <CockpitHeader userLabel={session.user.name || session.user.email} />
       <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
-        <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+        <div className="mb-6 flex items-end justify-between gap-3">
           <div>
-            <h2 className="text-balance text-xl font-semibold tracking-tight text-foreground font-heading sm:text-2xl">
-              Übersicht
+            <h2 className="font-heading text-xl font-bold tracking-widest text-foreground sm:text-2xl">
+              COCKPIT
             </h2>
-            <p className="text-pretty text-sm text-muted-foreground">
-              Deine Analyse-Bilanz auf einen Blick.
+            <p className="mt-1 font-mono text-xs text-muted-foreground">
+              Handle deinen Plan, nicht deine Emotion.
             </p>
           </div>
-          <AddStockDialog />
+          <Link href="/trades/new">
+            <Button className="btn-teal-glow font-mono text-xs">
+              <Plus className="size-4" /> Neuer Trade
+            </Button>
+          </Link>
         </div>
 
-        <StatCards stats={stats} />
-
-        <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           <div className="lg:col-span-2">
-            <HitRateTimeline data={timeline} />
+            <DisciplineBar stats={stats} />
           </div>
           <div className="lg:col-span-1">
-            <DistributionChart correct={stats.correct} wrong={stats.wrong} />
+            <DouglasQuote />
           </div>
         </div>
 
-        <div className="mt-6">
-          <StockRanking stocks={stocks} />
+        <div className="mt-4">
+          <CockpitStats stats={stats} />
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <div className="space-y-4 lg:col-span-2">
+            <HitRateTimeline data={timeline} />
+            <RiskCalculator />
+          </div>
+          <div className="lg:col-span-1">
+            <FiveBeliefs />
+          </div>
+        </div>
+
+        {/* Letzte Trades */}
+        <div className="mt-4 glass-card p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+              Letzte Trades
+            </p>
+            <Link href="/trades" className="font-mono text-[11px] text-primary hover:underline">
+              Alle ansehen
+            </Link>
+          </div>
+          {recent.length === 0 ? (
+            <p className="font-mono text-xs text-muted-foreground">
+              Noch keine Trades — plane deinen ersten.
+            </p>
+          ) : (
+            <div className="divide-y divide-border">
+              {recent.map((t) => (
+                <Link
+                  key={t.id}
+                  href={`/trades/${t.id}`}
+                  className="flex items-center justify-between gap-3 py-2 font-mono text-xs hover:text-primary"
+                >
+                  <span className="flex items-center gap-2">
+                    {t.direction === 'long' ? (
+                      <ArrowUpRight className="size-3.5 text-positive" />
+                    ) : (
+                      <ArrowDownRight className="size-3.5 text-destructive" />
+                    )}
+                    <span className="font-bold text-foreground">{t.ticker}</span>
+                  </span>
+                  <span className="uppercase tracking-widest text-muted-foreground">
+                    {t.status}
+                    {t.result ? ` · ${t.result}` : ''}
+                  </span>
+                </Link>
+              ))}
+            </div>
+          )}
         </div>
       </main>
     </div>

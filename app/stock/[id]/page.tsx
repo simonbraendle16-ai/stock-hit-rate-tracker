@@ -3,12 +3,13 @@ import { headers } from 'next/headers'
 import { redirect, notFound } from 'next/navigation'
 import Link from 'next/link'
 import { getStockDetail } from '@/app/actions/stocks'
-import { SignOutButton } from '@/components/sign-out-button'
+import { getInstrumentTrades } from '@/app/actions/trades'
+import { CockpitHeader } from '@/components/cockpit-header'
 import { DistributionChart } from '@/components/distribution-chart'
 import { HitRateTimeline } from '@/components/hitrate-timeline'
 import { AssessmentList } from '@/components/assessment-list'
 import { Badge } from '@/components/ui/badge'
-import { ArrowLeft, TrendingUp } from 'lucide-react'
+import { ArrowLeft, ArrowUpRight, ArrowDownRight } from 'lucide-react'
 
 export default async function StockDetailPage({
   params,
@@ -22,59 +23,40 @@ export default async function StockDetailPage({
   const stockId = Number(id)
   if (!Number.isInteger(stockId)) notFound()
 
-  const detail = await getStockDetail(stockId)
+  const [detail, trades] = await Promise.all([
+    getStockDetail(stockId),
+    getInstrumentTrades(stockId),
+  ])
   if (!detail) notFound()
 
   const hasData = detail.total > 0
 
   return (
     <div className="min-h-svh bg-background">
-      <header className="border-b border-border bg-card/60 backdrop-blur-sm sticky top-0 z-10">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 sm:px-6">
-          <div className="flex items-center gap-3">
-            <Link
-              href="/"
-              className="flex size-9 items-center justify-center rounded-lg border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              aria-label="Zurück zur Übersicht"
-            >
-              <ArrowLeft className="size-5" />
-            </Link>
-            <div className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-              <TrendingUp className="size-5" />
-            </div>
-            <div>
-              <h1 className="text-sm font-semibold leading-tight text-foreground font-heading">
-                Trefferquote
-              </h1>
-              <p className="text-xs text-muted-foreground leading-tight">
-                Aktienanalyse-Bilanz
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="hidden text-sm text-muted-foreground sm:inline">
-              {session.user.name || session.user.email}
-            </span>
-            <SignOutButton />
-          </div>
-        </div>
-      </header>
+      <CockpitHeader userLabel={session.user.name || session.user.email} />
 
       <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
+        <Link
+          href="/analysis"
+          className="mb-4 inline-flex items-center gap-1 font-mono text-xs text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft className="size-3" /> Zurück zur Analyse
+        </Link>
+
         <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-balance text-xl font-semibold tracking-tight text-foreground font-heading sm:text-2xl">
+              <h2 className="font-heading text-xl font-bold tracking-widest text-foreground sm:text-2xl">
                 {detail.name}
               </h2>
               <Badge variant="secondary" className="font-mono text-[10px]">
                 {detail.ticker}
               </Badge>
             </div>
-            <p className="text-pretty text-sm text-muted-foreground">
+            <p className="mt-1 font-mono text-xs text-muted-foreground">
               {hasData
-                ? `${detail.hitRate.toFixed(0)}% Trefferquote über ${detail.total} Einschätzung${detail.total === 1 ? '' : 'en'}.`
-                : 'Noch keine Einschätzungen erfasst.'}
+                ? `${detail.hitRate.toFixed(0)}% Trefferquote über ${detail.total} Prognose${detail.total === 1 ? '' : 'n'} · ${trades.length} echte Trade${trades.length === 1 ? '' : 's'}.`
+                : `Noch keine Prognosen · ${trades.length} echte Trade${trades.length === 1 ? '' : 's'}.`}
             </p>
           </div>
         </div>
@@ -86,6 +68,45 @@ export default async function StockDetailPage({
           <div className="lg:col-span-1">
             <DistributionChart correct={detail.correct} wrong={detail.wrong} />
           </div>
+        </div>
+
+        {/* Echte Trades zu diesem Instrument */}
+        <div className="mt-6 glass-card p-4">
+          <p className="mb-3 font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+            Echte Trades zu diesem Instrument
+          </p>
+          {trades.length === 0 ? (
+            <p className="font-mono text-xs text-muted-foreground">
+              Noch keine Trades — nur Prognosen.{' '}
+              <Link href="/trades/new" className="text-primary hover:underline">
+                Trade planen
+              </Link>
+            </p>
+          ) : (
+            <div className="divide-y divide-border">
+              {trades.map((t) => (
+                <Link
+                  key={t.id}
+                  href={`/trades/${t.id}`}
+                  className="flex items-center justify-between gap-3 py-2 font-mono text-xs hover:text-primary"
+                >
+                  <span className="flex items-center gap-2">
+                    {t.direction === 'long' ? (
+                      <ArrowUpRight className="size-3.5 text-positive" />
+                    ) : (
+                      <ArrowDownRight className="size-3.5 text-destructive" />
+                    )}
+                    <span className="font-bold text-foreground">{t.ticker}</span>
+                    <span className="text-muted-foreground">@ {t.entryPrice}</span>
+                  </span>
+                  <span className="uppercase tracking-widest text-muted-foreground">
+                    {t.status}
+                    {t.result ? ` · ${t.result}` : ''}
+                  </span>
+                </Link>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="mt-6">

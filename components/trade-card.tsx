@@ -1,0 +1,364 @@
+'use client'
+
+import { useState } from 'react'
+import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import type { TradeRow } from '@/app/actions/trades'
+import {
+  activateTrade,
+  abortTrade,
+  closeTrade,
+  deleteTrade,
+} from '@/app/actions/trades'
+import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import {
+  ArrowDownRight,
+  ArrowUpRight,
+  Lock,
+  Play,
+  Trash2,
+  Waves,
+  X,
+} from 'lucide-react'
+import { toast } from 'sonner'
+import { cn } from '@/lib/utils'
+
+const statusStyle: Record<string, string> = {
+  geplant: 'border-warning/40 bg-warning/10 text-warning',
+  aktiv: 'border-primary/40 bg-primary/10 text-primary',
+  abgeschlossen: 'border-positive/40 bg-positive/10 text-positive',
+  abgebrochen: 'border-border bg-muted/30 text-muted-foreground',
+}
+
+const resultStyle: Record<string, string> = {
+  gewinn: 'text-positive',
+  verlust: 'text-destructive',
+  breakeven: 'text-muted-foreground',
+}
+
+export function TradeCard({ t }: { t: TradeRow }) {
+  const router = useRouter()
+  const [busy, setBusy] = useState(false)
+  const [closeOpen, setCloseOpen] = useState(false)
+
+  const run = async (fn: () => Promise<unknown>, ok: string) => {
+    setBusy(true)
+    try {
+      await fn()
+      toast.success(ok)
+      router.refresh()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Fehler')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const isLong = t.direction === 'long'
+
+  return (
+    <div className="glass-card p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <span
+            className={cn(
+              'flex size-8 items-center justify-center rounded-lg',
+              isLong ? 'bg-positive/15 text-positive' : 'bg-destructive/15 text-destructive',
+            )}
+          >
+            {isLong ? <ArrowUpRight className="size-4" /> : <ArrowDownRight className="size-4" />}
+          </span>
+          <div>
+            <Link
+              href={`/trades/${t.id}`}
+              className="font-heading text-base font-bold tracking-wide text-foreground hover:text-primary"
+            >
+              {t.ticker}
+            </Link>
+            <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+              {t.direction} · {t.market}
+            </p>
+          </div>
+        </div>
+        <span
+          className={cn(
+            'rounded-md border px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest',
+            statusStyle[t.status],
+          )}
+        >
+          {t.status}
+        </span>
+      </div>
+
+      <div className="mt-3 grid grid-cols-3 gap-2 font-mono text-xs">
+        <Stat label="Entry" value={t.entryPrice} />
+        <Stat label="Stop" value={t.stopLoss} tone="neg" />
+        <Stat label="Ziel" value={t.takeProfit} tone="pos" />
+      </div>
+
+      {(t.elliottWaveCount || t.waveDegree) && (
+        <div className="mt-2 flex items-center gap-1.5 font-mono text-[11px] text-primary/80">
+          <Waves className="size-3" />
+          {[t.waveDegree, t.elliottWaveCount].filter(Boolean).join(' · ')}
+        </div>
+      )}
+
+      {t.status === 'abgeschlossen' && t.result && (
+        <p className={cn('mt-2 font-mono text-xs font-bold uppercase', resultStyle[t.result])}>
+          Ergebnis: {t.result}
+          {t.followedPlan ? ' · Plan befolgt ✓' : ' · Plan abgewichen ✗'}
+        </p>
+      )}
+
+      {/* Aktionen */}
+      <div className="mt-4 flex flex-wrap gap-2">
+        {t.status === 'geplant' && (
+          <>
+            <Button
+              size="sm"
+              disabled={busy || !t.preTradeAnswered}
+              onClick={() =>
+                run(async () => {
+                  const { revengeWarning } = await activateTrade(t.id)
+                  if (revengeWarning)
+                    toast.warning('Revenge-Guard: kurz nach einem Verlust — handelst du den Plan oder die Wut?')
+                }, 'Trade aktiviert.')
+              }
+              className="btn-teal-glow font-mono text-xs"
+            >
+              <Play className="size-3" /> Aktivieren
+            </Button>
+            {!t.preTradeAnswered && (
+              <span className="flex items-center gap-1 font-mono text-[10px] text-warning">
+                <Lock className="size-3" /> Erst die 4 Fragen
+              </span>
+            )}
+          </>
+        )}
+        {t.status === 'aktiv' && (
+          <>
+            <Button
+              size="sm"
+              disabled={busy}
+              onClick={() => setCloseOpen(true)}
+              className="btn-teal-glow font-mono text-xs"
+            >
+              Abschließen
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              onClick={() => run(() => abortTrade(t.id), 'Trade abgebrochen.')}
+              className="font-mono text-xs"
+            >
+              <X className="size-3" /> Abbrechen
+            </Button>
+          </>
+        )}
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={busy}
+          onClick={() => run(() => deleteTrade(t.id), 'Trade gelöscht.')}
+          className="ml-auto font-mono text-xs text-muted-foreground"
+        >
+          <Trash2 className="size-3" />
+        </Button>
+      </div>
+
+      <CloseDialog trade={t} open={closeOpen} onOpenChange={setCloseOpen} onDone={() => router.refresh()} />
+    </div>
+  )
+}
+
+function Stat({
+  label,
+  value,
+  tone,
+}: {
+  label: string
+  value: number | null
+  tone?: 'pos' | 'neg'
+}) {
+  return (
+    <div className="rounded-md border border-border bg-background/40 px-2 py-1.5">
+      <p className="text-[9px] uppercase tracking-widest text-muted-foreground">{label}</p>
+      <p
+        className={cn(
+          'font-bold',
+          tone === 'pos' && 'text-positive',
+          tone === 'neg' && 'text-destructive',
+        )}
+      >
+        {value != null ? value : '—'}
+      </p>
+    </div>
+  )
+}
+
+function CloseDialog({
+  trade,
+  open,
+  onOpenChange,
+  onDone,
+}: {
+  trade: TradeRow
+  open: boolean
+  onOpenChange: (v: boolean) => void
+  onDone: () => void
+}) {
+  const [result, setResult] = useState<'gewinn' | 'verlust' | 'breakeven'>('gewinn')
+  const [exit, setExit] = useState('')
+  const [followed, setFollowed] = useState(true)
+  const [accepted, setAccepted] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  const submit = async () => {
+    if (result === 'verlust' && !accepted) {
+      toast.error('Bitte den Verlust bewusst akzeptieren.')
+      return
+    }
+    setBusy(true)
+    try {
+      await closeTrade(trade.id, {
+        result,
+        actualExitPrice: exit ? parseFloat(exit) : null,
+        followedPlan: followed,
+        lossAccepted: accepted,
+      })
+      toast.success('Trade abgeschlossen.')
+      onOpenChange(false)
+      onDone()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Fehler')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="font-heading tracking-wide">
+            {trade.ticker} abschließen
+          </DialogTitle>
+          <DialogDescription className="font-mono text-xs">
+            Erfasse Ergebnis und ob du deinen Plan befolgt hast.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex flex-col gap-4">
+          <div className="space-y-2">
+            <Label className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+              Ergebnis
+            </Label>
+            <div className="grid grid-cols-3 gap-2">
+              {(['gewinn', 'verlust', 'breakeven'] as const).map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  onClick={() => setResult(r)}
+                  className={cn(
+                    'rounded-lg border py-2 font-mono text-xs uppercase transition-all',
+                    result === r
+                      ? r === 'gewinn'
+                        ? 'border-positive/40 bg-positive/15 text-positive'
+                        : r === 'verlust'
+                          ? 'border-destructive/40 bg-destructive/15 text-destructive'
+                          : 'border-primary/40 bg-primary/10 text-primary'
+                      : 'border-border text-muted-foreground',
+                  )}
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+              Ausstiegskurs
+            </Label>
+            <Input
+              type="number"
+              step="any"
+              value={exit}
+              onChange={(e) => setExit(e.target.value)}
+              placeholder="0.00"
+              className="input-ocean font-mono"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+              Plan befolgt?
+            </Label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setFollowed(true)}
+                className={cn(
+                  'rounded-lg border py-2 font-mono text-xs uppercase',
+                  followed
+                    ? 'border-positive/40 bg-positive/15 text-positive'
+                    : 'border-border text-muted-foreground',
+                )}
+              >
+                Ja, diszipliniert
+              </button>
+              <button
+                type="button"
+                onClick={() => setFollowed(false)}
+                className={cn(
+                  'rounded-lg border py-2 font-mono text-xs uppercase',
+                  !followed
+                    ? 'border-destructive/40 bg-destructive/15 text-destructive'
+                    : 'border-border text-muted-foreground',
+                )}
+              >
+                Nein, abgewichen
+              </button>
+            </div>
+          </div>
+
+          {result === 'verlust' && (
+            <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3">
+              <input
+                type="checkbox"
+                checked={accepted}
+                onChange={(e) => setAccepted(e.target.checked)}
+                className="mt-0.5 accent-[var(--primary)]"
+              />
+              <span className="font-mono text-[11px] text-foreground">
+                „Meine Zählung war für diesen Trade falsch. Der nächste Trade zählt." — Ich
+                akzeptiere den Verlust vollständig.
+              </span>
+            </label>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button
+            onClick={submit}
+            disabled={busy}
+            className="btn-teal-glow w-full font-mono text-sm font-bold tracking-wider sm:w-auto"
+          >
+            {busy ? 'WIRD GESPEICHERT…' : 'ABSCHLIESSEN'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}

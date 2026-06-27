@@ -167,6 +167,8 @@ export async function addAssessment(formData: {
   isCorrect: boolean
   note?: string
   assessmentDate?: string // ISO date string
+  predictedDirection?: 'long' | 'short' | null
+  elliottCount?: string | null
 }): Promise<void> {
   const userId = await getUserId()
 
@@ -183,6 +185,8 @@ export async function addAssessment(formData: {
     stockId: formData.stockId,
     isCorrect: formData.isCorrect,
     note: formData.note?.trim() || null,
+    predictedDirection: formData.predictedDirection ?? null,
+    elliottCount: formData.elliottCount?.trim() || null,
     assessmentDate: formData.assessmentDate
       ? new Date(formData.assessmentDate)
       : new Date(),

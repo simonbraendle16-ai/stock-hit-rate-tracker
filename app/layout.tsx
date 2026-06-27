@@ -1,19 +1,27 @@
 import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
-import { Geist, Geist_Mono } from 'next/font/google'
+import { Orbitron, Space_Grotesk, JetBrains_Mono } from 'next/font/google'
 import { Toaster } from '@/components/ui/sonner'
 import './globals.css'
 
-const geistSans = Geist({ variable: '--font-geist-sans', subsets: ['latin'] })
-const geistMono = Geist_Mono({
-  variable: '--font-geist-mono',
+const orbitron = Orbitron({
+  variable: '--font-orbitron',
+  subsets: ['latin'],
+  weight: ['600', '700', '900'],
+})
+const spaceGrotesk = Space_Grotesk({
+  variable: '--font-space-grotesk',
+  subsets: ['latin'],
+})
+const jetbrainsMono = JetBrains_Mono({
+  variable: '--font-jetbrains-mono',
   subsets: ['latin'],
 })
 
 export const metadata: Metadata = {
-  title: 'Trefferquote – Aktienanalyse-Bilanz',
+  title: 'Trading Cockpit – Disziplin & Trefferquote',
   description:
-    'Tracke deine Trefferquote bei der Aktienanalyse: richtig vs. falsch, Ranking und Verlauf.',
+    'Plane Trades nach Elliott-Wellen, führe sie diszipliniert nach Mark Douglas aus und tracke Disziplin-Score, Trefferquote und Erwartungswert.',
   generator: 'v0.app',
   icons: {
     icon: [
@@ -50,7 +58,7 @@ export default function RootLayout({
   return (
     <html
       lang="de"
-      className={`light ${geistSans.variable} ${geistMono.variable} bg-background`}
+      className={`dark ${orbitron.variable} ${spaceGrotesk.variable} ${jetbrainsMono.variable} bg-background`}
     >
       <body className="font-sans antialiased">
         {children}
