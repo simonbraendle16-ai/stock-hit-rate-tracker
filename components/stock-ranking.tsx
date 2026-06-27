@@ -2,13 +2,14 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { Card } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
+import { Button, buttonVariants } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import type { StockWithStats } from '@/app/actions/stocks'
 import { AddAssessmentDialog } from '@/components/add-assessment-dialog'
 import { deleteStock } from '@/app/actions/stocks'
-import { BarChart3, Plus, Trash2, Trophy } from 'lucide-react'
+import { BarChart3, Eye, Plus, Trash2, Trophy } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 
@@ -129,6 +130,13 @@ export function StockRanking({ stocks }: { stocks: StockWithStats[] }) {
                     </span>
                   </span>
                   <div className="flex items-center gap-1">
+                    <Link
+                      href={`/stock/${stock.id}`}
+                      className={buttonVariants({ size: 'sm', variant: 'outline' })}
+                    >
+                      <Eye className="size-3.5" />
+                      <span className="hidden sm:inline">Details</span>
+                    </Link>
                     <Button
                       size="sm"
                       variant="outline"

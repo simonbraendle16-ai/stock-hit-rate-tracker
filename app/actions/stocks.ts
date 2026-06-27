@@ -201,6 +201,94 @@ export async function getAssessmentsForStock(stockId: number) {
     .orderBy(asc(assessment.assessmentDate))
 }
 
+export type AssessmentEntry = {
+  id: number
+  isCorrect: boolean
+  note: string | null
+  assessmentDate: string // ISO date
+}
+
+export type StockDetail = {
+  id: number
+  name: string
+  ticker: string
+  createdAt: string // ISO date
+  correct: number
+  wrong: number
+  total: number
+  hitRate: number // 0-100
+  timeline: TimelinePoint[]
+  assessments: AssessmentEntry[]
+}
+
+/** Full detail for a single stock: stats, per-stock hit-rate timeline and all entries. */
+export async function getStockDetail(
+  stockId: number,
+): Promise<StockDetail | null> {
+  const userId = await getUserId()
+
+  const [owned] = await db
+    .select()
+    .from(stock)
+    .where(and(eq(stock.id, stockId), eq(stock.userId, userId)))
+
+  if (!owned) return null
+
+  const rows = await db
+    .select()
+    .from(assessment)
+    .where(and(eq(assessment.stockId, stockId), eq(assessment.userId, userId)))
+    .orderBy(asc(assessment.assessmentDate), asc(assessment.id))
+
+  let correct = 0
+  let wrong = 0
+  const timeline: TimelinePoint[] = []
+  const assessments: AssessmentEntry[] = []
+
+  for (const a of rows) {
+    if (a.isCorrect) correct++
+    else wrong++
+    const total = correct + wrong
+    const d = new Date(a.assessmentDate)
+    timeline.push({
+      date: d.toISOString(),
+      label: d.toLocaleDateString('de-DE', {
+        day: '2-digit',
+        month: '2-digit',
+        year: '2-digit',
+      }),
+      hitRate: (correct / total) * 100,
+      correct,
+      wrong,
+    })
+    assessments.push({
+      id: a.id,
+      isCorrect: a.isCorrect,
+      note: a.note,
+      assessmentDate: d.toISOString(),
+    })
+  }
+
+  // Newest entries first for the list view.
+  assessments.reverse()
+
+  const total = correct + wrong
+  const hitRate = total > 0 ? (correct / total) * 100 : 0
+
+  return {
+    id: owned.id,
+    name: owned.name,
+    ticker: owned.ticker,
+    createdAt: new Date(owned.createdAt).toISOString(),
+    correct,
+    wrong,
+    total,
+    hitRate,
+    timeline,
+    assessments,
+  }
+}
+
 /** Delete a single assessment. */
 export async function deleteAssessment(id: number): Promise<void> {
   const userId = await getUserId()
