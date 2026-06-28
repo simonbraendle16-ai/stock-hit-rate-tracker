@@ -9,6 +9,7 @@ import {
 import { CockpitHeader } from '@/components/cockpit-header'
 import { StatCards } from '@/components/stat-cards'
 import { DistributionChart } from '@/components/distribution-chart'
+import { DistributionBarChart } from '@/components/distribution-bar-chart'
 import { HitRateTimeline } from '@/components/hitrate-timeline'
 import { StockRanking } from '@/components/stock-ranking'
 import { AddStockDialog } from '@/components/add-stock-dialog'
@@ -41,13 +42,13 @@ export default async function AnalysisPage() {
 
         <StatCards stats={stats} />
 
-        <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
-          <div className="lg:col-span-2">
-            <HitRateTimeline data={timeline} />
-          </div>
-          <div className="lg:col-span-1">
-            <DistributionChart correct={stats.correct} wrong={stats.wrong} />
-          </div>
+        <div className="mt-6">
+          <HitRateTimeline data={timeline} />
+        </div>
+
+        <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <DistributionChart correct={stats.correct} wrong={stats.wrong} />
+          <DistributionBarChart correct={stats.correct} wrong={stats.wrong} />
         </div>
 
         <div className="mt-6">
