@@ -9,10 +9,16 @@ import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { createTrade, type TradeInput } from '@/app/actions/trades'
 import {
+  PreTradeQuestionsDialog,
+  PRE_TRADE_QUESTIONS,
+  type PreTradeAnswer,
+} from '@/components/pre-trade-questions-dialog'
+import {
   AlertTriangle,
   ArrowDownRight,
   ArrowUpRight,
-  Check,
+  Banknote,
+  FlaskConical,
   Shield,
   Waves,
 } from 'lucide-react'
@@ -47,6 +53,8 @@ const labelCls = 'font-mono text-[10px] tracking-widest uppercase text-primary/6
 export function TradeForm() {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
+  const [questionsOpen, setQuestionsOpen] = useState(false)
+  const [tradedWithMoney, setTradedWithMoney] = useState(true)
   const [form, setForm] = useState({
     ticker: '',
     direction: 'long' as 'long' | 'short',
@@ -66,16 +74,6 @@ export function TradeForm() {
   const set = (k: keyof typeof form, v: string) =>
     setForm((p) => ({ ...p, [k]: v }))
 
-  // --- Douglas: Die 4 Fragen ---
-  const gate = useMemo(() => {
-    const q1 = form.elliottWaveCount.trim().length > 0
-    const q2 = form.entryPrice.trim().length > 0
-    const q3 = form.stopLoss.trim().length > 0
-    const q4 =
-      form.takeProfit.trim().length > 0 || form.elliottInvalidation.trim().length > 0
-    return { q1, q2, q3, q4, all: q1 && q2 && q3 && q4 }
-  }, [form])
-
   // --- live CRV ---
   const rr = useMemo(() => {
     const entry = parseFloat(form.entryPrice)
@@ -87,8 +85,22 @@ export function TradeForm() {
     return Math.abs(tp - entry) / risk
   }, [form.entryPrice, form.stopLoss, form.takeProfit])
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  // Schritt 1: Pflichtfelder prüfen, dann den 4-Fragen-Dialog öffnen.
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    if (!form.ticker.trim()) {
+      toast.error('Ticker ist erforderlich.')
+      return
+    }
+    if (!form.entryPrice.trim() || !form.stopLoss.trim()) {
+      toast.error('Einstieg und Stop-Loss sind erforderlich.')
+      return
+    }
+    setQuestionsOpen(true)
+  }
+
+  // Schritt 2: Nach Beantwortung der 4 Fragen den Trade anlegen.
+  const handleAnswersComplete = async (answers: PreTradeAnswer[]) => {
     setLoading(true)
     try {
       const payload: TradeInput = {
@@ -107,12 +119,16 @@ export function TradeForm() {
         elliottInvalidation: form.elliottInvalidation
           ? parseFloat(form.elliottInvalidation)
           : null,
+        tradedWithMoney,
+        preTradeAnswers: answers,
       }
+      const allYes = answers.every((a) => a.answer === 'ja')
       const { id } = await createTrade(payload)
+      setQuestionsOpen(false)
       toast.success(
-        gate.all
-          ? 'Trade geplant — bereit zur Ausführung.'
-          : 'Entwurf gespeichert. Erst die 4 Fragen vollständig beantworten, dann aktivierbar.',
+        allYes
+          ? 'Trade geplant — bereit zur Aktivierung.'
+          : 'Entwurf gespeichert. Bei einem „Nein" bleibt der Trade nicht aktivierbar.',
       )
       router.push(`/trades/${id}`)
       router.refresh()
@@ -123,50 +139,62 @@ export function TradeForm() {
     }
   }
 
-  const Q = ({ ok, n, text }: { ok: boolean; n: number; text: string }) => (
-    <div className="flex items-center gap-2">
-      <span
-        className={cn(
-          'flex size-5 items-center justify-center rounded-full border font-mono text-[10px]',
-          ok
-            ? 'border-primary/40 bg-primary/15 text-primary'
-            : 'border-border text-muted-foreground',
-        )}
-      >
-        {ok ? <Check className="size-3" /> : n}
-      </span>
-      <span className={cn('font-mono text-xs', ok ? 'text-foreground' : 'text-muted-foreground')}>
-        {text}
-      </span>
-    </div>
-  )
-
   return (
+    <>
     <form onSubmit={handleSubmit} className="space-y-5">
-      {/* Douglas 4-Fragen-Gate */}
-      <div
-        className={cn(
-          'glass-card p-4',
-          gate.all && 'ring-1 ring-primary/40',
-        )}
-      >
+      {/* Douglas 4-Fragen-Gate — beim Speichern als eigene Fenster abgefragt */}
+      <div className="glass-card p-4">
         <div className="mb-3 flex items-center gap-2">
           <Shield className="size-4 text-primary" />
           <p className="font-mono text-[10px] font-bold tracking-widest text-primary">
             DIE 4 FRAGEN VON DOUGLAS — ENTSCHEIDE DEN TRADE VORHER
           </p>
         </div>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <Q ok={gate.q1} n={1} text="Wellenzählung eindeutig?" />
-          <Q ok={gate.q2} n={2} text="Wo ist mein Einstieg?" />
-          <Q ok={gate.q3} n={3} text="Wo liegt mein Stop-Loss?" />
-          <Q ok={gate.q4} n={4} text="Wo ist Ziel / Invalidation?" />
-        </div>
+        <ol className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {PRE_TRADE_QUESTIONS.map((q, i) => (
+            <li key={q.key} className="flex items-center gap-2">
+              <span className="flex size-5 items-center justify-center rounded-full border border-border font-mono text-[10px] text-muted-foreground">
+                {i + 1}
+              </span>
+              <span className="font-mono text-xs text-muted-foreground">{q.question}</span>
+            </li>
+          ))}
+        </ol>
         <p className="mt-3 font-mono text-[11px] text-muted-foreground">
-          {gate.all
-            ? '✓ Der Trade ist entschieden. Ab jetzt wird nur noch ausgeführt — nicht mehr analysiert.'
-            : 'Solange nicht alle vier beantwortet sind, bleibt der Trade ein Entwurf und ist nicht aktivierbar.'}
+          Beim Speichern beantwortest du jede Frage einzeln mit Ja/Nein. Nur wenn alle vier mit
+          „Ja" beantwortet sind, ist der Trade aktivierbar — sonst bleibt er ein Entwurf.
         </p>
+      </div>
+
+      {/* Mit echtem Geld vs. Demo */}
+      <div className="space-y-2">
+        <Label className={labelCls}>Handelsart</Label>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => setTradedWithMoney(true)}
+            className={cn(
+              'flex items-center justify-center gap-2 rounded-lg border py-2.5 font-mono text-sm font-bold transition-all',
+              tradedWithMoney
+                ? 'border-positive/40 bg-positive/15 text-positive'
+                : 'border-border text-muted-foreground',
+            )}
+          >
+            <Banknote className="size-4" /> MIT ECHTEM GELD
+          </button>
+          <button
+            type="button"
+            onClick={() => setTradedWithMoney(false)}
+            className={cn(
+              'flex items-center justify-center gap-2 rounded-lg border py-2.5 font-mono text-sm font-bold transition-all',
+              !tradedWithMoney
+                ? 'border-primary/40 bg-primary/15 text-primary'
+                : 'border-border text-muted-foreground',
+            )}
+          >
+            <FlaskConical className="size-4" /> DEMO · PAPERTRADE
+          </button>
+        </div>
       </div>
 
       {/* Ticker & Richtung */}
@@ -382,7 +410,7 @@ export function TradeForm() {
           disabled={loading}
           className="btn-teal-glow h-11 flex-1 font-mono text-sm font-bold tracking-wider"
         >
-          {loading ? 'WIRD GESPEICHERT…' : 'TRADE PLANEN'}
+          {loading ? 'WIRD GESPEICHERT…' : 'WEITER ZU DEN 4 FRAGEN'}
         </Button>
         <Button
           type="button"
@@ -394,5 +422,13 @@ export function TradeForm() {
         </Button>
       </div>
     </form>
+
+      <PreTradeQuestionsDialog
+        open={questionsOpen}
+        onOpenChange={setQuestionsOpen}
+        onComplete={handleAnswersComplete}
+        submitting={loading}
+      />
+    </>
   )
 }

@@ -120,7 +120,11 @@ export const trade = pgTable('trade', {
   elliottInvalidation: doublePrecision('elliottInvalidation'), // "Analyse ungültig"-Preis
 
   // --- Douglas discipline ---
-  preTradeAnswered: boolean('preTradeAnswered').notNull().default(false), // 4-Fragen-Gate
+  preTradeAnswered: boolean('preTradeAnswered').notNull().default(false), // 4-Fragen-Gate (= alle 4 = ja)
+  // JSON array der 4 Antworten: [{ key, question, answer: 'ja'|'nein', note }]
+  preTradeAnswers: text('preTradeAnswers'),
+  // mit echtem Geld gehandelt vs. Demo/Papertrade
+  tradedWithMoney: boolean('tradedWithMoney').notNull().default(true),
   followedPlan: boolean('followedPlan'),
   // JSON array of flags: stop_moved | invalidation_ignored | revenge
   ruleViolations: text('ruleViolations'),

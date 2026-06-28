@@ -1,9 +1,16 @@
 import { auth } from '@/lib/auth'
 import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
-import { getDisciplineStats, listTrades, type TradeRow } from '@/app/actions/trades'
+import {
+  getDisciplineStats,
+  getMoneyVsPaperStats,
+  listTrades,
+  type TradeRow,
+} from '@/app/actions/trades'
 import { CockpitHeader } from '@/components/cockpit-header'
 import { DisciplineBar, CockpitStats } from '@/components/discipline-overview'
+import { MoneyHitRateChart } from '@/components/money-hitrate-chart'
+import { MoneyProfitChart } from '@/components/money-profit-chart'
 
 function monthKey(t: TradeRow): string {
   const d = t.closedAt ? new Date(t.closedAt) : new Date(t.createdAt)
@@ -14,7 +21,11 @@ export default async function TrackingPage() {
   const session = await auth.api.getSession({ headers: await headers() })
   if (!session?.user) redirect('/sign-in')
 
-  const [stats, trades] = await Promise.all([getDisciplineStats(), listTrades()])
+  const [stats, trades, moneyStats] = await Promise.all([
+    getDisciplineStats(),
+    listTrades(),
+    getMoneyVsPaperStats(),
+  ])
   const completed = trades.filter((t) => t.status === 'abgeschlossen')
 
   // Ergebnis-Aufschlüsselung: 4 Buckets (Plan × Ergebnis)
@@ -80,6 +91,12 @@ export default async function TrackingPage() {
 
         <div className="mt-4">
           <CockpitStats stats={stats} />
+        </div>
+
+        {/* Echtgeld vs. Demo — Trefferquote & Ø Gewinn */}
+        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <MoneyHitRateChart stats={moneyStats} />
+          <MoneyProfitChart stats={moneyStats} />
         </div>
 
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">

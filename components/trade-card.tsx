@@ -24,6 +24,8 @@ import { Label } from '@/components/ui/label'
 import {
   ArrowDownRight,
   ArrowUpRight,
+  Banknote,
+  FlaskConical,
   Lock,
   Play,
   Trash2,
@@ -90,14 +92,34 @@ export function TradeCard({ t }: { t: TradeRow }) {
             </p>
           </div>
         </div>
-        <span
-          className={cn(
-            'rounded-md border px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest',
-            statusStyle[t.status],
-          )}
-        >
-          {t.status}
-        </span>
+        <div className="flex flex-col items-end gap-1">
+          <span
+            className={cn(
+              'rounded-md border px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest',
+              statusStyle[t.status],
+            )}
+          >
+            {t.status}
+          </span>
+          <span
+            className={cn(
+              'flex items-center gap-1 rounded-md border px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest',
+              t.tradedWithMoney
+                ? 'border-positive/40 bg-positive/10 text-positive'
+                : 'border-primary/40 bg-primary/10 text-primary',
+            )}
+          >
+            {t.tradedWithMoney ? (
+              <>
+                <Banknote className="size-3" /> Echtgeld
+              </>
+            ) : (
+              <>
+                <FlaskConical className="size-3" /> Demo
+              </>
+            )}
+          </span>
+        </div>
       </div>
 
       <div className="mt-3 grid grid-cols-3 gap-2 font-mono text-xs">
@@ -222,6 +244,7 @@ function CloseDialog({
   const [exit, setExit] = useState('')
   const [followed, setFollowed] = useState(true)
   const [accepted, setAccepted] = useState(false)
+  const [money, setMoney] = useState(trade.tradedWithMoney)
   const [busy, setBusy] = useState(false)
 
   const submit = async () => {
@@ -236,6 +259,7 @@ function CloseDialog({
         actualExitPrice: exit ? parseFloat(exit) : null,
         followedPlan: followed,
         lossAccepted: accepted,
+        tradedWithMoney: money,
       })
       toast.success('Trade abgeschlossen.')
       onOpenChange(false)
@@ -329,6 +353,38 @@ function CloseDialog({
                 )}
               >
                 Nein, abgewichen
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+              Mit echtem Geld gehandelt?
+            </Label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setMoney(true)}
+                className={cn(
+                  'flex items-center justify-center gap-1.5 rounded-lg border py-2 font-mono text-xs uppercase',
+                  money
+                    ? 'border-positive/40 bg-positive/15 text-positive'
+                    : 'border-border text-muted-foreground',
+                )}
+              >
+                <Banknote className="size-3" /> Echtgeld
+              </button>
+              <button
+                type="button"
+                onClick={() => setMoney(false)}
+                className={cn(
+                  'flex items-center justify-center gap-1.5 rounded-lg border py-2 font-mono text-xs uppercase',
+                  !money
+                    ? 'border-primary/40 bg-primary/15 text-primary'
+                    : 'border-border text-muted-foreground',
+                )}
+              >
+                <FlaskConical className="size-3" /> Demo
               </button>
             </div>
           </div>

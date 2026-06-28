@@ -20,6 +20,13 @@ async function getUserId() {
 export type TradeRow = typeof trade.$inferSelect
 export type RuleViolation = 'stop_moved' | 'invalidation_ignored' | 'revenge'
 
+export type PreTradeAnswer = {
+  key: string
+  question: string
+  answer: 'ja' | 'nein'
+  note: string
+}
+
 export type TradeInput = {
   ticker: string
   market?: string
@@ -35,6 +42,10 @@ export type TradeInput = {
   elliottWaveCount?: string | null
   waveDegree?: string | null
   elliottInvalidation?: number | null
+  // mit echtem Geld vs. Demo/Papertrade
+  tradedWithMoney?: boolean
+  // die 4 Douglas-Antworten (Gate = alle 'ja')
+  preTradeAnswers?: PreTradeAnswer[]
 }
 
 export type DisciplineStats = {
@@ -112,9 +123,10 @@ export async function createTrade(input: TradeInput): Promise<{ id: number }> {
     .where(and(eq(stock.userId, userId), eq(stock.ticker, ticker)))
   if (existing) stockId = existing.id
 
-  const hasTarget = input.takeProfit != null || input.elliottInvalidation != null
+  // Gate: nur wenn alle 4 Douglas-Fragen mit 'ja' beantwortet sind.
+  const answers = input.preTradeAnswers ?? []
   const preTradeAnswered =
-    !!input.elliottWaveCount && !!input.entryPrice && !!input.stopLoss && hasTarget
+    answers.length === 4 && answers.every((a) => a.answer === 'ja')
 
   // live CRV
   let riskRewardRatio: number | null = null
@@ -144,6 +156,8 @@ export async function createTrade(input: TradeInput): Promise<{ id: number }> {
       waveDegree: input.waveDegree?.trim() || null,
       elliottInvalidation: input.elliottInvalidation ?? null,
       preTradeAnswered,
+      preTradeAnswers: answers.length ? JSON.stringify(answers) : null,
+      tradedWithMoney: input.tradedWithMoney ?? true,
     })
     .returning({ id: trade.id })
 
@@ -250,6 +264,9 @@ export async function updateTradePlan(
       ...(patch.elliottInvalidation !== undefined
         ? { elliottInvalidation: patch.elliottInvalidation }
         : {}),
+      ...(patch.tradedWithMoney !== undefined
+        ? { tradedWithMoney: patch.tradedWithMoney }
+        : {}),
       ruleViolations: JSON.stringify(violations),
     })
     .where(and(eq(trade.id, id), eq(trade.userId, userId)))
@@ -269,6 +286,7 @@ export async function closeTrade(
     actualExitPrice?: number | null
     followedPlan: boolean
     lossAccepted?: boolean
+    tradedWithMoney?: boolean
   },
 ): Promise<void> {
   const userId = await getUserId()
@@ -288,6 +306,9 @@ export async function closeTrade(
       actualExitPrice: data.actualExitPrice ?? null,
       followedPlan: data.followedPlan,
       lossAccepted: data.result === 'verlust' ? true : t.lossAccepted,
+      ...(data.tradedWithMoney !== undefined
+        ? { tradedWithMoney: data.tradedWithMoney }
+        : {}),
       closedAt: new Date(),
     })
     .where(and(eq(trade.id, id), eq(trade.userId, userId)))
@@ -390,6 +411,49 @@ export async function getDisciplineStats(startCapital = 10000): Promise<Discipli
     startCapital,
     currentBalance,
     returnPct,
+  }
+}
+
+export type GroupStats = {
+  completed: number
+  wins: number
+  losses: number
+  hitRate: number // 0-100 über entschiedene Trades (gewinn|verlust)
+  avgPnL: number // Ø P&L je entschiedenem Trade
+  totalPnL: number
+}
+
+export type MoneyVsPaper = { money: GroupStats; paper: GroupStats }
+
+/**
+ * Trefferquote und Ø Gewinn je Trade, getrennt nach echtem Geld vs. Demo.
+ * Grundlage für die beiden Auswertungs-Charts.
+ */
+export async function getMoneyVsPaperStats(): Promise<MoneyVsPaper> {
+  const userId = await getUserId()
+  const rows = await db
+    .select()
+    .from(trade)
+    .where(and(eq(trade.userId, userId), eq(trade.status, 'abgeschlossen')))
+
+  const group = (list: TradeRow[]): GroupStats => {
+    const wins = list.filter((t) => t.result === 'gewinn').length
+    const losses = list.filter((t) => t.result === 'verlust').length
+    const decisive = wins + losses
+    const totalPnL = list.reduce((acc, t) => acc + tradePnl(t), 0)
+    return {
+      completed: list.length,
+      wins,
+      losses,
+      hitRate: decisive ? (wins / decisive) * 100 : 0,
+      avgPnL: decisive ? totalPnL / decisive : 0,
+      totalPnL,
+    }
+  }
+
+  return {
+    money: group(rows.filter((t) => t.tradedWithMoney)),
+    paper: group(rows.filter((t) => !t.tradedWithMoney)),
   }
 }
 
