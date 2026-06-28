@@ -66,6 +66,21 @@ export function TradeCard({ t }: { t: TradeRow }) {
     }
   }
 
+  // Nach dem Löschen auf die Liste navigieren — sonst lädt eine offene
+  // Detailseite (/trades/[id]) den geloeschten Trade neu und stürzt via notFound() ab.
+  const handleDelete = async () => {
+    setBusy(true)
+    try {
+      await deleteTrade(t.id)
+      toast.success('Trade gelöscht.')
+      router.push('/trades')
+      router.refresh()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Fehler')
+      setBusy(false)
+    }
+  }
+
   const isLong = t.direction === 'long'
 
   return (
@@ -192,7 +207,7 @@ export function TradeCard({ t }: { t: TradeRow }) {
           size="sm"
           variant="ghost"
           disabled={busy}
-          onClick={() => run(() => deleteTrade(t.id), 'Trade gelöscht.')}
+          onClick={handleDelete}
           className="ml-auto font-mono text-xs text-muted-foreground"
         >
           <Trash2 className="size-3" />

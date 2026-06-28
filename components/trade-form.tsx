@@ -410,7 +410,7 @@ export function TradeForm() {
           disabled={loading}
           className="btn-teal-glow h-11 flex-1 font-mono text-sm font-bold tracking-wider"
         >
-          {loading ? 'WIRD GESPEICHERT…' : 'WEITER ZU DEN 4 FRAGEN'}
+          {loading ? 'WIRD GESPEICHERT…' : 'WEITER ZUR FINALEN ENTSCHEIDUNG'}
         </Button>
         <Button
           type="button"
