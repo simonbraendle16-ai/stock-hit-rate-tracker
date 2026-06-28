@@ -14,21 +14,9 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Check, Shield, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { PRE_TRADE_QUESTIONS, type PreTradeAnswer } from '@/lib/pre-trade-questions'
 
-// Die 4 Douglas-Fragen — vor dem Trade bewusst zu beantworten.
-export const PRE_TRADE_QUESTIONS = [
-  { key: 'wave', question: 'Ist deine Wellenzählung eindeutig?' },
-  { key: 'entry', question: 'Ist dein Einstieg klar definiert?' },
-  { key: 'stop', question: 'Steht dein Stop-Loss fest?' },
-  { key: 'target', question: 'Ist Ziel / Invalidation festgelegt?' },
-] as const
-
-export type PreTradeAnswer = {
-  key: string
-  question: string
-  answer: 'ja' | 'nein'
-  note: string
-}
+export { PRE_TRADE_QUESTIONS, type PreTradeAnswer }
 
 type DraftAnswer = { answer: 'ja' | 'nein' | null; note: string }
 
@@ -90,7 +78,7 @@ export function PreTradeQuestionsDialog({
           <div className="flex items-center gap-2">
             <Shield className="size-4 text-primary" />
             <DialogTitle className="font-heading tracking-wide">
-              Die 4 Fragen von Douglas
+              Die Fragen von Douglas
             </DialogTitle>
           </div>
           <DialogDescription className="font-mono text-xs">

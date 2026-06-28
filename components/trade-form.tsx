@@ -142,12 +142,12 @@ export function TradeForm() {
   return (
     <>
     <form onSubmit={handleSubmit} className="space-y-5">
-      {/* Douglas 4-Fragen-Gate — beim Speichern als eigene Fenster abgefragt */}
+      {/* Douglas-Fragen-Gate — beim Speichern als eigene Fenster abgefragt */}
       <div className="glass-card p-4">
         <div className="mb-3 flex items-center gap-2">
           <Shield className="size-4 text-primary" />
           <p className="font-mono text-[10px] font-bold tracking-widest text-primary">
-            DIE 4 FRAGEN VON DOUGLAS — ENTSCHEIDE DEN TRADE VORHER
+            DIE FRAGEN VON DOUGLAS — ENTSCHEIDE DEN TRADE VORHER
           </p>
         </div>
         <ol className="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -161,7 +161,7 @@ export function TradeForm() {
           ))}
         </ol>
         <p className="mt-3 font-mono text-[11px] text-muted-foreground">
-          Beim Speichern beantwortest du jede Frage einzeln mit Ja/Nein. Nur wenn alle vier mit
+          Beim Speichern beantwortest du jede Frage einzeln mit Ja/Nein. Nur wenn alle mit
           „Ja" beantwortet sind, ist der Trade aktivierbar — sonst bleibt er ein Entwurf.
         </p>
       </div>

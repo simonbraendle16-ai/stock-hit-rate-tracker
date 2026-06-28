@@ -6,6 +6,7 @@ import { trade, assessment, stock } from '@/lib/db/schema'
 import { and, asc, desc, eq } from 'drizzle-orm'
 import { headers } from 'next/headers'
 import { revalidatePath } from 'next/cache'
+import { PRE_TRADE_QUESTIONS, type PreTradeAnswer } from '@/lib/pre-trade-questions'
 
 async function getUserId() {
   const session = await auth.api.getSession({ headers: await headers() })
@@ -19,13 +20,6 @@ async function getUserId() {
 
 export type TradeRow = typeof trade.$inferSelect
 export type RuleViolation = 'stop_moved' | 'invalidation_ignored' | 'revenge'
-
-export type PreTradeAnswer = {
-  key: string
-  question: string
-  answer: 'ja' | 'nein'
-  note: string
-}
 
 export type TradeInput = {
   ticker: string
@@ -123,10 +117,11 @@ export async function createTrade(input: TradeInput): Promise<{ id: number }> {
     .where(and(eq(stock.userId, userId), eq(stock.ticker, ticker)))
   if (existing) stockId = existing.id
 
-  // Gate: nur wenn alle 4 Douglas-Fragen mit 'ja' beantwortet sind.
+  // Gate: nur wenn ALLE Douglas-Fragen mit 'ja' beantwortet sind.
   const answers = input.preTradeAnswers ?? []
   const preTradeAnswered =
-    answers.length === 4 && answers.every((a) => a.answer === 'ja')
+    answers.length === PRE_TRADE_QUESTIONS.length &&
+    answers.every((a) => a.answer === 'ja')
 
   // live CRV
   let riskRewardRatio: number | null = null
