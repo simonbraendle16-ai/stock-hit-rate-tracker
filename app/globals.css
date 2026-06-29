@@ -63,7 +63,7 @@
   --card-foreground: #1b1a17;
   --popover: #ffffff;
   --popover-foreground: #1b1a17;
-  --primary: #a9741f;
+  --primary: #2f6da3;
   --primary-foreground: #ffffff;
   --secondary: #ecebe6;
   --secondary-foreground: #2a2823;
@@ -74,13 +74,13 @@
   --destructive: #ad4d3c;
   --border: #e2dfd8;
   --input: #ddd9d1;
-  --ring: rgba(169, 116, 31, 0.35);
+  --ring: rgba(47, 109, 163, 0.35);
   --positive: #3d7a59;
   --positive-foreground: #ffffff;
   --negative: #ad4d3c;
   --negative-foreground: #ffffff;
   --warning: #8f6f24;
-  --chart-1: #a9741f;
+  --chart-1: #2f6da3;
   --chart-2: #3d7a59;
   --chart-3: #ad4d3c;
   --chart-4: #4f6f8f;
@@ -88,59 +88,59 @@
   --radius: 0.375rem;
   --sidebar: #ffffff;
   --sidebar-foreground: #1b1a17;
-  --sidebar-primary: #a9741f;
+  --sidebar-primary: #2f6da3;
   --sidebar-primary-foreground: #ffffff;
   --sidebar-accent: #eceae4;
   --sidebar-accent-foreground: #2a2823;
   --sidebar-border: #e2dfd8;
-  --sidebar-ring: rgba(169, 116, 31, 0.35);
+  --sidebar-ring: rgba(47, 109, 163, 0.35);
 }
 
 /* ---------------------------------------------------------------------------
-   Institutionelles Terminal — warmer Graphit, ein Bernstein-Akzent.
-   Inspiriert vom historischen Amber-Finanzterminal & Research-Reports.
-   Graphit #111214 · Panel #191B1E · Pergament #E9E4DA · Bernstein #D8A24E ·
-   Gewinn (Salbei) #6FA886 · Verlust (Ton) #C16A5A · Warnung (Gold) #CBA15A.
-   Bernstein ist knapp & bedeutungstragend — kein Glow, kein Neon.
+   Institutionelles Terminal — „Privatbank-Nacht": tiefes Stahl-Navy,
+   ein kräftiger Stahlblau-Akzent, Geldfarben in satter, stählerner Note.
+   Navy #0B1522 · Panel #162534 · Creme #F1ECE0 · Stahlblau #45A8EC ·
+   Gewinn (Geldgrün) #4FBE8C · Verlust (Burgund) #D8505F · Warnung (Gold) #D4AC4E.
+   Strahlende Geldfarben auf tiefer Basis — kein Glow, kein Neon.
 --------------------------------------------------------------------------- */
 .dark {
   color-scheme: dark;
-  --background: #111214;
-  --foreground: #e9e4da;
-  --card: #191b1e;
-  --card-foreground: #e9e4da;
-  --popover: #1c1e22;
-  --popover-foreground: #e9e4da;
-  --primary: #d8a24e;
-  --primary-foreground: #1a1712;
-  --secondary: #222428;
-  --secondary-foreground: #e9e4da;
-  --muted: #1f2125;
-  --muted-foreground: #9c988f;
-  --accent: #26282d;
-  --accent-foreground: #e9e4da;
-  --destructive: #c16a5a;
-  --border: #2a2d32;
-  --input: #2f3238;
-  --ring: rgba(216, 162, 78, 0.38);
-  --positive: #6fa886;
-  --positive-foreground: #10140f;
-  --negative: #c16a5a;
-  --negative-foreground: #1a1110;
-  --warning: #cba15a;
-  --chart-1: #d8a24e;
-  --chart-2: #6fa886;
-  --chart-3: #c16a5a;
-  --chart-4: #6e8ba8;
-  --chart-5: #b9b3a8;
-  --sidebar: #17191c;
-  --sidebar-foreground: #e9e4da;
-  --sidebar-primary: #d8a24e;
-  --sidebar-primary-foreground: #1a1712;
-  --sidebar-accent: #26282d;
-  --sidebar-accent-foreground: #e9e4da;
-  --sidebar-border: #2a2d32;
-  --sidebar-ring: rgba(216, 162, 78, 0.38);
+  --background: #0b1522;
+  --foreground: #f1ece0;
+  --card: #162534;
+  --card-foreground: #f1ece0;
+  --popover: #15212e;
+  --popover-foreground: #f1ece0;
+  --primary: #45a8ec;
+  --primary-foreground: #07111e;
+  --secondary: #1d2c3b;
+  --secondary-foreground: #f1ece0;
+  --muted: #121d29;
+  --muted-foreground: #9aacbd;
+  --accent: #20303f;
+  --accent-foreground: #f1ece0;
+  --destructive: #d8505f;
+  --border: #2c4053;
+  --input: #3a5066;
+  --ring: rgba(69, 168, 236, 0.45);
+  --positive: #4fbe8c;
+  --positive-foreground: #06140d;
+  --negative: #d8505f;
+  --negative-foreground: #1c0e10;
+  --warning: #d4ac4e;
+  --chart-1: #45a8ec;
+  --chart-2: #4fbe8c;
+  --chart-3: #d8505f;
+  --chart-4: #d4ac4e;
+  --chart-5: #9aacbd;
+  --sidebar: #101b27;
+  --sidebar-foreground: #f1ece0;
+  --sidebar-primary: #45a8ec;
+  --sidebar-primary-foreground: #07111e;
+  --sidebar-accent: #20303f;
+  --sidebar-accent-foreground: #f1ece0;
+  --sidebar-border: #2c4053;
+  --sidebar-ring: rgba(69, 168, 236, 0.45);
 }
 
 @media (prefers-color-scheme: dark) {
