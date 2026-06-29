@@ -6,10 +6,11 @@ import Link from 'next/link'
 import { Card } from '@/components/ui/card'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
 import type { StockWithStats } from '@/app/actions/stocks'
 import { AddAssessmentDialog } from '@/components/add-assessment-dialog'
 import { deleteStock } from '@/app/actions/stocks'
-import { BarChart3, Eye, Plus, Trash2, Trophy } from 'lucide-react'
+import { BarChart3, Eye, Plus, Search, Trash2, Trophy, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 
@@ -30,6 +31,19 @@ export function StockRanking({ stocks }: { stocks: StockWithStats[] }) {
   const router = useRouter()
   const [activeStock, setActiveStock] = useState<StockWithStats | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [query, setQuery] = useState('')
+
+  // Rang aus der ungefilterten (nach Trefferquote sortierten) Liste festhalten,
+  // damit die Platzierung beim Filtern stabil bleibt.
+  const q = query.trim().toLowerCase()
+  const ranked = stocks.map((stock, index) => ({ stock, rank: index + 1 }))
+  const filtered = q
+    ? ranked.filter(
+        ({ stock }) =>
+          stock.name.toLowerCase().includes(q) ||
+          stock.ticker.toLowerCase().includes(q),
+      )
+    : ranked
 
   const openAssessment = (stock: StockWithStats) => {
     setActiveStock(stock)
@@ -66,6 +80,29 @@ export function StockRanking({ stocks }: { stocks: StockWithStats[] }) {
         </div>
       </div>
 
+      {stocks.length > 0 && (
+        <div className="relative mb-3">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Aktie suchen (Name oder Ticker)…"
+            aria-label="Aktien durchsuchen"
+            className="pl-9 pr-9"
+          />
+          {query && (
+            <button
+              type="button"
+              onClick={() => setQuery('')}
+              aria-label="Suche zurücksetzen"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground hover:text-foreground"
+            >
+              <X className="size-4" />
+            </button>
+          )}
+        </div>
+      )}
+
       {stocks.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-12 text-center">
           <BarChart3 className="size-8 text-muted-foreground/40" />
@@ -77,9 +114,19 @@ export function StockRanking({ stocks }: { stocks: StockWithStats[] }) {
             tracken.
           </p>
         </div>
+      ) : filtered.length === 0 ? (
+        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-12 text-center">
+          <Search className="size-8 text-muted-foreground/40" />
+          <p className="mt-3 text-sm font-medium text-foreground">
+            Keine Treffer für „{query}“
+          </p>
+          <p className="mt-1 max-w-xs text-xs text-muted-foreground">
+            Prüfe die Schreibweise oder setze die Suche zurück.
+          </p>
+        </div>
       ) : (
         <ul className="flex flex-col gap-2">
-          {stocks.map((stock, index) => {
+          {filtered.map(({ stock, rank }) => {
             const hasData = stock.total > 0
             return (
               <li
@@ -88,7 +135,7 @@ export function StockRanking({ stocks }: { stocks: StockWithStats[] }) {
               >
                 <div className="flex items-center gap-3 sm:w-56 sm:shrink-0">
                   <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted text-xs font-semibold text-muted-foreground">
-                    {index + 1}
+                    {rank}
                   </span>
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium text-foreground">
