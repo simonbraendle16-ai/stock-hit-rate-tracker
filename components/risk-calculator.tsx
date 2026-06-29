@@ -36,10 +36,10 @@ export function RiskCalculator() {
           <Calculator className="size-4 text-primary" />
         </div>
         <div>
-          <h3 className="font-heading text-xs font-bold tracking-widest text-foreground">
-            RISK CALCULATOR
+          <h3 className="font-heading text-sm font-semibold tracking-tight text-foreground">
+            Risk Calculator
           </h3>
-          <p className="mt-0.5 font-mono text-[9px] text-primary/40">Positionsgröße berechnen</p>
+          <p className="mt-0.5 font-mono text-[9px] text-muted-foreground">Positionsgröße berechnen</p>
         </div>
       </div>
 

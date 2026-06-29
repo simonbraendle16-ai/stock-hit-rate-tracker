@@ -20,8 +20,8 @@ export default async function TradesPage() {
       <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
         <div className="mb-6 flex items-end justify-between gap-3">
           <div>
-            <h2 className="font-heading text-xl font-bold tracking-widest text-foreground sm:text-2xl">
-              TRADES
+            <h2 className="font-heading text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+              Trades
             </h2>
             <p className="mt-1 font-mono text-xs text-muted-foreground">
               {trades.length} Trade{trades.length === 1 ? '' : 's'} · plane, führe aus, schließe ab.

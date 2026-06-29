@@ -46,7 +46,7 @@ export default async function StockDetailPage({
         <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="font-heading text-xl font-bold tracking-widest text-foreground sm:text-2xl">
+              <h2 className="font-heading text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
                 {detail.name}
               </h2>
               <Badge variant="secondary" className="font-mono text-[10px]">

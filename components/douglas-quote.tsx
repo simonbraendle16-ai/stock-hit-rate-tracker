@@ -21,7 +21,7 @@ export function DouglasQuote() {
   return (
     <div className="glass-card flex items-start gap-3 p-4">
       <Quote className="mt-0.5 size-4 shrink-0 text-primary" />
-      <p className="font-mono text-sm italic text-foreground/90 transition-opacity">
+      <p className="font-heading text-base italic leading-snug text-foreground/90 transition-opacity">
         {quotes[i]}
       </p>
     </div>

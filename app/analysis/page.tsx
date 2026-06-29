@@ -30,8 +30,8 @@ export default async function AnalysisPage() {
       <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
         <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h2 className="font-heading text-xl font-bold tracking-widest text-foreground sm:text-2xl">
-              ANALYSE
+            <h2 className="font-heading text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+              Analyse
             </h2>
             <p className="mt-1 font-mono text-xs text-muted-foreground">
               Reine Prognosen pro Instrument — richtig vs. falsch, ohne echtes Geld.

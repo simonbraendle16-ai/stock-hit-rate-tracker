@@ -13,8 +13,8 @@ export default async function NewTradePage() {
       <CockpitHeader userLabel={session.user.name || session.user.email} />
       <main className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
         <div className="mb-6">
-          <h2 className="font-heading text-xl font-bold tracking-widest text-foreground sm:text-2xl">
-            TRADE PLANEN
+          <h2 className="font-heading text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+            Trade planen
           </h2>
           <p className="mt-1 font-mono text-xs text-muted-foreground">
             Lege den Plan fest, bevor du ihn eingehst. Danach wird nur noch ausgeführt.

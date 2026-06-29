@@ -18,7 +18,7 @@ export function DisciplineBar({ stats }: { stats: DisciplineStats }) {
         Disziplin-Score
       </p>
       <div className="mt-1 flex items-end gap-3">
-        <span className={cn('font-heading text-5xl font-black leading-none', color)}>
+        <span className={cn('font-heading text-5xl font-bold leading-none', color)}>
           {v}%
         </span>
         <span className="mb-1 font-mono text-[11px] text-muted-foreground">

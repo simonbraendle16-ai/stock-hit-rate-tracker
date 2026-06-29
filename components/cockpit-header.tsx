@@ -12,8 +12,8 @@ export function CockpitHeader({ userLabel }: { userLabel?: string | null }) {
             <Activity className="size-5" />
           </div>
           <div className="hidden sm:block">
-            <h1 className="font-heading text-sm font-bold leading-tight tracking-widest text-foreground">
-              TRADING COCKPIT
+            <h1 className="font-heading text-base font-semibold leading-tight tracking-tight text-foreground">
+              Trading Cockpit
             </h1>
             <p className="font-mono text-[10px] leading-tight text-muted-foreground">
               Disziplin · Elliott · Trefferquote

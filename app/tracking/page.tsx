@@ -62,8 +62,8 @@ export default async function TrackingPage() {
       <CockpitHeader userLabel={session.user.name || session.user.email} />
       <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
         <div className="mb-6">
-          <h2 className="font-heading text-xl font-bold tracking-widest text-foreground sm:text-2xl">
-            AUSWERTUNG
+          <h2 className="font-heading text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+            Auswertung
           </h2>
           <p className="mt-1 font-mono text-xs text-muted-foreground">
             Dein statistischer Vorteil über viele Trades — wie ein Casino.
@@ -79,7 +79,7 @@ export default async function TrackingPage() {
               Erwartungswert
             </p>
             <p
-              className={`mt-1 font-heading text-4xl font-black ${stats.expectancy >= 0 ? 'text-positive' : 'text-destructive'}`}
+              className={`mt-1 font-heading text-4xl font-bold ${stats.expectancy >= 0 ? 'text-positive' : 'text-destructive'}`}
             >
               {stats.expectancy >= 0 ? '+' : ''}
               {stats.expectancy.toFixed(2)}R
@@ -115,7 +115,7 @@ export default async function TrackingPage() {
             <>
               <div className="mt-1 flex items-end justify-between gap-3">
                 <p
-                  className={`font-heading text-4xl font-black ${zoneStats.rate >= 50 ? 'text-positive' : 'text-warning'}`}
+                  className={`font-heading text-4xl font-bold ${zoneStats.rate >= 50 ? 'text-positive' : 'text-warning'}`}
                 >
                   {zoneStats.rate.toFixed(0)}%
                 </p>

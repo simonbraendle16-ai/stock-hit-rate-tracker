@@ -1,21 +1,25 @@
 import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
-import { Orbitron, Space_Grotesk, JetBrains_Mono } from 'next/font/google'
+import { IBM_Plex_Serif, IBM_Plex_Sans, IBM_Plex_Mono } from 'next/font/google'
 import { Toaster } from '@/components/ui/sonner'
 import './globals.css'
 
-const orbitron = Orbitron({
-  variable: '--font-orbitron',
+// Institutionelles Terminal: IBM-Plex-Superfamilie — eine Vision, drei Rollen.
+// Serif = Titel & Hero-Zahlen (Gravitas), Sans = UI/Text, Mono = Daten/Kurse.
+const plexSerif = IBM_Plex_Serif({
+  variable: '--font-plex-serif',
   subsets: ['latin'],
-  weight: ['600', '700', '900'],
+  weight: ['400', '500', '600', '700'],
 })
-const spaceGrotesk = Space_Grotesk({
-  variable: '--font-space-grotesk',
+const plexSans = IBM_Plex_Sans({
+  variable: '--font-plex-sans',
   subsets: ['latin'],
+  weight: ['400', '500', '600', '700'],
 })
-const jetbrainsMono = JetBrains_Mono({
-  variable: '--font-jetbrains-mono',
+const plexMono = IBM_Plex_Mono({
+  variable: '--font-plex-mono',
   subsets: ['latin'],
+  weight: ['400', '500', '600'],
 })
 
 export const metadata: Metadata = {
@@ -58,7 +62,7 @@ export default function RootLayout({
   return (
     <html
       lang="de"
-      className={`dark ${orbitron.variable} ${spaceGrotesk.variable} ${jetbrainsMono.variable} bg-background`}
+      className={`dark ${plexSerif.variable} ${plexSans.variable} ${plexMono.variable} bg-background`}
     >
       <body className="font-sans antialiased">
         {children}
