@@ -133,6 +133,8 @@ export const trade = pgTable('trade', {
   // --- Outcome ---
   result: text('result'), // gewinn | verlust | breakeven
   actualExitPrice: doublePrecision('actualExitPrice'),
+  // optionale Begründung, wenn status = 'kein_handel' (Zielzone nicht angelaufen)
+  noTradeNote: text('noTradeNote'),
 
   // --- Timestamps (Revenge-Guard) ---
   openedAt: timestamp('openedAt'),

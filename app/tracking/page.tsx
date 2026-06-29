@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation'
 import {
   getDisciplineStats,
   getMoneyVsPaperStats,
+  getZoneStats,
   listTrades,
   type TradeRow,
 } from '@/app/actions/trades'
@@ -21,10 +22,11 @@ export default async function TrackingPage() {
   const session = await auth.api.getSession({ headers: await headers() })
   if (!session?.user) redirect('/sign-in')
 
-  const [stats, trades, moneyStats] = await Promise.all([
+  const [stats, trades, moneyStats, zoneStats] = await Promise.all([
     getDisciplineStats(),
     listTrades(),
     getMoneyVsPaperStats(),
+    getZoneStats(),
   ])
   const completed = trades.filter((t) => t.status === 'abgeschlossen')
 
@@ -97,6 +99,46 @@ export default async function TrackingPage() {
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
           <MoneyHitRateChart stats={moneyStats} />
           <MoneyProfitChart stats={moneyStats} />
+        </div>
+
+        {/* Zonen-Trefferquote — laufen die geplanten Zonen überhaupt an? */}
+        <div className="mt-4 glass-card p-4">
+          <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+            Zonen-Trefferquote
+          </p>
+          {zoneStats.total === 0 ? (
+            <p className="mt-2 font-mono text-xs text-muted-foreground">
+              Noch keine Daten — sobald Setups aktiviert oder als „kein Handel" markiert werden.
+            </p>
+          ) : (
+            <>
+              <div className="mt-1 flex items-end justify-between gap-3">
+                <p
+                  className={`font-heading text-4xl font-black ${zoneStats.rate >= 50 ? 'text-positive' : 'text-warning'}`}
+                >
+                  {zoneStats.rate.toFixed(0)}%
+                </p>
+                <div className="flex gap-4 font-mono text-[11px]">
+                  <span className="text-positive">{zoneStats.reached} angelaufen</span>
+                  <span className="text-warning">{zoneStats.notReached} nicht angelaufen</span>
+                </div>
+              </div>
+              <div className="bar-track mt-3 flex h-2 overflow-hidden">
+                <div
+                  className="h-full bg-positive"
+                  style={{ width: `${zoneStats.rate}%` }}
+                />
+                <div
+                  className="h-full bg-warning"
+                  style={{ width: `${100 - zoneStats.rate}%` }}
+                />
+              </div>
+              <p className="mt-2 font-mono text-[11px] text-muted-foreground">
+                Wie oft deine geplanten Einstiegs-/Zielzonen tatsächlich angelaufen wurden. Niedrige
+                Quote = Zonen zu eng/falsch gesetzt. Zählt nicht in Gewinn/Verlust.
+              </p>
+            </>
+          )}
         </div>
 
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">

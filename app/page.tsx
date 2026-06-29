@@ -100,7 +100,7 @@ export default async function CockpitPage() {
                     <span className="font-bold text-foreground">{t.ticker}</span>
                   </span>
                   <span className="uppercase tracking-widest text-muted-foreground">
-                    {t.status}
+                    {t.status.replace('_', ' ')}
                     {t.result ? ` · ${t.result}` : ''}
                   </span>
                 </Link>

@@ -313,6 +313,32 @@ export async function closeTrade(
   revalidatePath('/tracking')
 }
 
+/**
+ * Mark a planned setup as "kein Handel": the entry/target zone was never reached
+ * (or was set wrong), so no trade happened. Terminal state — neutral for win-rate,
+ * expectancy, P&L and the hit-rate curve (none of those count it). Feeds the
+ * separate Zonen-Trefferquote via getZoneStats().
+ */
+export async function markNoTrade(id: number, note?: string | null): Promise<void> {
+  const userId = await getUserId()
+  const t = await loadOwnedTrade(userId, id)
+  if (t.status !== 'geplant') {
+    throw new Error('Nur geplante Setups können als „kein Handel" markiert werden.')
+  }
+  await db
+    .update(trade)
+    .set({
+      status: 'kein_handel',
+      noTradeNote: note?.trim() || null,
+      closedAt: new Date(),
+    })
+    .where(and(eq(trade.id, id), eq(trade.userId, userId)))
+
+  revalidatePath('/')
+  revalidatePath('/trades')
+  revalidatePath('/tracking')
+}
+
 export async function abortTrade(id: number): Promise<void> {
   const userId = await getUserId()
   await loadOwnedTrade(userId, id)
@@ -449,6 +475,36 @@ export async function getMoneyVsPaperStats(): Promise<MoneyVsPaper> {
   return {
     money: group(rows.filter((t) => t.tradedWithMoney)),
     paper: group(rows.filter((t) => !t.tradedWithMoney)),
+  }
+}
+
+export type ZoneStats = {
+  reached: number // geplante Zonen, die angelaufen sind (Trade ausgelöst)
+  notReached: number // Setups „kein Handel" — Zone nie angelaufen
+  total: number
+  rate: number // 0-100: wie oft laufen die geplanten Zonen tatsächlich an
+}
+
+/**
+ * Zonen-Trefferquote: wie oft läuft eine geplante Einstiegs-/Zielzone tatsächlich
+ * an? `reached` = Trade wurde irgendwann aktiviert (openedAt gesetzt),
+ * `notReached` = als „kein Handel" markiert. Unabhängig von Gewinn/Verlust.
+ */
+export async function getZoneStats(): Promise<ZoneStats> {
+  const userId = await getUserId()
+  const rows = await db
+    .select({ openedAt: trade.openedAt, status: trade.status })
+    .from(trade)
+    .where(eq(trade.userId, userId))
+
+  const reached = rows.filter((t) => t.openedAt != null).length
+  const notReached = rows.filter((t) => t.status === 'kein_handel').length
+  const total = reached + notReached
+  return {
+    reached,
+    notReached,
+    total,
+    rate: total ? (reached / total) * 100 : 0,
   }
 }
 

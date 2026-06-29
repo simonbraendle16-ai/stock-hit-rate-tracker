@@ -100,7 +100,7 @@ export default async function StockDetailPage({
                     <span className="text-muted-foreground">@ {t.entryPrice}</span>
                   </span>
                   <span className="uppercase tracking-widest text-muted-foreground">
-                    {t.status}
+                    {t.status.replace('_', ' ')}
                     {t.result ? ` · ${t.result}` : ''}
                   </span>
                 </Link>

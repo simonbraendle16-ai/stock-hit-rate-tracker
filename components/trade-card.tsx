@@ -9,6 +9,7 @@ import {
   abortTrade,
   closeTrade,
   deleteTrade,
+  markNoTrade,
 } from '@/app/actions/trades'
 import { Button } from '@/components/ui/button'
 import {
@@ -21,6 +22,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -28,6 +30,7 @@ import {
   FlaskConical,
   Lock,
   Play,
+  Target,
   Trash2,
   Waves,
   X,
@@ -40,6 +43,11 @@ const statusStyle: Record<string, string> = {
   aktiv: 'border-primary/40 bg-primary/10 text-primary',
   abgeschlossen: 'border-positive/40 bg-positive/10 text-positive',
   abgebrochen: 'border-border bg-muted/30 text-muted-foreground',
+  kein_handel: 'border-warning/30 bg-muted/30 text-warning/80',
+}
+
+const statusLabel: Record<string, string> = {
+  kein_handel: 'kein Handel',
 }
 
 const resultStyle: Record<string, string> = {
@@ -52,6 +60,7 @@ export function TradeCard({ t }: { t: TradeRow }) {
   const router = useRouter()
   const [busy, setBusy] = useState(false)
   const [closeOpen, setCloseOpen] = useState(false)
+  const [noTradeOpen, setNoTradeOpen] = useState(false)
 
   const run = async (fn: () => Promise<unknown>, ok: string) => {
     setBusy(true)
@@ -114,7 +123,7 @@ export function TradeCard({ t }: { t: TradeRow }) {
               statusStyle[t.status],
             )}
           >
-            {t.status}
+            {statusLabel[t.status] ?? t.status}
           </span>
           <span
             className={cn(
@@ -157,6 +166,18 @@ export function TradeCard({ t }: { t: TradeRow }) {
         </p>
       )}
 
+      {t.status === 'kein_handel' && (
+        <div className="mt-2 flex items-start gap-1.5 font-mono text-xs text-warning/80">
+          <Target className="mt-0.5 size-3 shrink-0" />
+          <span>
+            Kein Handel · Zielzone nicht angelaufen
+            {t.noTradeNote ? (
+              <span className="mt-0.5 block text-muted-foreground">{t.noTradeNote}</span>
+            ) : null}
+          </span>
+        </div>
+      )}
+
       {/* Aktionen */}
       <div className="mt-4 flex flex-wrap gap-2">
         {t.status === 'geplant' && (
@@ -174,6 +195,15 @@ export function TradeCard({ t }: { t: TradeRow }) {
               className="btn-teal-glow font-mono text-xs"
             >
               <Play className="size-3" /> Aktivieren
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              onClick={() => setNoTradeOpen(true)}
+              className="font-mono text-xs"
+            >
+              <Target className="size-3" /> Kein Handel
             </Button>
             {!t.preTradeAnswered && (
               <span className="flex items-center gap-1 font-mono text-[10px] text-warning">
@@ -215,6 +245,7 @@ export function TradeCard({ t }: { t: TradeRow }) {
       </div>
 
       <CloseDialog trade={t} open={closeOpen} onOpenChange={setCloseOpen} onDone={() => router.refresh()} />
+      <NoTradeDialog trade={t} open={noTradeOpen} onOpenChange={setNoTradeOpen} onDone={() => router.refresh()} />
     </div>
   )
 }
@@ -241,6 +272,73 @@ function Stat({
         {value != null ? value : '—'}
       </p>
     </div>
+  )
+}
+
+function NoTradeDialog({
+  trade,
+  open,
+  onOpenChange,
+  onDone,
+}: {
+  trade: TradeRow
+  open: boolean
+  onOpenChange: (v: boolean) => void
+  onDone: () => void
+}) {
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const submit = async () => {
+    setBusy(true)
+    try {
+      await markNoTrade(trade.id, note)
+      toast.success('Als „kein Handel" markiert.')
+      onOpenChange(false)
+      onDone()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Fehler')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="font-heading tracking-wide">
+            {trade.ticker} · kein Handel
+          </DialogTitle>
+          <DialogDescription className="font-mono text-xs">
+            Die Zielzone wurde nicht angelaufen oder war falsch gesetzt — es kam kein Trade
+            zustande. Zählt nicht als Gewinn oder Verlust.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-2">
+          <Label className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+            Notiz (optional)
+          </Label>
+          <Textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="z. B. Kurs lief vorher in die Gegenrichtung, Zone zu eng gesetzt …"
+            className="input-ocean min-h-20 font-mono text-sm"
+          />
+        </div>
+
+        <DialogFooter>
+          <Button
+            onClick={submit}
+            disabled={busy}
+            className="btn-teal-glow w-full font-mono text-sm font-bold tracking-wider sm:w-auto"
+          >
+            {busy ? 'WIRD GESPEICHERT…' : 'KEIN HANDEL'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
