@@ -108,7 +108,8 @@ export default async function TrackingPage() {
           </p>
           {zoneStats.total === 0 ? (
             <p className="mt-2 font-mono text-xs text-muted-foreground">
-              Noch keine Daten — sobald Setups aktiviert oder als „kein Handel" markiert werden.
+              Noch keine Daten — sobald Setups/Analysen anlaufen oder als „nicht angelaufen"
+              markiert werden.
             </p>
           ) : (
             <>
@@ -134,8 +135,9 @@ export default async function TrackingPage() {
                 />
               </div>
               <p className="mt-2 font-mono text-[11px] text-muted-foreground">
-                Wie oft deine geplanten Einstiegs-/Zielzonen tatsächlich angelaufen wurden. Niedrige
-                Quote = Zonen zu eng/falsch gesetzt. Zählt nicht in Gewinn/Verlust.
+                Wie oft deine geplanten Zonen tatsächlich angelaufen wurden — über Trades und
+                Analysen. Niedrige Quote = Zonen zu eng/falsch gesetzt. Zählt nicht in
+                Gewinn/Verlust oder Trefferquote.
               </p>
             </>
           )}

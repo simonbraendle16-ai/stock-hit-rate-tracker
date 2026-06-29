@@ -125,6 +125,9 @@ export function StockRanking({ stocks }: { stocks: StockWithStats[] }) {
                     <span className="text-positive">{stock.correct}</span>
                     {' / '}
                     <span className="text-negative">{stock.wrong}</span>
+                    {stock.notReached > 0 && (
+                      <span className="text-warning"> · {stock.notReached} n.a.</span>
+                    )}
                     <span className="ml-1 hidden sm:inline">
                       ({stock.total} ges.)
                     </span>

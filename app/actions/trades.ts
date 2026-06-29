@@ -479,26 +479,36 @@ export async function getMoneyVsPaperStats(): Promise<MoneyVsPaper> {
 }
 
 export type ZoneStats = {
-  reached: number // geplante Zonen, die angelaufen sind (Trade ausgelöst)
-  notReached: number // Setups „kein Handel" — Zone nie angelaufen
+  reached: number // Zonen, die angelaufen sind (Trade ausgelöst / Analyse aufgegangen)
+  notReached: number // „kein Handel" / „Zone nicht angelaufen"
   total: number
   rate: number // 0-100: wie oft laufen die geplanten Zonen tatsächlich an
 }
 
 /**
- * Zonen-Trefferquote: wie oft läuft eine geplante Einstiegs-/Zielzone tatsächlich
- * an? `reached` = Trade wurde irgendwann aktiviert (openedAt gesetzt),
- * `notReached` = als „kein Handel" markiert. Unabhängig von Gewinn/Verlust.
+ * Zonen-Trefferquote über Trades UND Analysen: wie oft läuft eine geplante
+ * Einstiegs-/Zielzone tatsächlich an?
+ * - Trade: `reached` = irgendwann aktiviert (openedAt gesetzt), `notReached` = Status „kein_handel".
+ * - Analyse: `reached` = aufgelöst (richtig/falsch), `notReached` = „Zone nicht angelaufen".
+ * Unabhängig von Gewinn/Verlust bzw. richtig/falsch.
  */
 export async function getZoneStats(): Promise<ZoneStats> {
   const userId = await getUserId()
-  const rows = await db
+  const tradeRows = await db
     .select({ openedAt: trade.openedAt, status: trade.status })
     .from(trade)
     .where(eq(trade.userId, userId))
+  const analysisRows = await db
+    .select({ zoneNotReached: assessment.zoneNotReached })
+    .from(assessment)
+    .where(eq(assessment.userId, userId))
 
-  const reached = rows.filter((t) => t.openedAt != null).length
-  const notReached = rows.filter((t) => t.status === 'kein_handel').length
+  const reached =
+    tradeRows.filter((t) => t.openedAt != null).length +
+    analysisRows.filter((a) => !a.zoneNotReached).length
+  const notReached =
+    tradeRows.filter((t) => t.status === 'kein_handel').length +
+    analysisRows.filter((a) => a.zoneNotReached).length
   const total = reached + notReached
   return {
     reached,
@@ -537,6 +547,7 @@ export async function getUnifiedHitRateTimeline(): Promise<UnifiedPoint[]> {
   type Ev = { at: number; correct: boolean }
   const events: Ev[] = []
   for (const a of analyses) {
+    if (a.zoneNotReached) continue // neutral, zählt nicht in die Hit-Rate-Kurve
     events.push({ at: new Date(a.assessmentDate).getTime(), correct: a.isCorrect })
   }
   for (const t of trades) {

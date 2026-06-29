@@ -19,14 +19,16 @@ export type StockWithStats = {
   ticker: string
   correct: number
   wrong: number
-  total: number
+  notReached: number // Zone nicht angelaufen (neutral)
+  total: number // entscheidungsrelevant = correct + wrong
   hitRate: number // 0-100
 }
 
 export type OverallStats = {
   correct: number
   wrong: number
-  total: number
+  notReached: number // Zone nicht angelaufen (neutral)
+  total: number // entscheidungsrelevant = correct + wrong
   hitRate: number // 0-100
   stockCount: number
 }
@@ -53,16 +55,17 @@ export async function getStocksWithStats(): Promise<StockWithStats[]> {
     .from(assessment)
     .where(eq(assessment.userId, userId))
 
-  const byStock = new Map<number, { correct: number; wrong: number }>()
+  const byStock = new Map<number, { correct: number; wrong: number; notReached: number }>()
   for (const a of assessments) {
-    const entry = byStock.get(a.stockId) ?? { correct: 0, wrong: 0 }
-    if (a.isCorrect) entry.correct++
+    const entry = byStock.get(a.stockId) ?? { correct: 0, wrong: 0, notReached: 0 }
+    if (a.zoneNotReached) entry.notReached++
+    else if (a.isCorrect) entry.correct++
     else entry.wrong++
     byStock.set(a.stockId, entry)
   }
 
   const result: StockWithStats[] = stocks.map((s) => {
-    const counts = byStock.get(s.id) ?? { correct: 0, wrong: 0 }
+    const counts = byStock.get(s.id) ?? { correct: 0, wrong: 0, notReached: 0 }
     const total = counts.correct + counts.wrong
     const hitRate = total > 0 ? (counts.correct / total) * 100 : 0
     return {
@@ -71,6 +74,7 @@ export async function getStocksWithStats(): Promise<StockWithStats[]> {
       ticker: s.ticker,
       correct: counts.correct,
       wrong: counts.wrong,
+      notReached: counts.notReached,
       total,
       hitRate,
     }
@@ -99,12 +103,14 @@ export async function getOverallStats(): Promise<OverallStats> {
     .from(assessment)
     .where(eq(assessment.userId, userId))
 
-  const correct = assessments.filter((a) => a.isCorrect).length
-  const wrong = assessments.length - correct
-  const total = assessments.length
+  const decisive = assessments.filter((a) => !a.zoneNotReached)
+  const correct = decisive.filter((a) => a.isCorrect).length
+  const wrong = decisive.length - correct
+  const notReached = assessments.length - decisive.length
+  const total = decisive.length
   const hitRate = total > 0 ? (correct / total) * 100 : 0
 
-  return { correct, wrong, total, hitRate, stockCount: stocks.length }
+  return { correct, wrong, notReached, total, hitRate, stockCount: stocks.length }
 }
 
 /** Cumulative hit rate over time across all assessments (chronological). */
@@ -122,6 +128,7 @@ export async function getHitRateTimeline(): Promise<TimelinePoint[]> {
   let wrong = 0
 
   for (const a of assessments) {
+    if (a.zoneNotReached) continue // neutral, zählt nicht in die Trefferquote
     if (a.isCorrect) correct++
     else wrong++
     const total = correct + wrong
@@ -161,10 +168,11 @@ export async function addStock(formData: {
   return { id: row.id }
 }
 
-/** Add an individual assessment (correct or wrong) for a stock. */
+/** Add an individual assessment (correct, wrong, or zone-not-reached) for a stock. */
 export async function addAssessment(formData: {
   stockId: number
   isCorrect: boolean
+  zoneNotReached?: boolean
   note?: string
   assessmentDate?: string // ISO date string
   predictedDirection?: 'long' | 'short' | null
@@ -180,10 +188,14 @@ export async function addAssessment(formData: {
 
   if (!owned) throw new Error('Aktie nicht gefunden.')
 
+  const zoneNotReached = formData.zoneNotReached ?? false
+
   await db.insert(assessment).values({
     userId,
     stockId: formData.stockId,
-    isCorrect: formData.isCorrect,
+    // bei "nicht angelaufen" ist isCorrect bedeutungslos → false als Platzhalter
+    isCorrect: zoneNotReached ? false : formData.isCorrect,
+    zoneNotReached,
     note: formData.note?.trim() || null,
     predictedDirection: formData.predictedDirection ?? null,
     elliottCount: formData.elliottCount?.trim() || null,
@@ -208,6 +220,7 @@ export async function getAssessmentsForStock(stockId: number) {
 export type AssessmentEntry = {
   id: number
   isCorrect: boolean
+  zoneNotReached: boolean
   note: string | null
   assessmentDate: string // ISO date
 }
@@ -219,7 +232,8 @@ export type StockDetail = {
   createdAt: string // ISO date
   correct: number
   wrong: number
-  total: number
+  notReached: number // Zone nicht angelaufen (neutral)
+  total: number // entscheidungsrelevant = correct + wrong
   hitRate: number // 0-100
   timeline: TimelinePoint[]
   assessments: AssessmentEntry[]
@@ -246,28 +260,35 @@ export async function getStockDetail(
 
   let correct = 0
   let wrong = 0
+  let notReached = 0
   const timeline: TimelinePoint[] = []
   const assessments: AssessmentEntry[] = []
 
   for (const a of rows) {
-    if (a.isCorrect) correct++
-    else wrong++
-    const total = correct + wrong
     const d = new Date(a.assessmentDate)
-    timeline.push({
-      date: d.toISOString(),
-      label: d.toLocaleDateString('de-DE', {
-        day: '2-digit',
-        month: '2-digit',
-        year: '2-digit',
-      }),
-      hitRate: (correct / total) * 100,
-      correct,
-      wrong,
-    })
+    if (a.zoneNotReached) {
+      // neutral: nicht in Trefferquote/Timeline, aber als Eintrag sichtbar
+      notReached++
+    } else {
+      if (a.isCorrect) correct++
+      else wrong++
+      const total = correct + wrong
+      timeline.push({
+        date: d.toISOString(),
+        label: d.toLocaleDateString('de-DE', {
+          day: '2-digit',
+          month: '2-digit',
+          year: '2-digit',
+        }),
+        hitRate: (correct / total) * 100,
+        correct,
+        wrong,
+      })
+    }
     assessments.push({
       id: a.id,
       isCorrect: a.isCorrect,
+      zoneNotReached: a.zoneNotReached,
       note: a.note,
       assessmentDate: d.toISOString(),
     })
@@ -286,6 +307,7 @@ export async function getStockDetail(
     createdAt: new Date(owned.createdAt).toISOString(),
     correct,
     wrong,
+    notReached,
     total,
     hitRate,
     timeline,

@@ -83,6 +83,8 @@ export const assessment = pgTable('assessment', {
   userId: text('userId').notNull(),
   stockId: integer('stockId').notNull(),
   isCorrect: boolean('isCorrect').notNull(),
+  // neutral: Zielzone nie angelaufen → weder richtig noch falsch (isCorrect ignoriert)
+  zoneNotReached: boolean('zoneNotReached').notNull().default(false),
   note: text('note'),
   // Elliott / Douglas enrichment (optional)
   predictedDirection: text('predictedDirection'), // long | short

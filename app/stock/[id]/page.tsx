@@ -55,8 +55,8 @@ export default async function StockDetailPage({
             </div>
             <p className="mt-1 font-mono text-xs text-muted-foreground">
               {hasData
-                ? `${detail.hitRate.toFixed(0)}% Trefferquote über ${detail.total} Prognose${detail.total === 1 ? '' : 'n'} · ${trades.length} echte Trade${trades.length === 1 ? '' : 's'}.`
-                : `Noch keine Prognosen · ${trades.length} echte Trade${trades.length === 1 ? '' : 's'}.`}
+                ? `${detail.hitRate.toFixed(0)}% Trefferquote über ${detail.total} Prognose${detail.total === 1 ? '' : 'n'}${detail.notReached > 0 ? ` · ${detail.notReached} nicht angelaufen` : ''} · ${trades.length} echte Trade${trades.length === 1 ? '' : 's'}.`
+                : `Noch keine Prognosen${detail.notReached > 0 ? ` · ${detail.notReached} nicht angelaufen` : ''} · ${trades.length} echte Trade${trades.length === 1 ? '' : 's'}.`}
             </p>
           </div>
         </div>

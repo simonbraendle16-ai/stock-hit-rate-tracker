@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { AddAssessmentDialog } from '@/components/add-assessment-dialog'
 import { deleteAssessment } from '@/app/actions/stocks'
 import type { AssessmentEntry } from '@/app/actions/stocks'
-import { Check, ListChecks, Plus, Trash2, X } from 'lucide-react'
+import { Check, ListChecks, Plus, Target, Trash2, X } from 'lucide-react'
 import { toast } from 'sonner'
 
 function formatDate(iso: string) {
@@ -85,12 +85,16 @@ export function AssessmentList({
             >
               <span
                 className={
-                  entry.isCorrect
-                    ? 'mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-positive/10 text-positive'
-                    : 'mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-negative/10 text-negative'
+                  entry.zoneNotReached
+                    ? 'mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-warning/10 text-warning'
+                    : entry.isCorrect
+                      ? 'mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-positive/10 text-positive'
+                      : 'mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-negative/10 text-negative'
                 }
               >
-                {entry.isCorrect ? (
+                {entry.zoneNotReached ? (
+                  <Target className="size-4" />
+                ) : entry.isCorrect ? (
                   <Check className="size-4" />
                 ) : (
                   <X className="size-4" />
@@ -102,12 +106,18 @@ export function AssessmentList({
                   <Badge
                     variant="secondary"
                     className={
-                      entry.isCorrect
-                        ? 'text-[10px] text-positive'
-                        : 'text-[10px] text-negative'
+                      entry.zoneNotReached
+                        ? 'text-[10px] text-warning'
+                        : entry.isCorrect
+                          ? 'text-[10px] text-positive'
+                          : 'text-[10px] text-negative'
                     }
                   >
-                    {entry.isCorrect ? 'Richtig' : 'Falsch'}
+                    {entry.zoneNotReached
+                      ? 'Zone nicht angelaufen'
+                      : entry.isCorrect
+                        ? 'Richtig'
+                        : 'Falsch'}
                   </Badge>
                   <span className="text-xs text-muted-foreground tabular-nums">
                     {formatDate(entry.assessmentDate)}
