@@ -7,6 +7,7 @@ import { and, asc, desc, eq } from 'drizzle-orm'
 import { headers } from 'next/headers'
 import { revalidatePath } from 'next/cache'
 import { PRE_TRADE_QUESTIONS, type PreTradeAnswer } from '@/lib/pre-trade-questions'
+import { computeShares, ROUND_TRIP_FEE_EUR } from '@/lib/trade-math'
 
 async function getUserId() {
   const session = await auth.api.getSession({ headers: await headers() })
@@ -29,6 +30,10 @@ export type TradeInput = {
   stopLoss: number
   takeProfit?: number | null
   positionSize?: number | null
+  // Kapitaleinsatz in € (Echtgeld). Stückzahl (positionSize) wird daraus abgeleitet.
+  investedAmount?: number | null
+  // Verkaufsanteil beim Take-Profit in Prozent (Teilverkauf-Projektion).
+  takeProfitPct?: number | null
   strategy?: string | null
   broker?: string | null
   notes?: string | null
@@ -61,8 +66,21 @@ const COOLDOWN_MIN = 60 // Revenge-Guard window
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Realized/estimated P&L of a single completed trade (B's PortfolioBalance logic). */
-function tradePnl(t: TradeRow): number {
+/**
+ * Ordergebühren eines ausgeführten Trades: 9 € je Kauf + 9 € je Verkauf.
+ * Nur bei Echtgeld-Trades, die tatsächlich ausgeführt wurden (gewinn/verlust/breakeven) —
+ * ein Breakeven-Echtgeld-Trade kostet also trotzdem die vollen 18 €.
+ */
+function tradeFees(t: TradeRow): number {
+  if (!t.tradedWithMoney) return 0
+  if (t.result === 'gewinn' || t.result === 'verlust' || t.result === 'breakeven') {
+    return ROUND_TRIP_FEE_EUR
+  }
+  return 0
+}
+
+/** Brutto-P&L eines Trades vor Gebühren (B's PortfolioBalance logic). */
+function tradeGrossPnl(t: TradeRow): number {
   const size = t.positionSize ?? 1
   if (t.result === 'breakeven' || !t.result) return 0
   if (t.actualExitPrice != null && t.entryPrice != null) {
@@ -73,6 +91,11 @@ function tradePnl(t: TradeRow): number {
   }
   // verlust
   return -(t.stopLoss != null ? Math.abs(t.entryPrice - t.stopLoss) * size : size * 10)
+}
+
+/** Netto-P&L: Brutto minus Ordergebühren (bei Echtgeld). Fließt in Bilanz & Statistiken. */
+function tradePnl(t: TradeRow): number {
+  return tradeGrossPnl(t) - tradeFees(t)
 }
 
 /** Risk in account currency = |entry - stop| * size. */
@@ -130,6 +153,16 @@ export async function createTrade(input: TradeInput): Promise<{ id: number }> {
     riskRewardRatio = Number.isFinite(rr) ? rr : null
   }
 
+  // Bei Echtgeld: Stückzahl aus Kapitaleinsatz ableiten (Basis der P&L-Rechnung).
+  const withMoney = input.tradedWithMoney ?? true
+  const investedAmount =
+    withMoney && input.investedAmount != null ? input.investedAmount : null
+  const positionSize =
+    investedAmount != null
+      ? computeShares(investedAmount, input.entryPrice)
+      : (input.positionSize ?? null)
+  const takeProfitPct = input.takeProfitPct != null ? input.takeProfitPct : 100
+
   const [row] = await db
     .insert(trade)
     .values({
@@ -141,7 +174,9 @@ export async function createTrade(input: TradeInput): Promise<{ id: number }> {
       entryPrice: input.entryPrice,
       stopLoss: input.stopLoss,
       takeProfit: input.takeProfit ?? null,
-      positionSize: input.positionSize ?? null,
+      positionSize,
+      investedAmount,
+      takeProfitPct,
       strategy: input.strategy?.trim() || null,
       broker: input.broker?.trim() || null,
       riskRewardRatio,
@@ -244,13 +279,26 @@ export async function updateTradePlan(
     }
   }
 
+  // Kapitaleinsatz oder Einstieg geändert → Stückzahl neu ableiten (Echtgeld).
+  const nextEntry = patch.entryPrice ?? t.entryPrice
+  const nextInvested =
+    patch.investedAmount !== undefined ? patch.investedAmount : t.investedAmount
+  const derivedSize =
+    nextInvested != null ? computeShares(nextInvested, nextEntry) : undefined
+
   await db
     .update(trade)
     .set({
       ...(patch.entryPrice != null ? { entryPrice: patch.entryPrice } : {}),
       ...(patch.stopLoss != null ? { stopLoss: patch.stopLoss } : {}),
       ...(patch.takeProfit !== undefined ? { takeProfit: patch.takeProfit } : {}),
-      ...(patch.positionSize !== undefined ? { positionSize: patch.positionSize } : {}),
+      ...(patch.investedAmount !== undefined ? { investedAmount: patch.investedAmount } : {}),
+      ...(patch.takeProfitPct !== undefined ? { takeProfitPct: patch.takeProfitPct } : {}),
+      ...(derivedSize !== undefined
+        ? { positionSize: derivedSize }
+        : patch.positionSize !== undefined
+          ? { positionSize: patch.positionSize }
+          : {}),
       ...(patch.strategy !== undefined ? { strategy: patch.strategy?.trim() || null } : {}),
       ...(patch.notes !== undefined ? { notes: patch.notes?.trim() || null } : {}),
       ...(patch.elliottWaveCount !== undefined

@@ -110,6 +110,10 @@ export const trade = pgTable('trade', {
   stopLoss: doublePrecision('stopLoss').notNull(),
   takeProfit: doublePrecision('takeProfit'),
   positionSize: doublePrecision('positionSize'),
+  // Kapitaleinsatz in € (Echtgeld); Stückzahl wird daraus abgeleitet (positionSize).
+  investedAmount: doublePrecision('investedAmount'),
+  // Verkaufsanteil beim Take-Profit in Prozent (Teilverkauf-Projektion), Standard 100.
+  takeProfitPct: doublePrecision('takeProfitPct').default(100),
   strategy: text('strategy'),
   broker: text('broker'),
   riskRewardRatio: doublePrecision('riskRewardRatio'),

@@ -37,6 +37,15 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import {
+  ROUND_TRIP_FEE_EUR,
+  projectStopLoss,
+  projectTakeProfit,
+} from '@/lib/trade-math'
+
+const eur = (n: number) =>
+  n.toLocaleString('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 })
+const num = (n: number) => n.toLocaleString('de-DE', { maximumFractionDigits: 4 })
 
 const statusStyle: Record<string, string> = {
   geplant: 'border-warning/40 bg-warning/10 text-warning',
@@ -152,6 +161,8 @@ export function TradeCard({ t }: { t: TradeRow }) {
         <Stat label="Ziel" value={t.takeProfit} tone="pos" />
       </div>
 
+      <MoneyPanel t={t} />
+
       {(t.elliottWaveCount || t.waveDegree) && (
         <div className="mt-2 flex items-center gap-1.5 font-mono text-[11px] text-primary/80">
           <Waves className="size-3" />
@@ -246,6 +257,119 @@ export function TradeCard({ t }: { t: TradeRow }) {
 
       <CloseDialog trade={t} open={closeOpen} onOpenChange={setCloseOpen} onDone={() => router.refresh()} />
       <NoTradeDialog trade={t} open={noTradeOpen} onOpenChange={setNoTradeOpen} onDone={() => router.refresh()} />
+    </div>
+  )
+}
+
+function MoneyPanel({ t }: { t: TradeRow }) {
+  if (!t.tradedWithMoney || t.investedAmount == null) return null
+
+  const invested = t.investedAmount
+  const shares = t.positionSize ?? null
+  const closed = t.status === 'abgeschlossen' && !!t.result
+
+  // Realisiertes Netto-Ergebnis (spiegelt die Server-Logik: Brutto − 18 € Gebühren).
+  let realizedNet: number | null = null
+  if (closed && shares != null) {
+    let gross = 0
+    if (t.result === 'gewinn') {
+      gross =
+        t.actualExitPrice != null
+          ? (t.actualExitPrice - t.entryPrice) * (t.direction === 'short' ? -shares : shares)
+          : t.takeProfit != null
+            ? Math.abs(t.takeProfit - t.entryPrice) * shares
+            : 0
+    } else if (t.result === 'verlust') {
+      gross =
+        t.actualExitPrice != null
+          ? (t.actualExitPrice - t.entryPrice) * (t.direction === 'short' ? -shares : shares)
+          : -(t.stopLoss != null ? Math.abs(t.entryPrice - t.stopLoss) * shares : 0)
+    }
+    realizedNet = gross - ROUND_TRIP_FEE_EUR
+  }
+
+  const tp =
+    !closed && t.takeProfit != null
+      ? projectTakeProfit({
+          invested,
+          entry: t.entryPrice,
+          tp: t.takeProfit,
+          direction: t.direction as 'long' | 'short',
+          sellPct: t.takeProfitPct ?? 100,
+        })
+      : null
+  const sl = !closed
+    ? projectStopLoss({
+        invested,
+        entry: t.entryPrice,
+        sl: t.stopLoss,
+        direction: t.direction as 'long' | 'short',
+      })
+    : null
+
+  return (
+    <div className="mt-3 rounded-lg border border-primary/20 bg-primary/5 p-3">
+      <p className="mb-2 font-mono text-[9px] font-bold uppercase tracking-widest text-primary/70">
+        Kapital & Gebühren
+      </p>
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 font-mono text-xs sm:grid-cols-3">
+        <MRow label="Kapitaleinsatz" value={eur(invested)} />
+        {shares != null && <MRow label="Stückzahl" value={num(shares)} />}
+        <MRow label="Ordergebühr" value={`${eur(ROUND_TRIP_FEE_EUR)} (Round-Trip)`} />
+
+        {closed ? (
+          realizedNet != null && (
+            <MRow
+              label="Netto-Ergebnis"
+              value={eur(realizedNet)}
+              tone={realizedNet >= 0 ? 'pos' : 'neg'}
+              strong
+            />
+          )
+        ) : (
+          <>
+            {tp && (
+              <MRow
+                label={`Netto-Gewinn (TP · ${num(t.takeProfitPct ?? 100)} %)`}
+                value={eur(tp.netProfit)}
+                tone={tp.netProfit >= 0 ? 'pos' : 'neg'}
+                strong
+              />
+            )}
+            {sl && (
+              <MRow label="Netto-Verlust (SL)" value={eur(sl.netLoss)} tone="neg" strong />
+            )}
+          </>
+        )}
+      </dl>
+    </div>
+  )
+}
+
+function MRow({
+  label,
+  value,
+  tone,
+  strong,
+}: {
+  label: string
+  value: string
+  tone?: 'pos' | 'neg'
+  strong?: boolean
+}) {
+  return (
+    <div className="flex flex-col">
+      <dt className="text-[9px] uppercase tracking-widest text-muted-foreground">{label}</dt>
+      <dd
+        className={cn(
+          strong ? 'font-bold' : 'font-medium',
+          tone === 'pos' && 'text-positive',
+          tone === 'neg' && 'text-destructive',
+          !tone && 'text-foreground',
+        )}
+      >
+        {value}
+      </dd>
     </div>
   )
 }

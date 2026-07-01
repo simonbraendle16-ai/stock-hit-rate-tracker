@@ -18,12 +18,26 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   Banknote,
+  Coins,
   FlaskConical,
   Shield,
+  TrendingDown,
+  TrendingUp,
   Waves,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import {
+  ORDER_FEE_EUR,
+  ROUND_TRIP_FEE_EUR,
+  projectStopLoss,
+  projectTakeProfit,
+} from '@/lib/trade-math'
+
+const eur = (n: number) =>
+  n.toLocaleString('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 })
+const num = (n: number, d = 4) =>
+  n.toLocaleString('de-DE', { maximumFractionDigits: d })
 
 const markets = [
   ['aktien', 'Aktien'],
@@ -66,6 +80,8 @@ export function TradeForm() {
     elliottInvalidation: '',
     market: 'aktien',
     positionSize: '',
+    investedAmount: '',
+    takeProfitPct: '100',
     broker: '',
     strategy: '',
     notes: '',
@@ -84,6 +100,36 @@ export function TradeForm() {
     if (risk === 0) return null
     return Math.abs(tp - entry) / risk
   }, [form.entryPrice, form.stopLoss, form.takeProfit])
+
+  // --- Geld-/Gebühren-Projektion (nur Echtgeld) ---
+  const money = useMemo(() => {
+    if (!tradedWithMoney) return null
+    const invested = parseFloat(form.investedAmount)
+    const entry = parseFloat(form.entryPrice)
+    if (!invested || !entry) return null
+    const sl = parseFloat(form.stopLoss)
+    const tp = parseFloat(form.takeProfit)
+    const sellPct = parseFloat(form.takeProfitPct) || 100
+    return {
+      shares: invested / entry,
+      tp:
+        tp > 0
+          ? projectTakeProfit({ invested, entry, tp, direction: form.direction, sellPct })
+          : null,
+      sl:
+        sl > 0
+          ? projectStopLoss({ invested, entry, sl, direction: form.direction })
+          : null,
+    }
+  }, [
+    tradedWithMoney,
+    form.investedAmount,
+    form.entryPrice,
+    form.stopLoss,
+    form.takeProfit,
+    form.takeProfitPct,
+    form.direction,
+  ])
 
   // Schritt 1: Pflichtfelder prüfen, dann den 4-Fragen-Dialog öffnen.
   const handleSubmit = (e: React.FormEvent) => {
@@ -111,6 +157,9 @@ export function TradeForm() {
         stopLoss: parseFloat(form.stopLoss),
         takeProfit: form.takeProfit ? parseFloat(form.takeProfit) : null,
         positionSize: form.positionSize ? parseFloat(form.positionSize) : null,
+        investedAmount:
+          tradedWithMoney && form.investedAmount ? parseFloat(form.investedAmount) : null,
+        takeProfitPct: form.takeProfitPct ? parseFloat(form.takeProfitPct) : 100,
         broker: form.broker || null,
         strategy: form.strategy || null,
         notes: form.notes || null,
@@ -299,6 +348,92 @@ export function TradeForm() {
         </div>
       )}
 
+      {/* Kapital & Gebühren — nur bei Echtgeld */}
+      {tradedWithMoney && (
+        <div className="glass-card space-y-4 p-4">
+          <div className="flex items-center gap-2">
+            <Coins className="size-4 text-primary" />
+            <p className="font-mono text-[10px] font-bold tracking-widest text-primary">
+              KAPITAL & GEBÜHREN
+            </p>
+            <span className="ml-auto font-mono text-[10px] text-muted-foreground">
+              {eur(ORDER_FEE_EUR)} je Order · {eur(ROUND_TRIP_FEE_EUR)} Round-Trip
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label className={labelCls}>Kapitaleinsatz (€)</Label>
+              <Input
+                type="number"
+                step="any"
+                min="0"
+                value={form.investedAmount}
+                onChange={(e) => set('investedAmount', e.target.value)}
+                placeholder="z. B. 5000"
+                className="input-ocean h-11 font-mono"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className={labelCls}>Verkaufsanteil beim Take-Profit (%)</Label>
+              <Input
+                type="number"
+                step="any"
+                min="0"
+                max="100"
+                value={form.takeProfitPct}
+                onChange={(e) => set('takeProfitPct', e.target.value)}
+                placeholder="100"
+                className="input-ocean h-11 font-mono"
+              />
+            </div>
+          </div>
+
+          {money && (money.tp || money.sl) && (
+            <div className="space-y-3">
+              {money.tp && (
+                <div className="rounded-lg border border-positive/25 bg-positive/5 p-3">
+                  <div className="mb-2 flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-widest text-positive">
+                    <TrendingUp className="size-3.5" /> Beim Take-Profit
+                  </div>
+                  <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 font-mono text-xs sm:grid-cols-3">
+                    <Row label="Stückzahl gesamt" value={num(money.tp.shares)} />
+                    <Row label="Davon verkauft" value={num(money.tp.soldShares)} />
+                    <Row label="Restposition" value={num(money.tp.remainingShares)} />
+                    <Row label="Verkaufserlös" value={eur(money.tp.proceeds)} />
+                    <Row label="Brutto-Gewinn" value={eur(money.tp.grossProfit)} />
+                    <Row label="Gebühren" value={`−${eur(money.tp.fees)}`} tone="neg" />
+                    <Row
+                      label="Netto-Gewinn"
+                      value={eur(money.tp.netProfit)}
+                      tone={money.tp.netProfit >= 0 ? 'pos' : 'neg'}
+                      strong
+                    />
+                  </dl>
+                </div>
+              )}
+              {money.sl && (
+                <div className="rounded-lg border border-destructive/25 bg-destructive/5 p-3">
+                  <div className="mb-2 flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-widest text-destructive">
+                    <TrendingDown className="size-3.5" /> Beim Stop-Loss (volle Position)
+                  </div>
+                  <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 font-mono text-xs sm:grid-cols-3">
+                    <Row label="Kursverlust" value={eur(money.sl.grossLoss)} tone="neg" />
+                    <Row label="Gebühren" value={`−${eur(money.sl.fees)}`} tone="neg" />
+                    <Row
+                      label="Netto-Verlust"
+                      value={eur(money.sl.netLoss)}
+                      tone="neg"
+                      strong
+                    />
+                  </dl>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Elliott-Block */}
       <div className="glass-card space-y-4 p-4">
         <div className="flex items-center gap-2">
@@ -362,17 +497,26 @@ export function TradeForm() {
             ))}
           </select>
         </div>
-        <div className="space-y-2">
-          <Label className={labelCls}>Positionsgröße</Label>
-          <Input
-            type="number"
-            step="any"
-            value={form.positionSize}
-            onChange={(e) => set('positionSize', e.target.value)}
-            placeholder="Anzahl / Betrag"
-            className="input-ocean h-11 font-mono"
-          />
-        </div>
+        {tradedWithMoney ? (
+          <div className="space-y-2">
+            <Label className={labelCls}>Stückzahl (aus Kapitaleinsatz)</Label>
+            <div className="input-ocean flex h-11 items-center rounded-lg px-3 font-mono text-sm text-muted-foreground">
+              {money?.shares != null ? num(money.shares) : '—'}
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <Label className={labelCls}>Positionsgröße</Label>
+            <Input
+              type="number"
+              step="any"
+              value={form.positionSize}
+              onChange={(e) => set('positionSize', e.target.value)}
+              placeholder="Anzahl / Betrag"
+              className="input-ocean h-11 font-mono"
+            />
+          </div>
+        )}
         <div className="space-y-2">
           <Label className={labelCls}>Broker</Label>
           <Input
@@ -430,5 +574,33 @@ export function TradeForm() {
         submitting={loading}
       />
     </>
+  )
+}
+
+function Row({
+  label,
+  value,
+  tone,
+  strong,
+}: {
+  label: string
+  value: string
+  tone?: 'pos' | 'neg'
+  strong?: boolean
+}) {
+  return (
+    <div className="flex flex-col">
+      <dt className="text-[9px] uppercase tracking-widest text-muted-foreground">{label}</dt>
+      <dd
+        className={cn(
+          strong ? 'font-bold' : 'font-medium',
+          tone === 'pos' && 'text-positive',
+          tone === 'neg' && 'text-destructive',
+          !tone && 'text-foreground',
+        )}
+      >
+        {value}
+      </dd>
+    </div>
   )
 }
