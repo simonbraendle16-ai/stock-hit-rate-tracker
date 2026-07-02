@@ -24,16 +24,18 @@ export function AddStockDialog() {
   const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
   const [ticker, setTicker] = useState('')
+  const [chartUrl, setChartUrl] = useState('')
   const [loading, setLoading] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     try {
-      await addStock({ name, ticker })
+      await addStock({ name, ticker, chartUrl })
       toast.success(`${name.trim()} hinzugefügt`)
       setName('')
       setTicker('')
+      setChartUrl('')
       setOpen(false)
       router.refresh()
     } catch (err) {
@@ -81,6 +83,20 @@ export function AddStockDialog() {
               required
               className="uppercase"
             />
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="stock-chart-url">Chart-Link (optional)</Label>
+            <Input
+              id="stock-chart-url"
+              type="url"
+              inputMode="url"
+              placeholder="z. B. https://www.tradingview.com/chart/?symbol=AAPL"
+              value={chartUrl}
+              onChange={(e) => setChartUrl(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Direkter Link zum Chart, um ihn später mit einem Klick zu öffnen.
+            </p>
           </div>
           <DialogFooter>
             <Button type="submit" disabled={loading} className="w-full sm:w-auto">

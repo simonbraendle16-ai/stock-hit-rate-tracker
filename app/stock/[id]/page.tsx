@@ -8,6 +8,7 @@ import { CockpitHeader } from '@/components/cockpit-header'
 import { DistributionChart } from '@/components/distribution-chart'
 import { HitRateTimeline } from '@/components/hitrate-timeline'
 import { AssessmentList } from '@/components/assessment-list'
+import { ChartLinkControl } from '@/components/chart-link-control'
 import { Badge } from '@/components/ui/badge'
 import { ArrowLeft, ArrowUpRight, ArrowDownRight } from 'lucide-react'
 
@@ -59,6 +60,12 @@ export default async function StockDetailPage({
                 : `Noch keine Prognosen${detail.notReached > 0 ? ` · ${detail.notReached} nicht angelaufen` : ''} · ${trades.length} echte Trade${trades.length === 1 ? '' : 's'}.`}
             </p>
           </div>
+
+          <ChartLinkControl
+            stockId={detail.id}
+            stockName={detail.name}
+            chartUrl={detail.chartUrl}
+          />
         </div>
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">

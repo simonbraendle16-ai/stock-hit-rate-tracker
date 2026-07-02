@@ -73,6 +73,8 @@ export const stock = pgTable('stock', {
   ticker: text('ticker').notNull(),
   // aktien | krypto | forex | rohstoffe | etf | optionen | sonstiges
   market: text('market').notNull().default('aktien'),
+  // optionaler Link zum Chart (z. B. TradingView), um ihn direkt aufzurufen
+  chartUrl: text('chartUrl'),
   createdAt: timestamp('createdAt').notNull().defaultNow(),
 })
 

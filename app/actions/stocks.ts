@@ -13,10 +13,31 @@ async function getUserId() {
   return session.user.id
 }
 
+/**
+ * Normalisiert einen optionalen Chart-Link. Leerer Input → null.
+ * Fehlendes Schema wird als https:// ergänzt. Nur http/https werden akzeptiert.
+ */
+function normalizeChartUrl(raw?: string | null): string | null {
+  const trimmed = (raw ?? '').trim()
+  if (!trimmed) return null
+  const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`
+  let parsed: URL
+  try {
+    parsed = new URL(withScheme)
+  } catch {
+    throw new Error('Chart-Link ist keine gültige URL.')
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('Chart-Link muss mit http:// oder https:// beginnen.')
+  }
+  return parsed.toString()
+}
+
 export type StockWithStats = {
   id: number
   name: string
   ticker: string
+  chartUrl: string | null
   correct: number
   wrong: number
   notReached: number // Zone nicht angelaufen (neutral)
@@ -72,6 +93,7 @@ export async function getStocksWithStats(): Promise<StockWithStats[]> {
       id: s.id,
       name: s.name,
       ticker: s.ticker,
+      chartUrl: s.chartUrl,
       correct: counts.correct,
       wrong: counts.wrong,
       notReached: counts.notReached,
@@ -153,19 +175,41 @@ export async function getHitRateTimeline(): Promise<TimelinePoint[]> {
 export async function addStock(formData: {
   name: string
   ticker: string
+  chartUrl?: string | null
 }): Promise<{ id: number }> {
   const userId = await getUserId()
   const name = formData.name.trim()
   const ticker = formData.ticker.trim().toUpperCase()
   if (!name || !ticker) throw new Error('Name und Ticker sind erforderlich.')
+  const chartUrl = normalizeChartUrl(formData.chartUrl)
 
   const [row] = await db
     .insert(stock)
-    .values({ userId, name, ticker })
+    .values({ userId, name, ticker, chartUrl })
     .returning({ id: stock.id })
 
   revalidatePath('/')
   return { id: row.id }
+}
+
+/** Set or clear the chart link for an existing stock. */
+export async function updateStockChartUrl(
+  stockId: number,
+  chartUrl: string | null,
+): Promise<void> {
+  const userId = await getUserId()
+  const normalized = normalizeChartUrl(chartUrl)
+
+  const result = await db
+    .update(stock)
+    .set({ chartUrl: normalized })
+    .where(and(eq(stock.id, stockId), eq(stock.userId, userId)))
+    .returning({ id: stock.id })
+
+  if (result.length === 0) throw new Error('Aktie nicht gefunden.')
+
+  revalidatePath('/')
+  revalidatePath(`/stock/${stockId}`)
 }
 
 /** Add an individual assessment (correct, wrong, or zone-not-reached) for a stock. */
@@ -229,6 +273,7 @@ export type StockDetail = {
   id: number
   name: string
   ticker: string
+  chartUrl: string | null
   createdAt: string // ISO date
   correct: number
   wrong: number
@@ -304,6 +349,7 @@ export async function getStockDetail(
     id: owned.id,
     name: owned.name,
     ticker: owned.ticker,
+    chartUrl: owned.chartUrl,
     createdAt: new Date(owned.createdAt).toISOString(),
     correct,
     wrong,

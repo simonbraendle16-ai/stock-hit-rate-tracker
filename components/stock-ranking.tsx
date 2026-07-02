@@ -9,8 +9,18 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import type { StockWithStats } from '@/app/actions/stocks'
 import { AddAssessmentDialog } from '@/components/add-assessment-dialog'
+import { EditChartUrlDialog } from '@/components/edit-chart-url-dialog'
 import { deleteStock } from '@/app/actions/stocks'
-import { BarChart3, Eye, Plus, Search, Trash2, Trophy, X } from 'lucide-react'
+import {
+  BarChart3,
+  Eye,
+  LineChart,
+  Plus,
+  Search,
+  Trash2,
+  Trophy,
+  X,
+} from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 
@@ -31,6 +41,8 @@ export function StockRanking({ stocks }: { stocks: StockWithStats[] }) {
   const router = useRouter()
   const [activeStock, setActiveStock] = useState<StockWithStats | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [chartStock, setChartStock] = useState<StockWithStats | null>(null)
+  const [chartDialogOpen, setChartDialogOpen] = useState(false)
   const [query, setQuery] = useState('')
 
   // Rang aus der ungefilterten (nach Trefferquote sortierten) Liste festhalten,
@@ -48,6 +60,11 @@ export function StockRanking({ stocks }: { stocks: StockWithStats[] }) {
   const openAssessment = (stock: StockWithStats) => {
     setActiveStock(stock)
     setDialogOpen(true)
+  }
+
+  const openChartEditor = (stock: StockWithStats) => {
+    setChartStock(stock)
+    setChartDialogOpen(true)
   }
 
   const handleDelete = async (stock: StockWithStats) => {
@@ -180,6 +197,29 @@ export function StockRanking({ stocks }: { stocks: StockWithStats[] }) {
                     </span>
                   </span>
                   <div className="flex items-center gap-1">
+                    {stock.chartUrl ? (
+                      <a
+                        href={stock.chartUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={buttonVariants({ size: 'sm', variant: 'outline' })}
+                        title="Chart öffnen"
+                      >
+                        <LineChart className="size-3.5" />
+                        <span className="hidden sm:inline">Chart</span>
+                      </a>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-muted-foreground"
+                        onClick={() => openChartEditor(stock)}
+                        title="Chart-Link hinzufügen"
+                      >
+                        <LineChart className="size-3.5" />
+                        <span className="hidden sm:inline">Chart-Link</span>
+                      </Button>
+                    )}
                     <Link
                       href={`/stock/${stock.id}`}
                       className={buttonVariants({ size: 'sm', variant: 'outline' })}
@@ -218,6 +258,16 @@ export function StockRanking({ stocks }: { stocks: StockWithStats[] }) {
           stockName={activeStock.name}
           open={dialogOpen}
           onOpenChange={setDialogOpen}
+        />
+      )}
+
+      {chartStock && (
+        <EditChartUrlDialog
+          stockId={chartStock.id}
+          stockName={chartStock.name}
+          chartUrl={chartStock.chartUrl}
+          open={chartDialogOpen}
+          onOpenChange={setChartDialogOpen}
         />
       )}
     </Card>
