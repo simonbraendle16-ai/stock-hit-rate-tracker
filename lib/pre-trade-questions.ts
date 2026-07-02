@@ -2,7 +2,9 @@
 // Gemeinsame Quelle für den Dialog (Client) und das Gate in createTrade (Server),
 // damit die Anzahl nie auseinanderläuft.
 export const PRE_TRADE_QUESTIONS = [
+  { key: 'perception', question: 'Hast du alle Informationen korrekt wahrgenommen?' },
   { key: 'wave', question: 'Ist deine Wellenzählung eindeutig?' },
+  { key: 'indicators', question: 'Hast du bei der Aktie die Indikatorenlage geprüft und verglichen?' },
   { key: 'entry', question: 'Ist dein Einstieg klar definiert?' },
   { key: 'stop', question: 'Steht dein Stop-Loss fest?' },
   { key: 'target', question: 'Ist Ziel / Invalidation festgelegt?' },
