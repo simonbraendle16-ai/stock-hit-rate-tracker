@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, ListChecks, LineChart, Target } from 'lucide-react'
+import { LayoutDashboard, ListChecks, LineChart, Target, Settings } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const items = [
@@ -10,6 +10,7 @@ const items = [
   { href: '/trades', label: 'Trades', icon: ListChecks },
   { href: '/analysis', label: 'Analyse', icon: Target },
   { href: '/tracking', label: 'Auswertung', icon: LineChart },
+  { href: '/settings', label: 'Einstellungen', icon: Settings },
 ]
 
 export function CockpitNav() {

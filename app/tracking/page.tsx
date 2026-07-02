@@ -3,6 +3,7 @@ import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 import {
   getDisciplineStats,
+  getEquityStats,
   getMoneyVsPaperStats,
   getZoneStats,
   listTrades,
@@ -12,6 +13,8 @@ import { CockpitHeader } from '@/components/cockpit-header'
 import { DisciplineBar, CockpitStats } from '@/components/discipline-overview'
 import { MoneyHitRateChart } from '@/components/money-hitrate-chart'
 import { MoneyProfitChart } from '@/components/money-profit-chart'
+import { EquityChart } from '@/components/equity-chart'
+import { ExportTradesButton } from '@/components/export-trades-button'
 
 function monthKey(t: TradeRow): string {
   const d = t.closedAt ? new Date(t.closedAt) : new Date(t.createdAt)
@@ -22,11 +25,12 @@ export default async function TrackingPage() {
   const session = await auth.api.getSession({ headers: await headers() })
   if (!session?.user) redirect('/sign-in')
 
-  const [stats, trades, moneyStats, zoneStats] = await Promise.all([
+  const [stats, trades, moneyStats, zoneStats, equity] = await Promise.all([
     getDisciplineStats(),
     listTrades(),
     getMoneyVsPaperStats(),
     getZoneStats(),
+    getEquityStats(),
   ])
   const completed = trades.filter((t) => t.status === 'abgeschlossen')
 
@@ -61,13 +65,16 @@ export default async function TrackingPage() {
     <div className="min-h-svh bg-background">
       <CockpitHeader userLabel={session.user.name || session.user.email} />
       <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
-        <div className="mb-6">
-          <h2 className="font-heading text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-            Auswertung
-          </h2>
-          <p className="mt-1 font-mono text-xs text-muted-foreground">
-            Dein statistischer Vorteil über viele Trades — wie ein Casino.
-          </p>
+        <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="font-heading text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+              Auswertung
+            </h2>
+            <p className="mt-1 font-mono text-xs text-muted-foreground">
+              Dein statistischer Vorteil über viele Trades — wie ein Casino.
+            </p>
+          </div>
+          <ExportTradesButton />
         </div>
 
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -93,6 +100,43 @@ export default async function TrackingPage() {
 
         <div className="mt-4">
           <CockpitStats stats={stats} />
+        </div>
+
+        {/* Equity-Kurve + Risiko-Kennzahlen */}
+        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <div className="lg:col-span-2">
+            <EquityChart stats={equity} />
+          </div>
+          <div className="grid grid-cols-2 gap-4 lg:col-span-1 lg:grid-cols-1">
+            <div className="glass-card p-4">
+              <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                Max. Drawdown
+              </p>
+              <p className="mt-1 font-heading text-3xl font-bold text-destructive">
+                {equity.maxDrawdown.toLocaleString('de-DE', {
+                  style: 'currency',
+                  currency: 'EUR',
+                  maximumFractionDigits: 0,
+                })}
+              </p>
+              <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+                −{equity.maxDrawdownPct.toFixed(1)} % vom Hoch (nur Echtgeld)
+              </p>
+            </div>
+            <div className="glass-card p-4">
+              <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                Verlust-Serie
+              </p>
+              <p
+                className={`mt-1 font-heading text-3xl font-bold ${equity.currentLossStreak > 0 ? 'text-warning' : 'text-positive'}`}
+              >
+                ×{equity.currentLossStreak}
+              </p>
+              <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+                aktuell · längste Serie: ×{equity.worstLossStreak}
+              </p>
+            </div>
+          </div>
         </div>
 
         {/* Echtgeld vs. Demo — Trefferquote & Ø Gewinn */}

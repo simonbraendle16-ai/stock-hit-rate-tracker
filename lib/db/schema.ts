@@ -63,6 +63,15 @@ export const verification = pgTable('verification', {
 
 // --- App tables ------------------------------------------------------------
 
+// Pro-User-Einstellungen: Startkapital & Risiko-Vorgaben. Grundlage für die
+// echten Geld-Kennzahlen (Bilanz, Rendite) und den Risiko-Guard im Formular.
+export const userSettings = pgTable('user_settings', {
+  userId: text('userId').primaryKey(),
+  startCapital: doublePrecision('startCapital').notNull().default(10000),
+  defaultRiskPct: doublePrecision('defaultRiskPct').notNull().default(1),
+  maxRiskPct: doublePrecision('maxRiskPct').notNull().default(2),
+})
+
 // One row per instrument (stock/crypto/forex…). The shared aggregation key:
 // both pure analyses (assessment) and real trades (trade) reference it.
 // Table name stays `stock` for backwards compatibility; surfaced as "Instrument" in the UI.

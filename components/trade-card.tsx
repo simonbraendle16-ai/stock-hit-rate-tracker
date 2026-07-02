@@ -29,12 +29,14 @@ import {
   Banknote,
   FlaskConical,
   Lock,
+  Pencil,
   Play,
   Target,
   Trash2,
   Waves,
   X,
 } from 'lucide-react'
+import { EditTradeDialog } from '@/components/edit-trade-dialog'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import {
@@ -70,6 +72,7 @@ export function TradeCard({ t }: { t: TradeRow }) {
   const [busy, setBusy] = useState(false)
   const [closeOpen, setCloseOpen] = useState(false)
   const [noTradeOpen, setNoTradeOpen] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
 
   const run = async (fn: () => Promise<unknown>, ok: string) => {
     setBusy(true)
@@ -245,12 +248,26 @@ export function TradeCard({ t }: { t: TradeRow }) {
             </Button>
           </>
         )}
+        {(t.status === 'geplant' || t.status === 'aktiv') && (
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={busy}
+            onClick={() => setEditOpen(true)}
+            className="ml-auto font-mono text-xs text-muted-foreground"
+          >
+            <Pencil className="size-3" /> Bearbeiten
+          </Button>
+        )}
         <Button
           size="sm"
           variant="ghost"
           disabled={busy}
           onClick={handleDelete}
-          className="ml-auto font-mono text-xs text-muted-foreground"
+          className={cn(
+            'font-mono text-xs text-muted-foreground',
+            t.status !== 'geplant' && t.status !== 'aktiv' && 'ml-auto',
+          )}
         >
           <Trash2 className="size-3" />
         </Button>
@@ -258,6 +275,7 @@ export function TradeCard({ t }: { t: TradeRow }) {
 
       <CloseDialog trade={t} open={closeOpen} onOpenChange={setCloseOpen} onDone={() => router.refresh()} />
       <NoTradeDialog trade={t} open={noTradeOpen} onOpenChange={setNoTradeOpen} onDone={() => router.refresh()} />
+      <EditTradeDialog trade={t} open={editOpen} onOpenChange={setEditOpen} onDone={() => router.refresh()} />
     </div>
   )
 }

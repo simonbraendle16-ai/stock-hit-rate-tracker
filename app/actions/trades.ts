@@ -8,6 +8,7 @@ import { headers } from 'next/headers'
 import { revalidatePath } from 'next/cache'
 import { PRE_TRADE_QUESTIONS, type PreTradeAnswer } from '@/lib/pre-trade-questions'
 import { computeShares, ROUND_TRIP_FEE_EUR } from '@/lib/trade-math'
+import { getSettings } from '@/app/actions/settings'
 
 async function getUserId() {
   const session = await auth.api.getSession({ headers: await headers() })
@@ -455,9 +456,14 @@ export async function getTrade(id: number): Promise<TradeRow | null> {
   return t ?? null
 }
 
-/** Douglas discipline + expectancy stats over all completed trades. */
-export async function getDisciplineStats(startCapital = 10000): Promise<DisciplineStats> {
+/**
+ * Douglas discipline + expectancy stats over all completed trades.
+ * Startkapital kommt aus den User-Einstellungen (optionaler Override für Tests).
+ */
+export async function getDisciplineStats(startCapitalOverride?: number): Promise<DisciplineStats> {
   const userId = await getUserId()
+  const startCapital =
+    startCapitalOverride ?? (await getSettings()).startCapital
   const rows = await db
     .select()
     .from(trade)
@@ -647,4 +653,143 @@ export async function getUnifiedHitRateTimeline(): Promise<UnifiedPoint[]> {
     })
   }
   return points
+}
+
+export type EquityPoint = {
+  date: string
+  label: string
+  balance: number // Kontostand nach diesem Trade
+}
+
+export type EquityStats = {
+  startCapital: number
+  points: EquityPoint[]
+  maxDrawdown: number // größter Rückgang vom Hoch, in € (>= 0)
+  maxDrawdownPct: number // relativ zum jeweiligen Hoch, 0-100
+  worstLossStreak: number // längste Serie aufeinanderfolgender Verlust-Trades
+  currentLossStreak: number // aktuelle Verlust-Serie (ab dem jüngsten Trade rückwärts)
+}
+
+/**
+ * Equity-Kurve, Max-Drawdown und Verlust-Serien — NUR Echtgeld-Trades,
+ * chronologisch nach Abschluss. Die Kurve startet beim konfigurierten Startkapital.
+ */
+export async function getEquityStats(): Promise<EquityStats> {
+  const userId = await getUserId()
+  const startCapital = (await getSettings()).startCapital
+
+  const rows = await db
+    .select()
+    .from(trade)
+    .where(and(eq(trade.userId, userId), eq(trade.status, 'abgeschlossen')))
+    .orderBy(asc(trade.closedAt), asc(trade.id))
+
+  const money = rows.filter((t) => t.tradedWithMoney)
+
+  const points: EquityPoint[] = []
+  let balance = startCapital
+  let peak = startCapital
+  let maxDrawdown = 0
+  let maxDrawdownPct = 0
+
+  for (const t of money) {
+    balance += tradePnl(t)
+    if (balance > peak) peak = balance
+    const dd = peak - balance
+    if (dd > maxDrawdown) maxDrawdown = dd
+    if (peak > 0) {
+      const ddPct = (dd / peak) * 100
+      if (ddPct > maxDrawdownPct) maxDrawdownPct = ddPct
+    }
+    const d = t.closedAt ? new Date(t.closedAt) : new Date(t.createdAt)
+    points.push({
+      date: d.toISOString(),
+      label: d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: '2-digit' }),
+      balance,
+    })
+  }
+
+  // Verlust-Serien über ALLE entschiedenen Trades (Geld + Demo), chronologisch.
+  const decisive = rows.filter((t) => t.result === 'gewinn' || t.result === 'verlust')
+  let worstLossStreak = 0
+  let run = 0
+  for (const t of decisive) {
+    if (t.result === 'verlust') {
+      run++
+      if (run > worstLossStreak) worstLossStreak = run
+    } else {
+      run = 0
+    }
+  }
+  let currentLossStreak = 0
+  for (let i = decisive.length - 1; i >= 0; i--) {
+    if (decisive[i].result === 'verlust') currentLossStreak++
+    else break
+  }
+
+  return {
+    startCapital,
+    points,
+    maxDrawdown,
+    maxDrawdownPct,
+    worstLossStreak,
+    currentLossStreak,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// CSV-Export
+// ---------------------------------------------------------------------------
+
+/** Trade-Journal als CSV (Semikolon-getrennt, für Excel/DE-Locale). */
+export async function exportTradesCsv(): Promise<string> {
+  const userId = await getUserId()
+  const rows = await db
+    .select()
+    .from(trade)
+    .where(eq(trade.userId, userId))
+    .orderBy(asc(trade.createdAt), asc(trade.id))
+
+  const headerCols = [
+    'id', 'ticker', 'markt', 'richtung', 'status', 'echtgeld',
+    'einstieg', 'stop', 'ziel', 'stueckzahl', 'kapitaleinsatz',
+    'ergebnis', 'ausstieg', 'netto_pnl', 'plan_befolgt', 'regelbrueche',
+    'wellengrad', 'wellenzaehlung', 'erstellt', 'geschlossen',
+  ]
+
+  const esc = (v: unknown): string => {
+    const s = v == null ? '' : String(v)
+    return /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+  }
+
+  const lines = [headerCols.join(';')]
+  for (const t of rows) {
+    lines.push(
+      [
+        t.id,
+        t.ticker,
+        t.market,
+        t.direction,
+        t.status,
+        t.tradedWithMoney ? 'ja' : 'nein',
+        t.entryPrice,
+        t.stopLoss,
+        t.takeProfit ?? '',
+        t.positionSize ?? '',
+        t.investedAmount ?? '',
+        t.result ?? '',
+        t.actualExitPrice ?? '',
+        t.status === 'abgeschlossen' ? tradePnl(t).toFixed(2) : '',
+        t.followedPlan == null ? '' : t.followedPlan ? 'ja' : 'nein',
+        parseViolations(t.ruleViolations).join('|'),
+        t.waveDegree ?? '',
+        t.elliottWaveCount ?? '',
+        t.createdAt ? new Date(t.createdAt).toISOString() : '',
+        t.closedAt ? new Date(t.closedAt).toISOString() : '',
+      ]
+        .map(esc)
+        .join(';'),
+    )
+  }
+  return lines.join('\n')
 }

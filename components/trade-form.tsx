@@ -64,7 +64,13 @@ const waveDegrees = [
 
 const labelCls = 'font-mono text-[10px] tracking-widest uppercase text-primary/60'
 
-export function TradeForm() {
+export function TradeForm({
+  startCapital = 10000,
+  maxRiskPct = 2,
+}: {
+  startCapital?: number
+  maxRiskPct?: number
+}) {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
   const [questionsOpen, setQuestionsOpen] = useState(false)
@@ -130,6 +136,14 @@ export function TradeForm() {
     form.takeProfitPct,
     form.direction,
   ])
+
+  // --- Risiko-Guard (nur Echtgeld): wie viel % des Kontos riskiert der Stop? ---
+  const risk = useMemo(() => {
+    if (!tradedWithMoney || !money?.sl || !startCapital) return null
+    const riskEur = Math.abs(money.sl.grossLoss)
+    const pct = (riskEur / startCapital) * 100
+    return { riskEur, pct, over: pct > maxRiskPct }
+  }, [tradedWithMoney, money, startCapital, maxRiskPct])
 
   // Schritt 1: Pflichtfelder prüfen, dann den 4-Fragen-Dialog öffnen.
   const handleSubmit = (e: React.FormEvent) => {
@@ -345,6 +359,32 @@ export function TradeForm() {
           <Waves className="size-4" />
           CRV: <span className="font-bold">1:{rr.toFixed(2)}</span>
           {rr < 1 && <span className="ml-1 text-xs">⚠️ Risiko überwiegt!</span>}
+        </div>
+      )}
+
+      {/* Risiko-Guard (nur Echtgeld) */}
+      {risk != null && (
+        <div
+          className={cn(
+            'flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border px-3 py-2.5 font-mono text-sm',
+            risk.over
+              ? 'border-destructive/40 bg-destructive/10 text-destructive'
+              : 'border-positive/30 bg-positive/10 text-positive',
+          )}
+        >
+          <Shield className="size-4" />
+          Konto-Risiko:{' '}
+          <span className="font-bold">
+            {eur(risk.riskEur)} · {risk.pct.toFixed(2)} %
+          </span>
+          <span className="text-muted-foreground">
+            von {eur(startCapital)} (Schwelle {num(maxRiskPct, 1)} %)
+          </span>
+          {risk.over && (
+            <span className="w-full text-xs font-bold">
+              ⚠️ Über deiner Risikoschwelle — Position verkleinern oder Stop enger setzen.
+            </span>
+          )}
         </div>
       )}
 

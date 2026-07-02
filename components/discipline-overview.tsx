@@ -8,6 +8,14 @@ function scoreColor(v: number) {
   return 'text-destructive'
 }
 
+// Win-Rate wird anders bewertet als Disziplin: mit gutem CRV ist eine Quote
+// um 50 % bereits stark, deshalb hier realistischere Schwellen.
+function winRateColor(v: number) {
+  if (v >= 50) return 'text-positive'
+  if (v >= 40) return 'text-warning'
+  return 'text-destructive'
+}
+
 /** The discipline score gets the one bold-contrast treatment in the app. */
 export function DisciplineBar({ stats }: { stats: DisciplineStats }) {
   const v = Math.round(stats.disciplineScore)
@@ -46,7 +54,7 @@ export function CockpitStats({ stats }: { stats: DisciplineStats }) {
       label: 'Gewinnquote',
       value: `${Math.round(stats.winRate)}%`,
       icon: Target,
-      tone: scoreColor(stats.winRate),
+      tone: winRateColor(stats.winRate),
     },
     {
       label: 'Erwartungswert',
