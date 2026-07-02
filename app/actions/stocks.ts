@@ -212,6 +212,16 @@ export async function updateStockChartUrl(
   revalidatePath(`/stock/${stockId}`)
 }
 
+/** Chart-Link eines Instruments (für die Trade-Detailseite). Null, wenn keiner. */
+export async function getStockChartUrl(stockId: number): Promise<string | null> {
+  const userId = await getUserId()
+  const [row] = await db
+    .select({ chartUrl: stock.chartUrl })
+    .from(stock)
+    .where(and(eq(stock.id, stockId), eq(stock.userId, userId)))
+  return row?.chartUrl ?? null
+}
+
 /** Add an individual assessment (correct, wrong, or zone-not-reached) for a stock. */
 export async function addAssessment(formData: {
   stockId: number

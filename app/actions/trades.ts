@@ -132,6 +132,24 @@ export async function createTrade(input: TradeInput): Promise<{ id: number }> {
     throw new Error('Einstieg und Stop-Loss sind erforderlich.')
   }
 
+  // Plausibilität: Ein Stop-Loss liegt bei Long unter, bei Short über dem Einstieg.
+  // Ein Take-Profit liegt bei Long über, bei Short unter dem Einstieg. Sonst wären
+  // die Risiko-/Gewinn-Projektionen falsch vorzeichig.
+  if (input.direction === 'long' && input.stopLoss >= input.entryPrice) {
+    throw new Error('Bei Long muss der Stop-Loss unter dem Einstieg liegen.')
+  }
+  if (input.direction === 'short' && input.stopLoss <= input.entryPrice) {
+    throw new Error('Bei Short muss der Stop-Loss über dem Einstieg liegen.')
+  }
+  if (input.takeProfit != null) {
+    if (input.direction === 'long' && input.takeProfit <= input.entryPrice) {
+      throw new Error('Bei Long muss der Take-Profit über dem Einstieg liegen.')
+    }
+    if (input.direction === 'short' && input.takeProfit >= input.entryPrice) {
+      throw new Error('Bei Short muss der Take-Profit unter dem Einstieg liegen.')
+    }
+  }
+
   // Optional link to an instrument in the watchlist (shared hit-rate key).
   let stockId: number | null = null
   const [existing] = await db
@@ -450,10 +468,12 @@ export async function getDisciplineStats(startCapital = 10000): Promise<Discipli
   const followed = rows.filter((t) => t.followedPlan).length
   const wins = rows.filter((t) => t.result === 'gewinn').length
   const disciplineScore = completed ? (followed / completed) * 100 : 0
-  const winRate = completed ? (wins / completed) * 100 : 0
 
-  // Expectancy as average R-multiple over decisive trades.
+  // Win rate & expectancy beide über ENTSCHIEDENE Trades (Gewinn|Verlust) —
+  // Breakeven zählt weder als Gewinn noch als Verlust, damit beide Kennzahlen
+  // denselben Nenner nutzen.
   const decisive = rows.filter((t) => t.result === 'gewinn' || t.result === 'verlust')
+  const winRate = decisive.length ? (wins / decisive.length) * 100 : 0
   const rSum = decisive.reduce((acc, t) => acc + tradePnl(t) / tradeRisk(t), 0)
   const expectancy = decisive.length ? rSum / decisive.length : 0
 
@@ -465,7 +485,11 @@ export async function getDisciplineStats(startCapital = 10000): Promise<Discipli
   }
 
   const ruleViolations = rows.reduce((acc, t) => acc + parseViolations(t.ruleViolations).length, 0)
-  const totalPnL = rows.reduce((acc, t) => acc + tradePnl(t), 0)
+  // Kontobilanz NUR aus Echtgeld-Trades — Demo/Papertrades dürfen das reale
+  // Kapital und die Rendite nicht verfälschen.
+  const totalPnL = rows
+    .filter((t) => t.tradedWithMoney)
+    .reduce((acc, t) => acc + tradePnl(t), 0)
   const currentBalance = startCapital + totalPnL
   const returnPct = startCapital ? (totalPnL / startCapital) * 100 : 0
 

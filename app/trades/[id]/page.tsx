@@ -3,9 +3,10 @@ import { headers } from 'next/headers'
 import { redirect, notFound } from 'next/navigation'
 import Link from 'next/link'
 import { getTrade } from '@/app/actions/trades'
+import { getStockChartUrl } from '@/app/actions/stocks'
 import { CockpitHeader } from '@/components/cockpit-header'
 import { TradeCard } from '@/components/trade-card'
-import { ArrowLeft, Lock } from 'lucide-react'
+import { ArrowLeft, LineChart, Lock } from 'lucide-react'
 
 export default async function TradeDetailPage({
   params,
@@ -19,6 +20,7 @@ export default async function TradeDetailPage({
   const t = await getTrade(Number(id))
   if (!t) notFound()
 
+  const chartUrl = t.stockId != null ? await getStockChartUrl(t.stockId) : null
   const locked = t.status === 'aktiv' || t.status === 'abgeschlossen'
   const violations: string[] = t.ruleViolations ? JSON.parse(t.ruleViolations) : []
 
@@ -35,6 +37,17 @@ export default async function TradeDetailPage({
 
         <div className="grid grid-cols-1 gap-4">
           <TradeCard t={t} />
+
+          {chartUrl && (
+            <a
+              href={chartUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="glass-card flex items-center gap-2 p-3 font-mono text-[11px] text-primary hover:underline"
+            >
+              <LineChart className="size-4" /> Chart dieses Instruments öffnen
+            </a>
+          )}
 
           {locked && (
             <div className="glass-card flex items-center gap-2 p-3">

@@ -87,6 +87,7 @@ export function TradeCard({ t }: { t: TradeRow }) {
   // Nach dem Löschen auf die Liste navigieren — sonst lädt eine offene
   // Detailseite (/trades/[id]) den geloeschten Trade neu und stürzt via notFound() ab.
   const handleDelete = async () => {
+    if (!confirm(`Trade „${t.ticker}“ endgültig löschen?`)) return
     setBusy(true)
     try {
       await deleteTrade(t.id)
