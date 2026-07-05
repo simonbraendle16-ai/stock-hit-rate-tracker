@@ -15,6 +15,17 @@ export function computeShares(invested: number, entry: number): number {
   return invested / entry
 }
 
+/** Chance-Risiko-Verhältnis (R:R) — richtungsunabhängig, null ohne Take-Profit. */
+export function computeRiskReward(
+  entry: number,
+  stopLoss: number,
+  takeProfit: number | null,
+): number | null {
+  if (takeProfit == null) return null
+  const rr = Math.abs(takeProfit - entry) / Math.abs(entry - stopLoss)
+  return Number.isFinite(rr) ? rr : null
+}
+
 /** Vorzeichen des Kursgewinns pro Stück in Richtung des Trades. */
 function directionalDiff(exit: number, entry: number, direction: Direction): number {
   return direction === 'short' ? entry - exit : exit - entry

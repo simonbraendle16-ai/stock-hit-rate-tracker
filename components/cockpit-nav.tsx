@@ -2,11 +2,12 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, ListChecks, LineChart, Target, Settings } from 'lucide-react'
+import { LayoutDashboard, ListChecks, LineChart, List, Target, Settings } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const items = [
   { href: '/', label: 'Cockpit', icon: LayoutDashboard },
+  { href: '/watchlist', label: 'Watchlist', icon: List },
   { href: '/trades', label: 'Trades', icon: ListChecks },
   { href: '/analysis', label: 'Analyse', icon: Target },
   { href: '/tracking', label: 'Auswertung', icon: LineChart },

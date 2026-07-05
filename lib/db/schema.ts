@@ -158,3 +158,17 @@ export const trade = pgTable('trade', {
   closedAt: timestamp('closedAt'),
   createdAt: timestamp('createdAt').notNull().defaultNow(),
 })
+
+// Persistente Chart-Zeichnungen (Trendlinien, Fibs, Level, Notizen) je Instrument.
+export const chartDrawing = pgTable('chart_drawing', {
+  id: serial('id').primaryKey(),
+  userId: text('userId').notNull(),
+  stockId: integer('stockId').notNull(),
+  // hline | trendline | fib | text
+  type: text('type').notNull(),
+  // JSON array von Punkten: [{ time (Unix-Sek.), price }]; bei text zusätzlich { text }
+  points: text('points').notNull(),
+  // JSON: { color?, dashed?, label? }
+  style: text('style'),
+  createdAt: timestamp('createdAt').notNull().defaultNow(),
+})

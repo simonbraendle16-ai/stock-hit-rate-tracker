@@ -4,11 +4,14 @@ import { redirect, notFound } from 'next/navigation'
 import Link from 'next/link'
 import { getStockDetail } from '@/app/actions/stocks'
 import { getInstrumentTrades } from '@/app/actions/trades'
+import { getDrawings } from '@/app/actions/drawings'
 import { CockpitHeader } from '@/components/cockpit-header'
 import { DistributionChart } from '@/components/distribution-chart'
 import { HitRateTimeline } from '@/components/hitrate-timeline'
 import { AssessmentList } from '@/components/assessment-list'
 import { ChartLinkControl } from '@/components/chart-link-control'
+import { PriceChart, type ChartMarker, type PlanLine } from '@/components/chart/price-chart'
+import { PlanBar } from '@/components/chart/plan-bar'
 import { Badge } from '@/components/ui/badge'
 import { ArrowLeft, ArrowUpRight, ArrowDownRight } from 'lucide-react'
 
@@ -24,13 +27,43 @@ export default async function StockDetailPage({
   const stockId = Number(id)
   if (!Number.isInteger(stockId)) notFound()
 
-  const [detail, trades] = await Promise.all([
+  const [detail, trades, drawings] = await Promise.all([
     getStockDetail(stockId),
     getInstrumentTrades(stockId),
+    getDrawings(stockId),
   ])
   if (!detail) notFound()
 
   const hasData = detail.total > 0
+
+  // Plan-Overlay: Linien aus offenen Trades (geplant/aktiv), richtungsabhängig beschriftet.
+  const openTrades = trades.filter((t) => t.status === 'geplant' || t.status === 'aktiv')
+  const planLines: PlanLine[] = openTrades.flatMap((t) => {
+    const dir = t.direction === 'long' ? 'Long' : 'Short'
+    const lines: PlanLine[] = [
+      { price: t.entryPrice, color: '#45a8ec', title: `Entry ${dir}` },
+      { price: t.stopLoss, color: '#D8505F', title: `Stop ${dir}` },
+    ]
+    if (t.takeProfit != null) {
+      lines.push({ price: t.takeProfit, color: '#4FBE8C', title: `Target ${dir}` })
+    }
+    if (t.elliottInvalidation != null) {
+      lines.push({
+        price: t.elliottInvalidation,
+        color: '#D4AC4E',
+        title: 'Elliott-Invalidation',
+        dashed: true,
+      })
+    }
+    return lines
+  })
+
+  // Assessment-Marker auf der Zeitachse (richtig/falsch/nicht angelaufen).
+  const chartMarkers: ChartMarker[] = detail.assessments.map((a) => ({
+    time: Math.floor(Date.parse(a.assessmentDate) / 1000),
+    kind: a.zoneNotReached ? 'neutral' : a.isCorrect ? 'richtig' : 'falsch',
+    text: '',
+  }))
 
   return (
     <div className="min-h-svh bg-background">
@@ -65,6 +98,29 @@ export default async function StockDetailPage({
             stockId={detail.id}
             stockName={detail.name}
             chartUrl={detail.chartUrl}
+          />
+        </div>
+
+        <div className="mb-6">
+          <PriceChart
+            symbol={detail.ticker}
+            market={detail.market}
+            planLines={planLines}
+            markers={chartMarkers}
+            stockId={detail.id}
+            initialDrawings={drawings}
+          />
+          <PlanBar
+            trades={openTrades.map((t) => ({
+              id: t.id,
+              direction: t.direction === 'short' ? ('short' as const) : ('long' as const),
+              status: t.status,
+              entryPrice: t.entryPrice,
+              stopLoss: t.stopLoss,
+              takeProfit: t.takeProfit,
+              elliottInvalidation: t.elliottInvalidation,
+              riskRewardRatio: t.riskRewardRatio,
+            }))}
           />
         </div>
 

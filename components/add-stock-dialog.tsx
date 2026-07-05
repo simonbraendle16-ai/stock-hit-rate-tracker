@@ -24,6 +24,7 @@ export function AddStockDialog() {
   const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
   const [ticker, setTicker] = useState('')
+  const [market, setMarket] = useState('aktien')
   const [chartUrl, setChartUrl] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -31,10 +32,11 @@ export function AddStockDialog() {
     e.preventDefault()
     setLoading(true)
     try {
-      await addStock({ name, ticker, chartUrl })
+      await addStock({ name, ticker, market, chartUrl })
       toast.success(`${name.trim()} hinzugefügt`)
       setName('')
       setTicker('')
+      setMarket('aktien')
       setChartUrl('')
       setOpen(false)
       router.refresh()
@@ -83,6 +85,32 @@ export function AddStockDialog() {
               required
               className="uppercase"
             />
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="stock-market">Markt</Label>
+            <select
+              id="stock-market"
+              value={market}
+              onChange={(e) => setMarket(e.target.value)}
+              className="input-ocean h-11 w-full rounded-lg px-2.5 font-mono text-sm"
+            >
+              {[
+                ['aktien', 'Aktien'],
+                ['krypto', 'Krypto'],
+                ['forex', 'Forex'],
+                ['rohstoffe', 'Rohstoffe'],
+                ['etf', 'ETF'],
+                ['optionen', 'Optionen'],
+                ['sonstiges', 'Sonstiges'],
+              ].map(([v, l]) => (
+                <option key={v} value={v}>
+                  {l}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-muted-foreground">
+              Bestimmt die Kursdaten-Quelle des eingebetteten Charts.
+            </p>
           </div>
           <div className="flex flex-col gap-2">
             <Label htmlFor="stock-chart-url">Chart-Link (optional)</Label>

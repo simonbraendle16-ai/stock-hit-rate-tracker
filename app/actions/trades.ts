@@ -7,7 +7,7 @@ import { and, asc, desc, eq } from 'drizzle-orm'
 import { headers } from 'next/headers'
 import { revalidatePath } from 'next/cache'
 import { PRE_TRADE_QUESTIONS, type PreTradeAnswer } from '@/lib/pre-trade-questions'
-import { computeShares, ROUND_TRIP_FEE_EUR } from '@/lib/trade-math'
+import { computeRiskReward, computeShares, ROUND_TRIP_FEE_EUR } from '@/lib/trade-math'
 import { getSettings } from '@/app/actions/settings'
 
 async function getUserId() {
@@ -166,11 +166,11 @@ export async function createTrade(input: TradeInput): Promise<{ id: number }> {
     answers.every((a) => a.answer === 'ja')
 
   // live CRV
-  let riskRewardRatio: number | null = null
-  if (input.takeProfit != null) {
-    const rr = Math.abs(input.takeProfit - input.entryPrice) / Math.abs(input.entryPrice - input.stopLoss)
-    riskRewardRatio = Number.isFinite(rr) ? rr : null
-  }
+  const riskRewardRatio = computeRiskReward(
+    input.entryPrice,
+    input.stopLoss,
+    input.takeProfit ?? null,
+  )
 
   // Bei Echtgeld: Stückzahl aus Kapitaleinsatz ableiten (Basis der P&L-Rechnung).
   const withMoney = input.tradedWithMoney ?? true

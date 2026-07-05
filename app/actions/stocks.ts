@@ -37,6 +37,7 @@ export type StockWithStats = {
   id: number
   name: string
   ticker: string
+  market: string
   chartUrl: string | null
   correct: number
   wrong: number
@@ -93,6 +94,7 @@ export async function getStocksWithStats(): Promise<StockWithStats[]> {
       id: s.id,
       name: s.name,
       ticker: s.ticker,
+      market: s.market,
       chartUrl: s.chartUrl,
       correct: counts.correct,
       wrong: counts.wrong,
@@ -171,21 +173,35 @@ export async function getHitRateTimeline(): Promise<TimelinePoint[]> {
   return points
 }
 
+const VALID_MARKETS = [
+  'aktien',
+  'krypto',
+  'forex',
+  'rohstoffe',
+  'etf',
+  'optionen',
+  'sonstiges',
+] as const
+
 /** Create a new stock. */
 export async function addStock(formData: {
   name: string
   ticker: string
+  market?: string
   chartUrl?: string | null
 }): Promise<{ id: number }> {
   const userId = await getUserId()
   const name = formData.name.trim()
   const ticker = formData.ticker.trim().toUpperCase()
   if (!name || !ticker) throw new Error('Name und Ticker sind erforderlich.')
+  const market = (VALID_MARKETS as readonly string[]).includes(formData.market ?? '')
+    ? (formData.market as string)
+    : 'aktien'
   const chartUrl = normalizeChartUrl(formData.chartUrl)
 
   const [row] = await db
     .insert(stock)
-    .values({ userId, name, ticker, chartUrl })
+    .values({ userId, name, ticker, market, chartUrl })
     .returning({ id: stock.id })
 
   revalidatePath('/')
@@ -283,6 +299,7 @@ export type StockDetail = {
   id: number
   name: string
   ticker: string
+  market: string
   chartUrl: string | null
   createdAt: string // ISO date
   correct: number
@@ -359,6 +376,7 @@ export async function getStockDetail(
     id: owned.id,
     name: owned.name,
     ticker: owned.ticker,
+    market: owned.market,
     chartUrl: owned.chartUrl,
     createdAt: new Date(owned.createdAt).toISOString(),
     correct,
