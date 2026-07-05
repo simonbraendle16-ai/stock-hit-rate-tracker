@@ -7,6 +7,8 @@ import {
 } from './types'
 
 const TD_INTERVAL: Record<Interval, string> = {
+  '15min': '15min',
+  '30min': '30min',
   '1h': '1h',
   '4h': '4h',
   '1day': '1day',

@@ -12,7 +12,7 @@ async function getUserId() {
   return session.user.id
 }
 
-export type DrawingType = 'hline' | 'trendline' | 'fib' | 'text'
+export type DrawingType = 'hline' | 'vline' | 'trendline' | 'ray' | 'rect' | 'fib' | 'text'
 
 export interface DrawingPoint {
   time: number // Unix-Sekunden
@@ -28,7 +28,7 @@ export interface Drawing {
   style: { color?: string; dashed?: boolean; label?: string } | null
 }
 
-const VALID_TYPES: DrawingType[] = ['hline', 'trendline', 'fib', 'text']
+const VALID_TYPES: DrawingType[] = ['hline', 'vline', 'trendline', 'ray', 'rect', 'fib', 'text']
 
 function parseDrawing(row: typeof chartDrawing.$inferSelect): Drawing {
   return {
@@ -122,4 +122,12 @@ export async function deleteDrawing(id: number): Promise<void> {
   await db
     .delete(chartDrawing)
     .where(and(eq(chartDrawing.id, id), eq(chartDrawing.userId, userId)))
+}
+
+/** Alle Zeichnungen des Users für EIN Instrument löschen (Toolbar „Alle löschen“). */
+export async function deleteAllDrawings(stockId: number): Promise<void> {
+  const userId = await getUserId()
+  await db
+    .delete(chartDrawing)
+    .where(and(eq(chartDrawing.userId, userId), eq(chartDrawing.stockId, stockId)))
 }

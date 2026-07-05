@@ -7,6 +7,8 @@ import {
 } from './types'
 
 const BINANCE_INTERVAL: Record<Interval, string> = {
+  '15min': '15m',
+  '30min': '30m',
   '1h': '1h',
   '4h': '4h',
   '1day': '1d',

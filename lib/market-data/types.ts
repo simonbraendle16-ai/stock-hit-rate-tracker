@@ -10,7 +10,7 @@ export interface Candle {
   volume: number
 }
 
-export type Interval = '1h' | '4h' | '1day' | '1week' | '1month'
+export type Interval = '15min' | '30min' | '1h' | '4h' | '1day' | '1week' | '1month'
 
 export type Market =
   | 'aktien'
@@ -23,6 +23,8 @@ export type Market =
 
 /** Anzahl Kerzen, die pro Interval geladen werden (deckt 1T–mehrere Jahre ab). */
 export const DEFAULT_OUTPUT_SIZE: Record<Interval, number> = {
+  '15min': 500,
+  '30min': 500,
   '1h': 500,
   '4h': 500,
   '1day': 500,

@@ -9,7 +9,7 @@ import { unstable_cache } from 'next/cache'
 import { headers } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 
-const VALID_INTERVALS: Interval[] = ['1h', '4h', '1day', '1week', '1month']
+const VALID_INTERVALS: Interval[] = ['15min', '30min', '1h', '4h', '1day', '1week', '1month']
 const VALID_MARKETS: Market[] = [
   'aktien',
   'krypto',
@@ -21,8 +21,9 @@ const VALID_MARKETS: Market[] = [
 ]
 
 // Intraday 15 min, Daily und größer 12 h — schont das Twelve-Data-Gratis-Limit.
+const INTRADAY: Interval[] = ['15min', '30min', '1h', '4h']
 function revalidateFor(interval: Interval): number {
-  return interval === '1h' || interval === '4h' ? 60 * 15 : 60 * 60 * 12
+  return INTRADAY.includes(interval) ? 60 * 15 : 60 * 60 * 12
 }
 
 function getCachedCandles(symbol: string, market: Market, interval: Interval) {

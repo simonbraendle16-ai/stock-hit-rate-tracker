@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts'
+import type { BarPrice, IChartApi, ISeriesApi, SeriesType, UTCTimestamp } from 'lightweight-charts'
 import type { Drawing, DrawingPoint } from '@/app/actions/drawings'
 import type { Candle } from '@/lib/market-data/types'
 import type { DrawTool } from './chart-toolbar'
@@ -32,9 +32,11 @@ export function DrawingLayer({
   onSelect,
   onCreate,
   onUpdate,
+  magnet = false,
+  locked = false,
 }: {
   chart: IChartApi
-  series: ISeriesApi<'Candlestick'>
+  series: ISeriesApi<SeriesType>
   candles: Candle[]
   drawings: Drawing[]
   tool: DrawTool
@@ -43,6 +45,10 @@ export function DrawingLayer({
   onSelect: (id: number | null) => void
   onCreate: (type: Drawing['type'], points: DrawingPoint[]) => void
   onUpdate: (id: number, points: DrawingPoint[]) => void
+  /** Snap auf O/H/L/C der nächstgelegenen Kerze (TradingView-Magnet). */
+  magnet?: boolean
+  /** Zeichnungen gesperrt: auswählen ja, verschieben nein. */
+  locked?: boolean
 }) {
   const svgRef = useRef<SVGSVGElement>(null)
   const [, setTick] = useState(0)
@@ -95,13 +101,45 @@ export function DrawingLayer({
         }
         time = best
       }
+      // Magnet: Preis auf O/H/L/C der Kerze snappen, wenn nah genug (≤ 14 px).
+      if (magnet) {
+        const candle = candles.find((c) => c.time === time)
+        if (candle) {
+          let bestPrice: number = price
+          let bestDist = 14
+          for (const p of [candle.open, candle.high, candle.low, candle.close]) {
+            const py = series.priceToCoordinate(p as BarPrice)
+            if (py != null && Math.abs(py - y) < bestDist) {
+              bestDist = Math.abs(py - y)
+              bestPrice = p
+            }
+          }
+          return { time, price: bestPrice }
+        }
+      }
       return { time, price }
     },
-    [chart, series, candles],
+    [chart, series, candles, magnet],
   )
 
   const width = svgRef.current?.clientWidth ?? 0
   const height = svgRef.current?.clientHeight ?? 0
+
+  /** Strahl: von a durch b bis zum Canvas-Rand verlängern. */
+  const extendRay = useCallback(
+    (a: Pt, b: Pt): Pt => {
+      const dx = b.x - a.x
+      const dy = b.y - a.y
+      if (dx === 0 && dy === 0) return b
+      const ts: number[] = []
+      if (dx !== 0) ts.push(dx > 0 ? (width - a.x) / dx : -a.x / dx)
+      if (dy !== 0) ts.push(dy > 0 ? (height - a.y) / dy : -a.y / dy)
+      const positive = ts.filter((t) => t > 0)
+      const t = Math.max(1, positive.length ? Math.min(...positive) : 1)
+      return { x: a.x + dx * t, y: a.y + dy * t }
+    },
+    [width, height],
+  )
 
   // ---- Interaktion ----------------------------------------------------------
 
@@ -113,8 +151,23 @@ export function DrawingLayer({
         const P = pts as Pt[]
         if (d.type === 'hline') {
           if (Math.abs(P[0].y - y) < SELECT_TOLERANCE) return d.id
+        } else if (d.type === 'vline') {
+          if (Math.abs(P[0].x - x) < SELECT_TOLERANCE) return d.id
         } else if (d.type === 'trendline' && P.length >= 2) {
           if (distToSegment({ x, y }, P[0], P[1]) < SELECT_TOLERANCE) return d.id
+        } else if (d.type === 'ray' && P.length >= 2) {
+          if (distToSegment({ x, y }, P[0], extendRay(P[0], P[1])) < SELECT_TOLERANCE) return d.id
+        } else if (d.type === 'rect' && P.length >= 2) {
+          const x1 = Math.min(P[0].x, P[1].x)
+          const x2 = Math.max(P[0].x, P[1].x)
+          const y1 = Math.min(P[0].y, P[1].y)
+          const y2 = Math.max(P[0].y, P[1].y)
+          const inX = x >= x1 - SELECT_TOLERANCE && x <= x2 + SELECT_TOLERANCE
+          const inY = y >= y1 - SELECT_TOLERANCE && y <= y2 + SELECT_TOLERANCE
+          const nearEdge =
+            (inY && (Math.abs(x - x1) < SELECT_TOLERANCE || Math.abs(x - x2) < SELECT_TOLERANCE)) ||
+            (inX && (Math.abs(y - y1) < SELECT_TOLERANCE || Math.abs(y - y2) < SELECT_TOLERANCE))
+          if (nearEdge) return d.id
         } else if (d.type === 'fib' && P.length >= 2) {
           const x1 = Math.min(P[0].x, P[1].x)
           const x2 = Math.max(P[0].x, P[1].x)
@@ -130,7 +183,7 @@ export function DrawingLayer({
       }
       return null
     },
-    [drawings, toPx],
+    [drawings, toPx, extendRay],
   )
 
   const handlePointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
@@ -141,8 +194,8 @@ export function DrawingLayer({
     if (!point) return
 
     if (tool === 'cursor') {
-      // Endpunkt-Handle der Auswahl treffen?
-      if (selectedId != null) {
+      // Endpunkt-Handle der Auswahl treffen? (gesperrt: nur auswählen)
+      if (selectedId != null && !locked) {
         const sel = drawings.find((d) => d.id === selectedId)
         if (sel) {
           const pts = sel.points.map(toPx)
@@ -158,18 +211,21 @@ export function DrawingLayer({
       }
       const hit = hitTest(x, y)
       onSelect(hit)
-      if (hit != null) {
+      if (hit != null && !locked) {
         const d = drawings.find((dd) => dd.id === hit)!
-        dragRef.current = { id: hit, pointIndex: null, startPoints: d.points, startY: y }
+        // Vertikale: Ganzkörper-Drag verschiebt nur den Preis (unsichtbar) —
+        // deshalb direkt den Punkt selbst ziehen (Zeit + Preis).
+        const pointIndex = d.type === 'vline' ? 0 : null
+        dragRef.current = { id: hit, pointIndex, startPoints: d.points, startY: y }
         svgRef.current!.setPointerCapture(e.pointerId)
       }
       return
     }
 
-    if (tool === 'hline') {
-      onCreate('hline', [point])
+    if (tool === 'hline' || tool === 'vline') {
+      onCreate(tool, [point])
       onToolDone()
-    } else if (tool === 'trendline' || tool === 'fib') {
+    } else if (tool === 'trendline' || tool === 'fib' || tool === 'ray' || tool === 'rect') {
       if (pending.length === 0) {
         setPending([point])
       } else {
@@ -214,7 +270,7 @@ export function DrawingLayer({
       return
     }
 
-    if (tool === 'trendline' || tool === 'fib') {
+    if (tool === 'trendline' || tool === 'fib' || tool === 'ray' || tool === 'rect') {
       if (pending.length === 1) setHoverPoint(fromPx(x, y))
     } else if (tool === 'measure' && measure && !measure.frozen) {
       setMeasure({ ...measure, b: fromPx(x, y), frozen: false })
@@ -276,10 +332,46 @@ export function DrawingLayer({
         </g>
       )
     }
+    if (d.type === 'vline') {
+      return (
+        <g key={d.id}>
+          <line x1={P[0].x} y1={0} x2={P[0].x} y2={height} stroke={color} strokeWidth={selected ? 2 : 1} strokeDasharray={d.style?.dashed ? '4 3' : undefined} />
+          {handles}
+        </g>
+      )
+    }
     if (d.type === 'trendline') {
       return (
         <g key={d.id}>
           <line x1={P[0].x} y1={P[0].y} x2={P[1].x} y2={P[1].y} stroke={color} strokeWidth={selected ? 2 : 1.5} strokeDasharray={d.style?.dashed ? '4 3' : undefined} />
+          {handles}
+        </g>
+      )
+    }
+    if (d.type === 'ray' && P.length >= 2) {
+      const end = extendRay(P[0], P[1])
+      return (
+        <g key={d.id}>
+          <line x1={P[0].x} y1={P[0].y} x2={end.x} y2={end.y} stroke={color} strokeWidth={selected ? 2 : 1.5} strokeDasharray={d.style?.dashed ? '4 3' : undefined} />
+          {handles}
+        </g>
+      )
+    }
+    if (d.type === 'rect' && P.length >= 2) {
+      const x1 = Math.min(P[0].x, P[1].x)
+      const y1 = Math.min(P[0].y, P[1].y)
+      return (
+        <g key={d.id}>
+          <rect
+            x={x1}
+            y={y1}
+            width={Math.abs(P[1].x - P[0].x)}
+            height={Math.abs(P[1].y - P[0].y)}
+            fill={color}
+            fillOpacity={0.08}
+            stroke={color}
+            strokeWidth={selected ? 2 : 1}
+          />
           {handles}
         </g>
       )
@@ -328,7 +420,23 @@ export function DrawingLayer({
     const a = toPx(pending[0])
     const b = toPx(hoverPoint)
     if (!a || !b) return null
-    return <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#45a8ec" strokeWidth={1} strokeDasharray="4 3" />
+    if (tool === 'rect') {
+      return (
+        <rect
+          x={Math.min(a.x, b.x)}
+          y={Math.min(a.y, b.y)}
+          width={Math.abs(b.x - a.x)}
+          height={Math.abs(b.y - a.y)}
+          fill="#45a8ec"
+          fillOpacity={0.08}
+          stroke="#45a8ec"
+          strokeWidth={1}
+          strokeDasharray="4 3"
+        />
+      )
+    }
+    const end = tool === 'ray' ? extendRay(a, b) : b
+    return <line x1={a.x} y1={a.y} x2={end.x} y2={end.y} stroke="#45a8ec" strokeWidth={1} strokeDasharray="4 3" />
   }
 
   const renderMeasure = () => {
