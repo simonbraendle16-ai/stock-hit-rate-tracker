@@ -27,15 +27,11 @@ import { DrawingLayer } from './drawing-layer'
 import { AnalysisImport } from './analysis-import'
 import { IndicatorMenu } from './indicator-menu'
 import {
+  computeIndicator,
   DEFAULT_INDICATORS,
-  ema,
   loadIndicatorConfig,
-  macd,
-  rsi,
   saveIndicatorConfig,
-  sma,
   type IndicatorConfig,
-  type LinePoint,
 } from './indicators'
 import {
   createDrawing,
@@ -307,129 +303,75 @@ export function PriceChart({
     if (!chartReady || !chart || !candles || candles.length === 0) return
 
     const added: ISeriesApi<SeriesType>[] = []
-    const toLine = (pts: LinePoint[]) =>
-      pts.map((p) => ({ time: p.time as UTCTimestamp, value: p.value }))
-
-    if (indicators.volume.on) {
-      const vol = chart.addSeries(HistogramSeries, {
-        priceScaleId: 'volume',
-        priceFormat: { type: 'volume' },
-        lastValueVisible: false,
-        priceLineVisible: false,
-      })
-      vol.priceScale().applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } })
-      vol.setData(
-        candles.map((c, i) => ({
-          time: c.time as UTCTimestamp,
-          value: c.volume,
-          color:
-            (i > 0 ? c.close >= candles[i - 1].close : true)
-              ? `${palette.up}59`
-              : `${palette.down}59`,
-        })),
+    // Volumen bekommt eine eigene Overlay-Preisskala unten im Hauptchart.
+    const toData = (spec: { data: { time: number; value?: number; color?: string }[] }) =>
+      spec.data.map((pt) =>
+        pt.value == null
+          ? { time: pt.time as UTCTimestamp }
+          : { time: pt.time as UTCTimestamp, value: pt.value, color: pt.color },
       )
-      added.push(vol)
-    }
 
-    if (indicators.ema.on) {
-      const line = chart.addSeries(LineSeries, {
-        color: '#45a8ec',
-        lineWidth: 1,
-        lastValueVisible: false,
-        priceLineVisible: false,
-        title: `EMA ${indicators.ema.period}`,
-      })
-      line.setData(toLine(ema(candles, indicators.ema.period)))
-      added.push(line)
-    }
-
-    if (indicators.sma.on) {
-      const line = chart.addSeries(LineSeries, {
-        color: '#D4AC4E',
-        lineWidth: 1,
-        lastValueVisible: false,
-        priceLineVisible: false,
-        title: `SMA ${indicators.sma.period}`,
-      })
-      line.setData(toLine(sma(candles, indicators.sma.period)))
-      added.push(line)
-    }
-
-    // Sub-Panes: RSI und MACD unter dem Hauptchart.
+    // Jede Sub-Pane-Instanz bekommt ein eigenes Pane; Overlays liegen im Hauptchart.
     let paneIndex = 1
-    if (indicators.rsi.on) {
-      const line = chart.addSeries(
-        LineSeries,
-        {
-          color: '#D4AC4E',
-          lineWidth: 1,
-          lastValueVisible: false,
-          priceLineVisible: false,
-          title: `RSI ${indicators.rsi.period}`,
-        },
-        paneIndex,
-      )
-      line.setData(toLine(rsi(candles, indicators.rsi.period)))
-      for (const level of [30, 70]) {
-        line.createPriceLine({
-          price: level,
-          color: palette.border,
-          lineWidth: 1,
-          lineStyle: LineStyle.Dashed,
-          axisLabelVisible: false,
-          title: '',
-        })
-      }
-      chart.panes()[paneIndex]?.setHeight(90)
-      added.push(line)
-      paneIndex++
-    }
+    for (const inst of indicators.instances) {
+      const specs = computeIndicator(candles, inst, palette)
+      if (specs.length === 0) continue
+      const overlay = specs[0].overlay
+      const targetPane = overlay ? 0 : paneIndex
 
-    if (indicators.macd.on) {
-      const { macd: macdLine, signal, histogram } = macd(
-        candles,
-        indicators.macd.fast,
-        indicators.macd.slow,
-        indicators.macd.signal,
-      )
-      const hist = chart.addSeries(
-        HistogramSeries,
-        { lastValueVisible: false, priceLineVisible: false },
-        paneIndex,
-      )
-      hist.setData(
-        histogram.map((p) => ({
-          time: p.time as UTCTimestamp,
-          value: p.value,
-          color: p.value >= 0 ? `${palette.up}73` : `${palette.down}73`,
-        })),
-      )
-      const m = chart.addSeries(
-        LineSeries,
-        {
-          color: '#45a8ec',
-          lineWidth: 1,
-          lastValueVisible: false,
-          priceLineVisible: false,
-          title: 'MACD',
-        },
-        paneIndex,
-      )
-      m.setData(toLine(macdLine))
-      const sig = chart.addSeries(
-        LineSeries,
-        {
-          color: '#D8505F',
-          lineWidth: 1,
-          lastValueVisible: false,
-          priceLineVisible: false,
-          title: 'Signal',
-        },
-        paneIndex,
-      )
-      sig.setData(toLine(signal))
-      chart.panes()[paneIndex]?.setHeight(110)
-      added.push(hist, m, sig)
+      for (const spec of specs) {
+        if (spec.kind === 'histogram') {
+          const isVolume = inst.type === 'volume'
+          const hist = chart.addSeries(
+            HistogramSeries,
+            {
+              lastValueVisible: false,
+              priceLineVisible: false,
+              ...(isVolume
+                ? { priceScaleId: `volume-${inst.id}`, priceFormat: { type: 'volume' as const } }
+                : {}),
+            },
+            targetPane,
+          )
+          if (isVolume) {
+            hist.priceScale().applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } })
+          }
+          hist.setData(toData(spec))
+          added.push(hist)
+        } else {
+          const line = chart.addSeries(
+            LineSeries,
+            {
+              color: spec.color,
+              lineWidth: (spec.lineWidth ?? 1) as 1 | 2 | 3 | 4,
+              lastValueVisible: false,
+              priceLineVisible: false,
+              title: spec.title ?? '',
+              ...(spec.kind === 'points'
+                ? { lineVisible: false, pointMarkersVisible: true, pointMarkersRadius: 1.5 }
+                : {}),
+            },
+            targetPane,
+          )
+          line.setData(toData(spec))
+          for (const level of spec.levels ?? []) {
+            line.createPriceLine({
+              price: level,
+              color: palette.border,
+              lineWidth: 1,
+              lineStyle: LineStyle.Dashed,
+              axisLabelVisible: false,
+              title: '',
+            })
+          }
+          added.push(line)
+        }
+      }
+
+      if (!overlay) {
+        chart.panes()[targetPane]?.setHeight(inst.type === 'macd' ? 110 : 90)
+        paneIndex++
+      }
     }
 
     return () => {

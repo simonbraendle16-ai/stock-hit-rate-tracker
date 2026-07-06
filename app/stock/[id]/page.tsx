@@ -11,6 +11,7 @@ import { HitRateTimeline } from '@/components/hitrate-timeline'
 import { AssessmentList } from '@/components/assessment-list'
 import { ChartLinkControl } from '@/components/chart-link-control'
 import { PriceChart, type ChartMarker, type PlanLine } from '@/components/chart/price-chart'
+import { ChartModeTabs } from '@/components/chart/chart-mode-tabs'
 import { PlanBar } from '@/components/chart/plan-bar'
 import { Badge } from '@/components/ui/badge'
 import { ArrowLeft, ArrowUpRight, ArrowDownRight } from 'lucide-react'
@@ -102,14 +103,20 @@ export default async function StockDetailPage({
         </div>
 
         <div className="mb-6">
-          <PriceChart
-            symbol={detail.ticker}
+          <ChartModeTabs
+            ticker={detail.ticker}
             market={detail.market}
-            planLines={planLines}
-            markers={chartMarkers}
-            stockId={detail.id}
-            initialDrawings={drawings}
-          />
+            chartUrl={detail.chartUrl}
+          >
+            <PriceChart
+              symbol={detail.ticker}
+              market={detail.market}
+              planLines={planLines}
+              markers={chartMarkers}
+              stockId={detail.id}
+              initialDrawings={drawings}
+            />
+          </ChartModeTabs>
           <PlanBar
             trades={openTrades.map((t) => ({
               id: t.id,

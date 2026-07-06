@@ -26,18 +26,20 @@ export function AddStockDialog() {
   const [ticker, setTicker] = useState('')
   const [market, setMarket] = useState('aktien')
   const [chartUrl, setChartUrl] = useState('')
+  const [section, setSection] = useState('')
   const [loading, setLoading] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     try {
-      await addStock({ name, ticker, market, chartUrl })
+      await addStock({ name, ticker, market, chartUrl, section })
       toast.success(`${name.trim()} hinzugefügt`)
       setName('')
       setTicker('')
       setMarket('aktien')
       setChartUrl('')
+      setSection('')
       setOpen(false)
       router.refresh()
     } catch (err) {
@@ -110,6 +112,19 @@ export function AddStockDialog() {
             </select>
             <p className="text-xs text-muted-foreground">
               Bestimmt die Kursdaten-Quelle des eingebetteten Charts.
+            </p>
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="stock-section">Watchlist-Sektion (optional)</Label>
+            <Input
+              id="stock-section"
+              placeholder="z. B. China, Minen, KI …"
+              value={section}
+              onChange={(e) => setSection(e.target.value)}
+              maxLength={40}
+            />
+            <p className="text-xs text-muted-foreground">
+              Gruppiert das Instrument in der Watchlist (wie TradingView-Sektionen).
             </p>
           </div>
           <div className="flex flex-col gap-2">

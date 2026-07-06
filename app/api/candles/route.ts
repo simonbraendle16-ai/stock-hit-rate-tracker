@@ -1,11 +1,6 @@
 import { auth } from '@/lib/auth'
-import {
-  Interval,
-  Market,
-  MarketDataError,
-  resolveProvider,
-} from '@/lib/market-data'
-import { unstable_cache } from 'next/cache'
+import { Interval, Market, MarketDataError } from '@/lib/market-data'
+import { getCachedCandles } from '@/lib/market-data/cached'
 import { headers } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 
@@ -19,20 +14,6 @@ const VALID_MARKETS: Market[] = [
   'optionen',
   'sonstiges',
 ]
-
-// Intraday 15 min, Daily und größer 12 h — schont das Twelve-Data-Gratis-Limit.
-const INTRADAY: Interval[] = ['15min', '30min', '1h', '4h']
-function revalidateFor(interval: Interval): number {
-  return INTRADAY.includes(interval) ? 60 * 15 : 60 * 60 * 12
-}
-
-function getCachedCandles(symbol: string, market: Market, interval: Interval) {
-  return unstable_cache(
-    async () => resolveProvider(market).getCandles(symbol, interval),
-    ['candles', symbol, market, interval],
-    { revalidate: revalidateFor(interval) },
-  )()
-}
 
 export async function GET(req: NextRequest) {
   const session = await auth.api.getSession({ headers: await headers() })

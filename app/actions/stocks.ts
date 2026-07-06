@@ -39,6 +39,7 @@ export type StockWithStats = {
   ticker: string
   market: string
   chartUrl: string | null
+  watchlistSection: string | null
   correct: number
   wrong: number
   notReached: number // Zone nicht angelaufen (neutral)
@@ -96,6 +97,7 @@ export async function getStocksWithStats(): Promise<StockWithStats[]> {
       ticker: s.ticker,
       market: s.market,
       chartUrl: s.chartUrl,
+      watchlistSection: s.watchlistSection,
       correct: counts.correct,
       wrong: counts.wrong,
       notReached: counts.notReached,
@@ -189,6 +191,7 @@ export async function addStock(formData: {
   ticker: string
   market?: string
   chartUrl?: string | null
+  section?: string | null
 }): Promise<{ id: number }> {
   const userId = await getUserId()
   const name = formData.name.trim()
@@ -201,11 +204,37 @@ export async function addStock(formData: {
 
   const [row] = await db
     .insert(stock)
-    .values({ userId, name, ticker, market, chartUrl })
+    .values({
+      userId,
+      name,
+      ticker,
+      market,
+      chartUrl,
+      watchlistSection: (formData.section ?? '').trim().slice(0, 40) || null,
+    })
     .returning({ id: stock.id })
 
   revalidatePath('/')
   return { id: row.id }
+}
+
+/** Watchlist-Sektion setzen oder entfernen (null/leer = „Ohne Sektion“). */
+export async function setWatchlistSection(
+  stockId: number,
+  section: string | null,
+): Promise<void> {
+  const userId = await getUserId()
+  const normalized = (section ?? '').trim().slice(0, 40) || null
+
+  const result = await db
+    .update(stock)
+    .set({ watchlistSection: normalized })
+    .where(and(eq(stock.id, stockId), eq(stock.userId, userId)))
+    .returning({ id: stock.id })
+
+  if (result.length === 0) throw new Error('Instrument nicht gefunden.')
+
+  revalidatePath('/watchlist')
 }
 
 /** Set or clear the chart link for an existing stock. */

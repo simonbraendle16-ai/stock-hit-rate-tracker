@@ -84,6 +84,9 @@ export const stock = pgTable('stock', {
   market: text('market').notNull().default('aktien'),
   // optionaler Link zum Chart (z. B. TradingView), um ihn direkt aufzurufen
   chartUrl: text('chartUrl'),
+  // Watchlist V2: benutzerdefinierte Sektion (TradingView-Stil-Gruppen) + Sortierung
+  watchlistSection: text('watchlistSection'),
+  sortOrder: integer('sortOrder').notNull().default(0),
   createdAt: timestamp('createdAt').notNull().defaultNow(),
 })
 

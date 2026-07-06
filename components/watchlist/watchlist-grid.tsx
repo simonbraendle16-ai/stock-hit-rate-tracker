@@ -1,11 +1,21 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState, useTransition } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import type { StockWithStats } from '@/app/actions/stocks'
+import { setWatchlistSection } from '@/app/actions/stocks'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Search } from 'lucide-react'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { ChevronDown, ChevronRight, FolderInput, Search } from 'lucide-react'
+import { toast } from 'sonner'
 
 const MARKET_LABELS: Record<string, string> = {
   aktien: 'Aktien',
@@ -17,91 +27,60 @@ const MARKET_LABELS: Record<string, string> = {
   sonstiges: 'Sonstiges',
 }
 
-/** Märkte ohne Gratis-Kursdaten — keine Sparkline-Requests verschwenden. */
-const NO_DATA_MARKETS = new Set(['forex', 'optionen', 'sonstiges'])
+const NO_SECTION = 'Ohne Sektion'
+const COLLAPSE_KEY = 'watchlist-collapsed-sections'
 
-interface Spark {
-  closes: number[]
-  last: number
-  changePct: number
-}
+type SparkEntry =
+  | { status: 'ok'; closes: number[]; last: number; changePct: number }
+  | { status: 'pending' | 'nodata' | 'error' }
 
 /**
- * Lädt Sparkline-Daten gestaffelt (max. 2 parallel, kleine Pause), damit das
- * Twelve-Data-Gratis-Limit (~8 Req/min) auch bei ~20 Instrumenten hält —
- * der Server cached zusätzlich 12 h pro Symbol.
+ * Watchlist V2 (S1): EIN Batch-Request auf `/api/sparklines` statt Einzel-Fetches
+ * pro Symbol. Symbole am Twelve-Data-Limit kommen als `pending` zurück und werden
+ * gezielt per Re-Poll nachgeladen (Server-Cache füllt sich pro Minute weiter).
  */
-function useSparklines(stocks: StockWithStats[]) {
-  const [sparks, setSparks] = useState<Record<number, Spark | 'error'>>({})
-  const startedRef = useRef(false)
+function useSparklines() {
+  const [sparks, setSparks] = useState<Record<number, SparkEntry>>({})
 
   useEffect(() => {
-    if (startedRef.current) return
-    startedRef.current = true
     let cancelled = false
+    let attempts = 0
+    let timer: ReturnType<typeof setTimeout> | null = null
 
-    const queue = stocks.filter((s) => !NO_DATA_MARKETS.has(s.market))
-    // Krypto zuerst (Binance ohne Limit), dann der Rest.
-    queue.sort((a, b) => Number(b.market === 'krypto') - Number(a.market === 'krypto'))
-
-    const fetchOne = async (s: StockWithStats, retried = false): Promise<void> => {
+    const load = async () => {
       try {
-        const params = new URLSearchParams({
-          symbol: s.ticker,
-          market: s.market,
-          interval: '1day',
-        })
-        const res = await fetch(`/api/candles?${params}`)
-        if (res.status === 429 && !retried) {
-          await new Promise((r) => setTimeout(r, 30_000))
-          if (!cancelled) return fetchOne(s, true)
-          return
-        }
+        const res = await fetch('/api/sparklines')
         if (!res.ok) throw new Error()
-        const data = await res.json()
-        const candles: { close: number }[] = data.candles.slice(-90)
-        if (candles.length < 2) throw new Error()
-        const closes = candles.map((c) => c.close)
-        const last = closes[closes.length - 1]
-        const prev = closes[closes.length - 2]
-        if (!cancelled) {
-          setSparks((p) => ({
-            ...p,
-            [s.id]: { closes, last, changePct: ((last - prev) / prev) * 100 },
-          }))
+        const data = (await res.json()) as { sparks: Record<number, SparkEntry> }
+        if (cancelled) return
+        setSparks(data.sparks)
+        const hasPending = Object.values(data.sparks).some((e) => e.status === 'pending')
+        if (hasPending && attempts < 8) {
+          attempts++
+          timer = setTimeout(load, 25_000)
         }
       } catch {
-        if (!cancelled) setSparks((p) => ({ ...p, [s.id]: 'error' }))
+        if (!cancelled && attempts < 3) {
+          attempts++
+          timer = setTimeout(load, 10_000)
+        }
       }
     }
-
-    const run = async () => {
-      const workers = 2
-      let idx = 0
-      await Promise.all(
-        Array.from({ length: workers }, async () => {
-          while (idx < queue.length && !cancelled) {
-            const s = queue[idx++]
-            await fetchOne(s)
-            await new Promise((r) => setTimeout(r, 300))
-          }
-        }),
-      )
-    }
-    void run()
+    void load()
 
     return () => {
       cancelled = true
+      if (timer) clearTimeout(timer)
     }
-  }, [stocks])
+  }, [])
 
   return sparks
 }
 
 function Sparkline({ closes, positive }: { closes: number[]; positive: boolean }) {
   const path = useMemo(() => {
-    const w = 120
-    const h = 36
+    const w = 96
+    const h = 28
     const min = Math.min(...closes)
     const max = Math.max(...closes)
     const span = max - min || 1
@@ -115,7 +94,7 @@ function Sparkline({ closes, positive }: { closes: number[]; positive: boolean }
   }, [closes])
 
   return (
-    <svg viewBox="0 0 120 36" className="h-9 w-[120px]" preserveAspectRatio="none">
+    <svg viewBox="0 0 96 28" className="h-7 w-24" preserveAspectRatio="none">
       <path
         d={path}
         fill="none"
@@ -127,13 +106,139 @@ function Sparkline({ closes, positive }: { closes: number[]; positive: boolean }
   )
 }
 
+function formatPrice(v: number): string {
+  return v.toLocaleString('de-DE', {
+    maximumFractionDigits: v >= 100 ? 2 : 6,
+    minimumFractionDigits: 2,
+  })
+}
+
+/** Eine kompakte Instrument-Zeile im TradingView-Stil. */
+function WatchlistRow({
+  s,
+  spark,
+  onMove,
+}: {
+  s: StockWithStats
+  spark: SparkEntry | undefined
+  onMove: (s: StockWithStats) => void
+}) {
+  const ok = spark?.status === 'ok' ? spark : null
+  const positive = ok ? ok.changePct >= 0 : true
+  const prev = ok && ok.closes.length >= 2 ? ok.closes[ok.closes.length - 2] : null
+  const changeAbs = ok && prev !== null ? ok.last - prev : null
+
+  return (
+    <div className="group relative flex items-center gap-3 border-b border-border/50 px-3 py-2 transition-colors hover:bg-primary/5">
+      <Link
+        href={`/stock/${s.id}`}
+        className="flex min-w-0 flex-1 items-center gap-3"
+      >
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-sm font-bold text-foreground">{s.ticker}</span>
+            {s.total > 0 && (
+              <span
+                className={`font-mono text-[10px] ${
+                  s.hitRate >= 50 ? 'text-positive' : 'text-destructive'
+                }`}
+                title={`Trefferquote: ${s.hitRate.toFixed(0)} % aus ${s.total} Prognosen`}
+              >
+                {s.hitRate.toFixed(0)}%
+              </span>
+            )}
+          </div>
+          <p className="truncate font-mono text-[10px] text-muted-foreground">
+            {s.name} · {MARKET_LABELS[s.market] ?? s.market}
+          </p>
+        </div>
+
+        <div className="hidden shrink-0 sm:block">
+          {ok ? (
+            <Sparkline closes={ok.closes} positive={positive} />
+          ) : spark?.status === 'pending' || !spark ? (
+            <span className="font-mono text-[10px] text-muted-foreground">…</span>
+          ) : null}
+        </div>
+
+        <div className="w-24 shrink-0 text-right font-mono text-sm text-foreground">
+          {ok ? formatPrice(ok.last) : spark?.status === 'nodata' ? '—' : spark?.status === 'error' ? '–' : '…'}
+        </div>
+
+        <div
+          className={`hidden w-20 shrink-0 text-right font-mono text-xs md:block ${
+            ok ? (positive ? 'text-positive' : 'text-destructive') : 'text-muted-foreground'
+          }`}
+        >
+          {ok && changeAbs !== null
+            ? `${positive ? '+' : ''}${changeAbs.toLocaleString('de-DE', { maximumFractionDigits: 4 })}`
+            : ''}
+        </div>
+
+        <div
+          className={`w-16 shrink-0 text-right font-mono text-xs ${
+            ok ? (positive ? 'text-positive' : 'text-destructive') : 'text-muted-foreground'
+          }`}
+        >
+          {ok ? `${positive ? '+' : ''}${ok.changePct.toFixed(2)}%` : ''}
+        </div>
+      </Link>
+
+      <Button
+        size="sm"
+        variant="ghost"
+        className="h-7 w-7 shrink-0 p-0 opacity-0 transition-opacity group-hover:opacity-100"
+        title="In Sektion verschieben"
+        aria-label="In Sektion verschieben"
+        onClick={() => onMove(s)}
+      >
+        <FolderInput className="size-3.5 text-muted-foreground" />
+      </Button>
+    </div>
+  )
+}
+
 export function WatchlistGrid({ stocks }: { stocks: StockWithStats[] }) {
+  const router = useRouter()
   const [query, setQuery] = useState('')
   const [marketFilter, setMarketFilter] = useState('alle')
-  const sparks = useSparklines(stocks)
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  const [moveTarget, setMoveTarget] = useState<StockWithStats | null>(null)
+  const [newSection, setNewSection] = useState('')
+  const [isPending, startTransition] = useTransition()
+  const sparks = useSparklines()
+
+  // Collapse-Zustand aus localStorage (erst nach Mount — kein Hydration-Mismatch).
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(COLLAPSE_KEY)
+      if (raw) setCollapsed(JSON.parse(raw))
+    } catch {
+      /* defekter Eintrag → Standard: alles offen */
+    }
+  }, [])
+
+  const toggleSection = (name: string) => {
+    setCollapsed((p) => {
+      const next = { ...p, [name]: !p[name] }
+      try {
+        localStorage.setItem(COLLAPSE_KEY, JSON.stringify(next))
+      } catch {
+        /* Speicher voll/blockiert → Collapse gilt nur für die Sitzung */
+      }
+      return next
+    })
+  }
 
   const markets = useMemo(
     () => Array.from(new Set(stocks.map((s) => s.market))),
+    [stocks],
+  )
+  const sections = useMemo(
+    () =>
+      Array.from(
+        new Set(stocks.map((s) => s.watchlistSection).filter((x): x is string => !!x)),
+      ).sort((a, b) => a.localeCompare(b, 'de')),
     [stocks],
   )
 
@@ -143,6 +248,32 @@ export function WatchlistGrid({ stocks }: { stocks: StockWithStats[] }) {
     if (!q) return true
     return s.name.toLowerCase().includes(q) || s.ticker.toLowerCase().includes(q)
   })
+
+  // Gruppierung: benannte Sektionen alphabetisch, „Ohne Sektion“ zuletzt.
+  const grouped = useMemo(() => {
+    const map = new Map<string, StockWithStats[]>()
+    for (const name of sections) map.set(name, [])
+    map.set(NO_SECTION, [])
+    for (const s of filtered) {
+      map.get(s.watchlistSection ?? NO_SECTION)?.push(s)
+    }
+    return Array.from(map.entries()).filter(([, list]) => list.length > 0)
+  }, [filtered, sections])
+
+  const applySection = (section: string | null) => {
+    if (!moveTarget) return
+    const target = moveTarget
+    startTransition(async () => {
+      try {
+        await setWatchlistSection(target.id, section)
+        setMoveTarget(null)
+        setNewSection('')
+        router.refresh()
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Sektion konnte nicht gesetzt werden.')
+      }
+    })
+  }
 
   return (
     <div>
@@ -168,6 +299,9 @@ export function WatchlistGrid({ stocks }: { stocks: StockWithStats[] }) {
             </option>
           ))}
         </select>
+        <span className="ml-auto font-mono text-[10px] text-muted-foreground">
+          {filtered.length} / {stocks.length} Instrumente
+        </span>
       </div>
 
       {filtered.length === 0 ? (
@@ -175,62 +309,92 @@ export function WatchlistGrid({ stocks }: { stocks: StockWithStats[] }) {
           Keine Instrumente gefunden.
         </p>
       ) : (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {filtered.map((s) => {
-            const spark = sparks[s.id]
-            const hasSpark = spark && spark !== 'error'
-            const positive = hasSpark ? spark.changePct >= 0 : true
+        <div className="glass-card overflow-hidden">
+          {grouped.map(([name, list]) => {
+            const isCollapsed = !!collapsed[name]
             return (
-              <Link
-                key={s.id}
-                href={`/stock/${s.id}`}
-                className="glass-card flex items-center justify-between gap-3 p-4 transition-colors hover:border-primary/40"
-              >
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate font-heading text-sm font-semibold text-foreground">
-                      {s.name}
-                    </span>
-                    <Badge variant="secondary" className="shrink-0 font-mono text-[10px]">
-                      {s.ticker}
-                    </Badge>
-                  </div>
-                  <p className="mt-1 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-                    {MARKET_LABELS[s.market] ?? s.market}
-                    {s.total > 0 && (
-                      <span
-                        className={
-                          s.hitRate >= 50 ? 'ml-2 text-positive' : 'ml-2 text-destructive'
-                        }
-                      >
-                        {s.hitRate.toFixed(0)}% · {s.total}
-                      </span>
-                    )}
-                  </p>
-                  {hasSpark && (
-                    <p className="mt-1 font-mono text-xs text-foreground">
-                      {spark.last.toLocaleString('de-DE', { maximumFractionDigits: 6 })}
-                      <span className={positive ? 'ml-2 text-positive' : 'ml-2 text-destructive'}>
-                        {positive ? '+' : ''}
-                        {spark.changePct.toFixed(2)}%
-                      </span>
-                    </p>
+              <div key={name}>
+                <button
+                  type="button"
+                  onClick={() => toggleSection(name)}
+                  className="flex w-full items-center gap-1.5 border-b border-border bg-card/60 px-3 py-1.5 text-left"
+                >
+                  {isCollapsed ? (
+                    <ChevronRight className="size-3.5 text-muted-foreground" />
+                  ) : (
+                    <ChevronDown className="size-3.5 text-muted-foreground" />
                   )}
-                </div>
-                <div className="shrink-0">
-                  {hasSpark ? (
-                    <Sparkline closes={spark.closes} positive={positive} />
-                  ) : spark === 'error' ? (
-                    <span className="font-mono text-[10px] text-muted-foreground">–</span>
-                  ) : NO_DATA_MARKETS.has(s.market) ? null : (
-                    <span className="font-mono text-[10px] text-muted-foreground">…</span>
-                  )}
-                </div>
-              </Link>
+                  <span className="font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                    {name}
+                  </span>
+                  <Badge variant="secondary" className="ml-auto font-mono text-[9px]">
+                    {list.length}
+                  </Badge>
+                </button>
+                {!isCollapsed &&
+                  list.map((s) => (
+                    <WatchlistRow key={s.id} s={s} spark={sparks[s.id]} onMove={setMoveTarget} />
+                  ))}
+              </div>
             )
           })}
         </div>
       )}
+
+      <Dialog open={!!moveTarget} onOpenChange={(open) => !open && setMoveTarget(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="font-heading text-base">
+              {moveTarget?.ticker} in Sektion verschieben
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-2">
+            {sections.map((name) => (
+              <Button
+                key={name}
+                variant={moveTarget?.watchlistSection === name ? 'secondary' : 'outline'}
+                size="sm"
+                disabled={isPending}
+                onClick={() => applySection(name)}
+                className="justify-start font-mono text-xs"
+              >
+                {name}
+              </Button>
+            ))}
+            <div className="flex gap-2">
+              <Input
+                placeholder="Neue Sektion …"
+                value={newSection}
+                onChange={(e) => setNewSection(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && newSection.trim()) applySection(newSection)
+                }}
+                className="h-8 font-mono text-xs"
+                maxLength={40}
+              />
+              <Button
+                size="sm"
+                disabled={isPending || !newSection.trim()}
+                onClick={() => applySection(newSection)}
+                className="h-8"
+              >
+                OK
+              </Button>
+            </div>
+            {moveTarget?.watchlistSection && (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={isPending}
+                onClick={() => applySection(null)}
+                className="justify-start font-mono text-xs text-muted-foreground"
+              >
+                Aus Sektion entfernen
+              </Button>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

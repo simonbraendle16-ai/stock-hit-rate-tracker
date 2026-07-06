@@ -3,6 +3,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import {
+  ArrowUpRight,
+  Brush,
+  Circle,
   Eraser,
   Eye,
   EyeOff,
@@ -15,6 +18,7 @@ import {
   Ruler,
   SeparatorVertical,
   Square,
+  TrendingDown,
   TrendingUp,
   Trash2,
   Type,
@@ -26,26 +30,99 @@ export type DrawTool =
   | 'ray'
   | 'hline'
   | 'vline'
+  | 'arrow'
+  | 'channel'
   | 'rect'
+  | 'ellipse'
+  | 'brush'
   | 'fib'
+  | 'fibext'
+  | 'ew_impulse'
+  | 'ew_correction'
+  | 'longpos'
+  | 'shortpos'
   | 'text'
   | 'measure'
+  | 'pricerange'
+  | 'daterange'
 
-const TOOLS: { id: DrawTool; label: string; icon?: React.ComponentType<{ className?: string }> }[] = [
-  { id: 'cursor', label: 'Auswählen', icon: MousePointer2 },
-  { id: 'trendline', label: 'Trendlinie', icon: TrendingUp },
-  { id: 'ray', label: 'Strahl', icon: MoveUpRight },
-  { id: 'hline', label: 'Horizontale Linie', icon: Minus },
-  { id: 'vline', label: 'Vertikale Linie', icon: SeparatorVertical },
-  { id: 'rect', label: 'Rechteck', icon: Square },
-  { id: 'fib', label: 'Fib-Retracement' },
-  { id: 'text', label: 'Notiz', icon: Type },
-  { id: 'measure', label: 'Messen', icon: Ruler },
+interface ToolDef {
+  id: DrawTool
+  label: string
+  icon: React.ReactNode
+}
+
+const icon = (I: React.ComponentType<{ className?: string }>) => <I className="size-4" />
+const mono = (s: string) => <span className="font-mono text-[8px] font-bold leading-none">{s}</span>
+
+/** Tool-Gruppen wie in TradingView: Hauptknopf = zuletzt genutztes Tool der Gruppe. */
+const GROUPS: { name: string; tools: ToolDef[] }[] = [
+  {
+    name: 'Linien',
+    tools: [
+      { id: 'trendline', label: 'Trendlinie', icon: icon(TrendingUp) },
+      { id: 'ray', label: 'Strahl', icon: icon(MoveUpRight) },
+      { id: 'hline', label: 'Horizontale Linie', icon: icon(Minus) },
+      { id: 'vline', label: 'Vertikale Linie', icon: icon(SeparatorVertical) },
+      { id: 'arrow', label: 'Pfeil', icon: icon(ArrowUpRight) },
+      { id: 'channel', label: 'Paralleler Kanal (3 Punkte)', icon: mono('∥') },
+    ],
+  },
+  {
+    name: 'Formen',
+    tools: [
+      { id: 'rect', label: 'Rechteck', icon: icon(Square) },
+      { id: 'ellipse', label: 'Ellipse', icon: icon(Circle) },
+      { id: 'brush', label: 'Freihand (Brush)', icon: icon(Brush) },
+    ],
+  },
+  {
+    name: 'Fibonacci',
+    tools: [
+      { id: 'fib', label: 'Fib-Retracement', icon: mono('Fib') },
+      { id: 'fibext', label: 'Fib-Extension (3 Punkte)', icon: mono('FibE') },
+    ],
+  },
+  {
+    name: 'Elliott',
+    tools: [
+      { id: 'ew_impulse', label: 'Elliott-Impuls 0-1-2-3-4-5 (6 Punkte)', icon: mono('1-5') },
+      { id: 'ew_correction', label: 'Elliott-Korrektur 0-A-B-C (4 Punkte)', icon: mono('ABC') },
+    ],
+  },
+  {
+    name: 'Position',
+    tools: [
+      {
+        id: 'longpos',
+        label: 'Long-Position (Entry → Stop/Target, R:R)',
+        icon: <TrendingUp className="size-4 text-positive" />,
+      },
+      {
+        id: 'shortpos',
+        label: 'Short-Position (Entry → Stop/Target, R:R)',
+        icon: <TrendingDown className="size-4 text-destructive" />,
+      },
+    ],
+  },
+  {
+    name: 'Notiz',
+    tools: [{ id: 'text', label: 'Text/Notiz', icon: icon(Type) }],
+  },
+  {
+    name: 'Messen',
+    tools: [
+      { id: 'measure', label: 'Messen (flüchtig)', icon: icon(Ruler) },
+      { id: 'pricerange', label: 'Preis-Range (persistent)', icon: mono('P↕') },
+      { id: 'daterange', label: 'Zeit-Range (persistent)', icon: mono('T↔') },
+    ],
+  },
 ]
 
 /**
- * Vertikale Zeichen-Tool-Leiste links am Chart (TradingView-Stil, AP 9):
- * Werkzeuge oben, darunter Magnet/Sichtbarkeit/Sperre, unten Löschen.
+ * Vertikale Zeichen-Tool-Leiste links am Chart (TradingView-Stil, AP 9/10):
+ * Cursor oben, Tool-Gruppen mit Flyout-Untermenüs, darunter Magnet/Sichtbarkeit/
+ * Sperre, unten Löschen.
  */
 export function ChartToolbar({
   tool,
@@ -74,6 +151,29 @@ export function ChartToolbar({
   onDeleteAll: () => void
   hasDrawings: boolean
 }) {
+  // Zuletzt genutztes Tool je Gruppe (bestimmt das Icon des Gruppen-Knopfs).
+  const [groupChoice, setGroupChoice] = useState<Record<string, DrawTool>>({})
+  // Flyout liegt `fixed` (der Toolbar-Container scrollt/clippt sonst das Menü).
+  const [openGroup, setOpenGroup] = useState<{ name: string; top: number; left: number } | null>(
+    null,
+  )
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  // Klick außerhalb schließt das Flyout.
+  useEffect(() => {
+    if (!openGroup) return
+    const onDown = (e: PointerEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpenGroup(null)
+    }
+    const onScroll = () => setOpenGroup(null)
+    document.addEventListener('pointerdown', onDown)
+    window.addEventListener('scroll', onScroll, true)
+    return () => {
+      document.removeEventListener('pointerdown', onDown)
+      window.removeEventListener('scroll', onScroll, true)
+    }
+  }, [openGroup])
+
   // „Alle löschen“ braucht zwei Klicks (Bestätigung), Auto-Reset nach 3 s.
   const [confirmDeleteAll, setConfirmDeleteAll] = useState(false)
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -95,12 +195,18 @@ export function ChartToolbar({
     onDeleteAll()
   }
 
+  const selectTool = (groupName: string, t: DrawTool) => {
+    setGroupChoice((p) => ({ ...p, [groupName]: t }))
+    setOpenGroup(null)
+    onToolChange(t)
+  }
+
   const iconBtn = (
     key: string,
     label: string,
     active: boolean,
     onClick: () => void,
-    icon: React.ReactNode,
+    iconNode: React.ReactNode,
     className?: string,
   ) => (
     <Button
@@ -112,20 +218,69 @@ export function ChartToolbar({
       aria-label={label}
       onClick={onClick}
     >
-      {icon}
+      {iconNode}
     </Button>
   )
 
   return (
-    <div className="flex max-h-full w-9 shrink-0 flex-col items-center gap-0.5 overflow-y-auto overflow-x-hidden border-r border-border pr-1">
-      {TOOLS.map(({ id, label, icon: Icon }) =>
-        iconBtn(
-          id,
-          label,
-          tool === id,
-          () => onToolChange(id),
-          Icon ? <Icon className="size-4" /> : <span className="font-mono text-[9px] font-bold">Fib</span>,
-        ),
+    <div
+      ref={rootRef}
+      className="relative flex max-h-full w-9 shrink-0 flex-col items-center gap-0.5 overflow-y-auto overflow-x-hidden border-r border-border pr-1"
+    >
+      {iconBtn('cursor', 'Auswählen', tool === 'cursor', () => onToolChange('cursor'), (
+        <MousePointer2 className="size-4" />
+      ))}
+
+      {GROUPS.map((group) => {
+        const current =
+          group.tools.find((t) => t.id === groupChoice[group.name]) ?? group.tools[0]
+        const groupActive = group.tools.some((t) => t.id === tool)
+        const isOpen = openGroup?.name === group.name
+        return (
+          <Button
+            key={group.name}
+            size="sm"
+            variant={groupActive ? 'secondary' : 'ghost'}
+            className="h-8 w-8 shrink-0 p-0"
+            title={group.tools.length > 1 ? `${group.name} — ${current.label}` : current.label}
+            aria-label={group.name}
+            onClick={(e) => {
+              if (group.tools.length === 1) {
+                selectTool(group.name, group.tools[0].id)
+              } else if (isOpen) {
+                setOpenGroup(null)
+              } else {
+                const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                setOpenGroup({ name: group.name, top: r.top, left: r.right + 4 })
+              }
+            }}
+          >
+            {current.icon}
+          </Button>
+        )
+      })}
+
+      {openGroup && (
+        <div
+          className="glass-card fixed z-50 flex w-64 flex-col gap-0.5 p-1.5 shadow-lg"
+          style={{ top: openGroup.top, left: openGroup.left }}
+        >
+          <p className="px-2 py-1 font-mono text-[9px] uppercase tracking-widest text-muted-foreground">
+            {openGroup.name}
+          </p>
+          {GROUPS.find((g) => g.name === openGroup.name)?.tools.map((t) => (
+            <Button
+              key={t.id}
+              size="sm"
+              variant={tool === t.id ? 'secondary' : 'ghost'}
+              className="h-7 justify-start gap-2 px-2 font-mono text-[11px]"
+              onClick={() => selectTool(openGroup.name, t.id)}
+            >
+              <span className="flex w-5 justify-center">{t.icon}</span>
+              {t.label}
+            </Button>
+          ))}
+        </div>
       )}
 
       <div className="my-1 h-px w-5 bg-border" />
