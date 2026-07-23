@@ -54,7 +54,10 @@ function useSparklines() {
         const data = (await res.json()) as { sparks: Record<number, SparkEntry> }
         if (cancelled) return
         setSparks(data.sparks)
-        const hasPending = Object.values(data.sparks).some((e) => e.status === 'pending')
+        // Auch transiente Fehler (kalter Cache, Netz-Hickser) automatisch nachladen.
+        const hasPending = Object.values(data.sparks).some(
+          (e) => e.status === 'pending' || e.status === 'error',
+        )
         if (hasPending && attempts < 8) {
           attempts++
           timer = setTimeout(load, 25_000)

@@ -3,7 +3,7 @@
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { stock, assessment } from '@/lib/db/schema'
-import { and, asc, eq } from 'drizzle-orm'
+import { and, asc, eq, type SQL } from 'drizzle-orm'
 import { headers } from 'next/headers'
 import { revalidatePath } from 'next/cache'
 
@@ -11,6 +11,46 @@ async function getUserId() {
   const session = await auth.api.getSession({ headers: await headers() })
   if (!session?.user) throw new Error('Unauthorized')
   return session.user.id
+}
+
+type StockRow = typeof stock.$inferSelect
+
+/** Postgres „undefined column“ (42703) — Migration 0009 noch nicht angewendet. */
+function isMissingColumn(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false
+  const e = err as { code?: string; cause?: { code?: string }; message?: string }
+  return (
+    e.code === '42703' ||
+    e.cause?.code === '42703' ||
+    /watchlistSection|sortOrder/.test(e.message ?? '')
+  )
+}
+
+/**
+ * `stock`-Zeilen laden, tolerant gegenüber fehlender Migration 0009
+ * (`drizzle/0009_watchlist_sections.sql`): Fehlen die Sektions-Spalten in der DB,
+ * wird ohne sie geladen und mit Defaults aufgefüllt — die Watchlist läuft dann
+ * ohne Sektionen, statt zu crashen.
+ */
+async function selectStocksTolerant(where: SQL | undefined): Promise<StockRow[]> {
+  try {
+    return await db.select().from(stock).where(where)
+  } catch (err) {
+    if (!isMissingColumn(err)) throw err
+    const rows = await db
+      .select({
+        id: stock.id,
+        userId: stock.userId,
+        name: stock.name,
+        ticker: stock.ticker,
+        market: stock.market,
+        chartUrl: stock.chartUrl,
+        createdAt: stock.createdAt,
+      })
+      .from(stock)
+      .where(where)
+    return rows.map((r) => ({ ...r, watchlistSection: null, sortOrder: 0 }))
+  }
 }
 
 /**
@@ -68,10 +108,7 @@ export type TimelinePoint = {
 export async function getStocksWithStats(): Promise<StockWithStats[]> {
   const userId = await getUserId()
 
-  const stocks = await db
-    .select()
-    .from(stock)
-    .where(eq(stock.userId, userId))
+  const stocks = await selectStocksTolerant(eq(stock.userId, userId))
 
   const assessments = await db
     .select()
@@ -119,10 +156,7 @@ export async function getStocksWithStats(): Promise<StockWithStats[]> {
 export async function getOverallStats(): Promise<OverallStats> {
   const userId = await getUserId()
 
-  const stocks = await db
-    .select()
-    .from(stock)
-    .where(eq(stock.userId, userId))
+  const stocks = await selectStocksTolerant(eq(stock.userId, userId))
 
   const assessments = await db
     .select()
@@ -202,17 +236,23 @@ export async function addStock(formData: {
     : 'aktien'
   const chartUrl = normalizeChartUrl(formData.chartUrl)
 
-  const [row] = await db
-    .insert(stock)
-    .values({
-      userId,
-      name,
-      ticker,
-      market,
-      chartUrl,
-      watchlistSection: (formData.section ?? '').trim().slice(0, 40) || null,
-    })
-    .returning({ id: stock.id })
+  const values = {
+    userId,
+    name,
+    ticker,
+    market,
+    chartUrl,
+    watchlistSection: (formData.section ?? '').trim().slice(0, 40) || null,
+  }
+  let row: { id: number }
+  try {
+    ;[row] = await db.insert(stock).values(values).returning({ id: stock.id })
+  } catch (err) {
+    // Migration 0009 fehlt noch → ohne Sektions-Spalte anlegen.
+    if (!isMissingColumn(err)) throw err
+    const { watchlistSection: _ignored, ...legacy } = values
+    ;[row] = await db.insert(stock).values(legacy).returning({ id: stock.id })
+  }
 
   revalidatePath('/')
   return { id: row.id }
@@ -226,11 +266,21 @@ export async function setWatchlistSection(
   const userId = await getUserId()
   const normalized = (section ?? '').trim().slice(0, 40) || null
 
-  const result = await db
-    .update(stock)
-    .set({ watchlistSection: normalized })
-    .where(and(eq(stock.id, stockId), eq(stock.userId, userId)))
-    .returning({ id: stock.id })
+  let result: { id: number }[]
+  try {
+    result = await db
+      .update(stock)
+      .set({ watchlistSection: normalized })
+      .where(and(eq(stock.id, stockId), eq(stock.userId, userId)))
+      .returning({ id: stock.id })
+  } catch (err) {
+    if (isMissingColumn(err)) {
+      throw new Error(
+        'Watchlist-Sektionen benötigen die DB-Migration 0009 — bitte einmal `pnpm db:push` ausführen.',
+      )
+    }
+    throw err
+  }
 
   if (result.length === 0) throw new Error('Instrument nicht gefunden.')
 
@@ -346,10 +396,9 @@ export async function getStockDetail(
 ): Promise<StockDetail | null> {
   const userId = await getUserId()
 
-  const [owned] = await db
-    .select()
-    .from(stock)
-    .where(and(eq(stock.id, stockId), eq(stock.userId, userId)))
+  const [owned] = await selectStocksTolerant(
+    and(eq(stock.id, stockId), eq(stock.userId, userId)),
+  )
 
   if (!owned) return null
 
