@@ -1,14 +1,17 @@
 # Ideen-Backlog (Vollständig, aus der Analyse vom 23.07.2026)
 
-Der komplette Katalog möglicher Erweiterungen. Reihenfolge innerhalb der Blöcke ist grob nach
-Wert sortiert. Jede Etappe ist ein eigener Arbeitsschritt — hier wird abgehakt, was erledigt ist.
+Der komplette Katalog möglicher Erweiterungen — die Rohstoffsammlung. Reihenfolge innerhalb der
+Blöcke ist grob nach Wert sortiert.
+
+> **Die sechs geplanten Etappen sind in [`ROADMAP.md`](./ROADMAP.md) ausführlich beschrieben** —
+> mit Datenmodell, betroffenen Dateien, konkretem Ergebnis und den Fragen, die vor dem Bauen zu
+> klären sind. Dieses Dokument hier ist der Vorrat für alles darüber hinaus.
 
 **Erledigt:** Etappe 1 (Geld-Fundament) — eingefrorene Gebühren, Ausstiegskurs-Pflicht,
-Kontowährung, Hebel je Trade, Cashflows, Tests.
+Kontowährung, Hebel je Trade, Cashflows, Tests. Migration `0010` ist angewendet.
 
-**Als Nächstes:** Etappe 2 (Freunde) · Etappe 3 (Live-Kurse + Alerts) · Etappe 4
-(Emotions-Check-in) · Etappe 5 (Bot-Zwilling) · Etappe 6 (Teilverkäufe + Event-Log) ·
-Etappe 7 (Statistik-Ausbau).
+**Geplant:** Etappe 2 (Freunde) · 3 (Live-Kurse + Alerts) · 4 (Emotions-Check-in) ·
+5 (Bot-Zwilling) · 6 (Teilverkäufe + Event-Log) · 7 (Statistik-Ausbau).
 
 ## A · Kern & Datenmodell
 - Cashflows (Ein-/Auszahlungen) → **in Etappe 1**

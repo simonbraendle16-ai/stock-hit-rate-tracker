@@ -64,6 +64,23 @@ Candlesticks) · pnpm via corepack.
   Server-Gate). Wiederverwenden statt duplizieren.
 - Keine VS-Code-/IDE-Artefakte anlegen (kein `.vscode/`), außer ausdrücklich verlangt.
 
-## Aktuelles Vorhaben
-TradingView-Chart einbetten & mit dem Trading-Plan verbinden — Arbeitspakete siehe
-`~/.claude/plans/kind-seeking-snowflake.md`.
+## Roadmap & Ideen
+- **`ROADMAP.md`** — die geplanten Etappen 2–7, je mit Datenmodell, Dateien, konkretem Ergebnis
+  und den vor dem Bauen zu klärenden Fragen. **Erster Blick bei „was machen wir als Nächstes".**
+- **`IDEEN-BACKLOG.md`** — der vollständige Ideenvorrat darüber hinaus.
+- Erledigt: Chart-Cockpit (AP 0–10) · Etappe 1 „Geld-Fundament" (Migration `0010`).
+
+## Fallstricke, die schon Zeit gekostet haben
+- **`'use server'`-Dateien dürfen ausschließlich async Funktionen exportieren.** Turbopack
+  behandelt *jeden* Export als Server Action — auch reine `export type { … }`-Re-Exports und
+  Konstanten. Der Build bricht mit „A 'use server' file can only export async functions".
+  Deshalb liegen Typen in `lib/trade-stats.ts` und Konstanten wie `SUPPORTED_CURRENCIES` in
+  `lib/format.ts`, nicht in `app/actions/*.ts`.
+- **Migrationen sind handgeschriebenes SQL** in `drizzle/`, angewendet per
+  `node scripts/apply-migration.mjs` (liest `DATABASE_URL` aus der Umgebung oder `.env.local`).
+  Immer additiv und idempotent — die DB enthält echte Trades. `scripts/baseline-report.mjs`
+  zieht vorher/nachher einen Dump zum Vergleich (nur lesend).
+- **pnpm nach Ordner-Verschiebung:** `ERR_PNPM_UNEXPECTED_VIRTUAL_STORE` → `CI=true corepack
+  pnpm install`.
+- **ESLint ist nicht installiert**, `pnpm lint` schlägt daher fehl. `pnpm test` (Vitest) und
+  `pnpm exec tsc --noEmit` sind die tatsächlichen Prüfungen.
