@@ -6,6 +6,14 @@
 // keine zweite Rechenlogik daneben.
 
 import type { trade } from '@/lib/db/schema'
+import {
+  EMOTION_TAGS,
+  MIN_GROUP_SIZE,
+  MOOD_GROUPS,
+  moodGroupOf,
+  parseMoodTags,
+  type MoodTone,
+} from '@/lib/emotions'
 
 export type TradeRow = typeof trade.$inferSelect
 export type RuleViolation = 'stop_moved' | 'invalidation_ignored' | 'revenge'
@@ -273,4 +281,137 @@ export function computeEquityStats(
   }
 
   return { startCapital, points, maxDrawdown, maxDrawdownPct, worstLossStreak, currentLossStreak }
+}
+
+// ---------------------------------------------------------------------------
+// Emotions-Auswertung (Etappe 4)
+// ---------------------------------------------------------------------------
+
+/** Eine Zeile der Zustands-Auswertung — Gruppe, Tag oder Gesamtvergleich. */
+export type MoodBucket = {
+  key: string
+  label: string
+  tone: MoodTone | 'neutral'
+  /** Entschiedene Trades (Gewinn|Verlust) in dieser Zeile — der Nenner der Quote. */
+  trades: number
+  /** Davon mit berechenbarem P&L — die Basis des Erwartungswerts. */
+  rated: number
+  winRate: number // 0-100
+  expectancy: number // Ø R-Vielfaches
+  planFollowedRate: number // 0-100
+  /** Erst ab `MIN_GROUP_SIZE` Trades zeigt die UI Zahlen statt „zu wenige Daten". */
+  enough: boolean
+}
+
+export type MoodCoverage = {
+  /** Entschiedene Trades insgesamt — die Obergrenze für alles Weitere. */
+  decided: number
+  withEntryMood: number
+  withEntryTags: number
+  withExitMood: number
+}
+
+export type MoodStats = {
+  minGroupSize: number
+  coverage: MoodCoverage
+  /** Immer alle drei Gruppen, auch leere — sonst verschiebt sich die Tabelle. */
+  byEntryGroup: MoodBucket[]
+  /** Nur Tags, die mindestens einmal vergeben wurden. */
+  byEntryTag: MoodBucket[]
+  byExitGroup: MoodBucket[]
+  /** Alle entschiedenen Trades — der Bezugspunkt, gegen den man die Gruppen liest. */
+  overall: MoodBucket
+}
+
+/** Nur Trades mit Ergebnis Gewinn/Verlust — Breakeven hat keine Trefferquote. */
+function decisiveRows(rows: TradeRow[]): TradeRow[] {
+  return rows.filter((t) => t.result === 'gewinn' || t.result === 'verlust')
+}
+
+/**
+ * Kennzahlen einer beliebigen Teilmenge — dieselben Definitionen wie in
+ * `computeDisciplineStats`: Trefferquote über entschiedene Trades,
+ * Erwartungswert nur über die mit berechenbarem P&L.
+ */
+function moodBucket(
+  key: string,
+  label: string,
+  tone: MoodTone | 'neutral',
+  rows: TradeRow[],
+): MoodBucket {
+  const trades = rows.length
+  const wins = rows.filter((t) => t.result === 'gewinn').length
+  const rated = rows.filter(hasPnl)
+  const rSum = rated.reduce((acc, t) => acc + pnlOrZero(t) / tradeRisk(t), 0)
+  const followed = rows.filter((t) => t.followedPlan).length
+
+  return {
+    key,
+    label,
+    tone,
+    trades,
+    rated: rated.length,
+    winRate: trades ? (wins / trades) * 100 : 0,
+    expectancy: rated.length ? rSum / rated.length : 0,
+    planFollowedRate: trades ? (followed / trades) * 100 : 0,
+    enough: trades >= MIN_GROUP_SIZE,
+  }
+}
+
+/**
+ * Zustand vs. Ergebnis — der eigentliche Punkt von Etappe 4.
+ *
+ * Ausgewertet werden ausschließlich **entschiedene** Trades (Gewinn|Verlust).
+ * Trades ohne Check-in (Altbestand) tauchen in keiner Gruppe auf, sondern nur
+ * in `coverage` — so bleibt sichtbar, auf wie vielen Daten die Aussage steht,
+ * ohne dass ein fehlender Zustand stillschweigend als „ruhig" durchgeht.
+ *
+ * Die Tag-Auswertung ist bewusst **mehrfachzählend**: ein Trade mit `fomo` und
+ * `ungeduld` erscheint in beiden Zeilen. Die Tag-Zahlen summieren sich deshalb
+ * nicht auf die Gesamtzahl — sie beantworten je Tag die Frage „was kosten mich
+ * meine FOMO-Trades", nicht „wie teilt sich mein Handel auf".
+ */
+export function computeMoodStats(rows: TradeRow[]): MoodStats {
+  const decided = decisiveRows(rows)
+
+  const byEntryGroup = MOOD_GROUPS.map((g) =>
+    moodBucket(
+      g.key,
+      g.label,
+      g.tone,
+      decided.filter((t) => moodGroupOf(t.moodEntry) === g.key),
+    ),
+  )
+
+  const byExitGroup = MOOD_GROUPS.map((g) =>
+    moodBucket(
+      g.key,
+      g.label,
+      g.tone,
+      decided.filter((t) => moodGroupOf(t.moodExit) === g.key),
+    ),
+  )
+
+  const byEntryTag = EMOTION_TAGS.map((tag) =>
+    moodBucket(
+      tag.key,
+      tag.label,
+      tag.tone === 'tragend' ? 'ruhig' : 'unruhig',
+      decided.filter((t) => parseMoodTags(t.moodEntryTags).includes(tag.key)),
+    ),
+  ).filter((b) => b.trades > 0)
+
+  return {
+    minGroupSize: MIN_GROUP_SIZE,
+    coverage: {
+      decided: decided.length,
+      withEntryMood: decided.filter((t) => moodGroupOf(t.moodEntry) !== null).length,
+      withEntryTags: decided.filter((t) => parseMoodTags(t.moodEntryTags).length > 0).length,
+      withExitMood: decided.filter((t) => moodGroupOf(t.moodExit) !== null).length,
+    },
+    byEntryGroup,
+    byEntryTag,
+    byExitGroup,
+    overall: moodBucket('gesamt', 'alle Trades', 'neutral', decided),
+  }
 }

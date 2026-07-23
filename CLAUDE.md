@@ -49,9 +49,14 @@ Candlesticks) · pnpm via corepack.
 - **Disziplin-Score** ≠ Gewinnquote: misst Plan-Treue, nicht Ergebnis.
 - **Erwartungswert in R** (R-Multiple), **Plan-Streak**, **Zonen-Trefferquote**,
   **Geld-vs-Paper**-Split.
+- **Emotions-Check-in** = zwei Momentaufnahmen je Trade (Aktivieren + Abschließen):
+  Skala 1–5 (ruhig ↔ aufgewühlt) + Tags aus fester Liste. **Skala ist Pflicht**, Tags/Notiz
+  freiwillig. Auswertung „Zustand & Ergebnis" auf `/tracking`; unter 10 Trades je Gruppe
+  zeigt sie bewusst keine Quote.
 - Guards: **Pre-Trade-Gate** (alle 9 = "ja" nötig zum Aktivieren) · **Plan-Lock**
   (Stop/Invalidation verschieben = Regelbruch) · **Revenge-Guard** (60-Min-Cooldown nach
-  Verlust) · **bewusste Verlustannahme** beim Schließen.
+  Verlust) · **bewusste Verlustannahme** beim Schließen · **Emotions-Check-in**
+  (`activateTrade`/`closeTrade` lehnen ohne gültige Skala ab).
 
 ## Konventionen
 - **Sprache:** UI und Texte auf Deutsch; Umlaute (ä/ö/ü/ß) immer korrekt.
@@ -60,15 +65,17 @@ Candlesticks) · pnpm via corepack.
   `app/globals.css` (BG `#0b1522`, Akzent `#45a8ec`, Grün `#4FBE8C`, Rot `#D8505F`,
   Gold `#D4AC4E`). Karten-Optik: `.glass-card`.
 - **Nicht neu erfinden:** Geld-/R:R-/Positionsmathematik lebt in `lib/trade-math.ts`,
-  die Pre-Trade-Fragen in `lib/pre-trade-questions.ts` (gemeinsame Quelle für Client +
-  Server-Gate). Wiederverwenden statt duplizieren.
+  die Pre-Trade-Fragen in `lib/pre-trade-questions.ts`, Skala und Emotions-Tags in
+  `lib/emotions.ts` (je gemeinsame Quelle für Client + Server-Gate + Auswertung).
+  Wiederverwenden statt duplizieren.
 - Keine VS-Code-/IDE-Artefakte anlegen (kein `.vscode/`), außer ausdrücklich verlangt.
 
 ## Roadmap & Ideen
 - **`ROADMAP.md`** — die geplanten Etappen 2–7, je mit Datenmodell, Dateien, konkretem Ergebnis
   und den vor dem Bauen zu klärenden Fragen. **Erster Blick bei „was machen wir als Nächstes".**
 - **`IDEEN-BACKLOG.md`** — der vollständige Ideenvorrat darüber hinaus.
-- Erledigt: Chart-Cockpit (AP 0–10) · Etappe 1 „Geld-Fundament" (Migration `0010`).
+- Erledigt: Chart-Cockpit (AP 0–10) · Etappe 1 „Geld-Fundament" (Migration `0010`) ·
+  Etappe 4 „Emotions-Check-in" (Migration `0011`).
 
 ## Fallstricke, die schon Zeit gekostet haben
 - **`'use server'`-Dateien dürfen ausschließlich async Funktionen exportieren.** Turbopack
@@ -82,5 +89,7 @@ Candlesticks) · pnpm via corepack.
   zieht vorher/nachher einen Dump zum Vergleich (nur lesend).
 - **pnpm nach Ordner-Verschiebung:** `ERR_PNPM_UNEXPECTED_VIRTUAL_STORE` → `CI=true corepack
   pnpm install`.
+- **Meist läuft schon ein `next dev` auf :3000** — erst `http://localhost:3000` probieren, dann
+  starten. Ein zweiter Start bricht mit „Another next dev server is already running" ab.
 - **ESLint ist nicht installiert**, `pnpm lint` schlägt daher fehl. `pnpm test` (Vitest) und
   `pnpm exec tsc --noEmit` sind die tatsächlichen Prüfungen.

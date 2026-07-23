@@ -5,6 +5,7 @@ import {
   getDisciplineStats,
   getEquityStats,
   getMoneyVsPaperStats,
+  getMoodStats,
   getZoneStats,
   listTrades,
 } from '@/app/actions/trades'
@@ -15,6 +16,7 @@ import { MoneyHitRateChart } from '@/components/money-hitrate-chart'
 import { MoneyProfitChart } from '@/components/money-profit-chart'
 import { EquityChart } from '@/components/equity-chart'
 import { ExportTradesButton } from '@/components/export-trades-button'
+import { MoodStatsPanel } from '@/components/mood-stats'
 import { getSettings } from '@/app/actions/settings'
 import { formatMoney } from '@/lib/format'
 
@@ -27,12 +29,13 @@ export default async function TrackingPage() {
   const session = await auth.api.getSession({ headers: await headers() })
   if (!session?.user) redirect('/sign-in')
 
-  const [stats, trades, moneyStats, zoneStats, equity, settings] = await Promise.all([
+  const [stats, trades, moneyStats, zoneStats, equity, moodStats, settings] = await Promise.all([
     getDisciplineStats(),
     listTrades(),
     getMoneyVsPaperStats(),
     getZoneStats(),
     getEquityStats(),
+    getMoodStats(),
     getSettings(),
   ])
   const completed = trades.filter((t) => t.status === 'abgeschlossen')
@@ -186,6 +189,11 @@ export default async function TrackingPage() {
               </p>
             </>
           )}
+        </div>
+
+        {/* Zustand & Ergebnis — in welcher Verfassung verdienst du Geld? */}
+        <div className="mt-4">
+          <MoodStatsPanel stats={moodStats} />
         </div>
 
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">

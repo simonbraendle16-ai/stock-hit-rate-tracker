@@ -7,10 +7,18 @@ import { and, asc, desc, eq } from 'drizzle-orm'
 import { headers } from 'next/headers'
 import { revalidatePath } from 'next/cache'
 import { PRE_TRADE_QUESTIONS, type PreTradeAnswer } from '@/lib/pre-trade-questions'
+import {
+  normalizeMoodCheck,
+  serializeMoodTags,
+  parseMoodTags,
+  moodScoreLabel,
+  type MoodCheckInput,
+} from '@/lib/emotions'
 import { computeRiskReward, computeShares } from '@/lib/trade-math'
 import {
   computeDisciplineStats,
   computeEquityStats,
+  computeMoodStats,
   hasPnl,
   parseViolations,
   tradeFees,
@@ -20,6 +28,7 @@ import {
   type DisciplineStats,
   type EquityPoint,
   type EquityStats,
+  type MoodStats,
   type RuleViolation,
   type TradeRow,
 } from '@/lib/trade-stats'
@@ -84,6 +93,28 @@ function normalizeLeverage(v: number | null | undefined): number {
 function normalizeFee(v: number | null | undefined, fallback: number): number {
   if (v == null || !Number.isFinite(v) || v < 0) return fallback
   return v
+}
+
+/**
+ * Emotions-Check-in prüfen — oder den Vorgang abbrechen.
+ *
+ * Der Check-in ist Pflicht (Etappe 4). Wäre er überspringbar, würde er genau
+ * dann übersprungen, wenn man aufgewühlt ist — also in exakt den Fällen, die
+ * die Auswertung sichtbar machen soll. Eine lückenhafte Erhebung wäre nicht
+ * nur unvollständig, sie wäre systematisch schöngefärbt.
+ *
+ * Ein Skalenwert genügt; Tags und Notiz bleiben freiwillig.
+ */
+function requireMood(input: MoodCheckInput | null | undefined, phase: 'entry' | 'exit') {
+  const mood = normalizeMoodCheck(input)
+  if (!mood) {
+    throw new Error(
+      phase === 'entry'
+        ? 'Emotions-Check-in fehlt: Bitte auf der Skala 1–5 eintragen, wie ruhig du vor dem Einstieg bist.'
+        : 'Emotions-Check-in fehlt: Bitte auf der Skala 1–5 eintragen, wie du aus dem Trade gehst.',
+    )
+  }
+  return mood
 }
 
 // ---------------------------------------------------------------------------
@@ -207,16 +238,22 @@ async function loadOwnedTrade(userId: string, id: number): Promise<TradeRow> {
 }
 
 /**
- * Activate a planned trade. Requires the 4-questions gate to be satisfied.
+ * Activate a planned trade. Requires the 4-questions gate to be satisfied and
+ * the Emotions-Check-in (Etappe 4) — der Zustand wird im Moment des Einstiegs
+ * festgehalten, nicht rückwirkend erinnert.
  * Returns a Revenge-Guard warning if a loss was closed within the cooldown.
  */
-export async function activateTrade(id: number): Promise<{ revengeWarning: boolean }> {
+export async function activateTrade(
+  id: number,
+  mood: MoodCheckInput,
+): Promise<{ revengeWarning: boolean }> {
   const userId = await getUserId()
   const t = await loadOwnedTrade(userId, id)
   if (t.status !== 'geplant') throw new Error('Nur geplante Trades können aktiviert werden.')
   if (!t.preTradeAnswered) {
     throw new Error('Erst die 4 Douglas-Fragen beantworten (Wellenzählung, Einstieg, Stop, Ziel/Invalidation).')
   }
+  const checkIn = requireMood(mood, 'entry')
 
   // Revenge-Guard: any loss closed within the cooldown window?
   const [lastLoss] = await db
@@ -238,11 +275,19 @@ export async function activateTrade(id: number): Promise<{ revengeWarning: boole
 
   await db
     .update(trade)
-    .set({ status: 'aktiv', openedAt: new Date(), ruleViolations: JSON.stringify(violations) })
+    .set({
+      status: 'aktiv',
+      openedAt: new Date(),
+      ruleViolations: JSON.stringify(violations),
+      moodEntry: checkIn.score,
+      moodEntryTags: serializeMoodTags(checkIn.tags),
+      moodEntryNote: checkIn.note,
+    })
     .where(and(eq(trade.id, id), eq(trade.userId, userId)))
 
   revalidatePath('/')
   revalidatePath('/trades')
+  revalidatePath('/tracking')
   return { revengeWarning }
 }
 
@@ -340,6 +385,8 @@ export async function closeTrade(
     // danach sind sie eingefroren.
     feeEntry?: number | null
     feeExit?: number | null
+    // Emotions-Check-in beim Ausstieg (Etappe 4) — Pflicht.
+    mood: MoodCheckInput
   },
 ): Promise<void> {
   const userId = await getUserId()
@@ -347,6 +394,7 @@ export async function closeTrade(
   if (t.status === 'abgeschlossen' || t.status === 'abgebrochen') {
     throw new Error('Trade ist bereits abgeschlossen.')
   }
+  const checkOut = requireMood(data.mood, 'exit')
   if (data.result === 'verlust' && !data.lossAccepted) {
     throw new Error('Verlust bitte bewusst akzeptieren, bevor der Trade geschlossen wird.')
   }
@@ -375,6 +423,9 @@ export async function closeTrade(
       // Einstellungsänderung mehr die Bilanz dieses Trades.
       feeEntry: withMoney ? normalizeFee(data.feeEntry, t.feeEntry ?? 0) : 0,
       feeExit: withMoney ? normalizeFee(data.feeExit, t.feeExit ?? 0) : 0,
+      moodExit: checkOut.score,
+      moodExitTags: serializeMoodTags(checkOut.tags),
+      moodExitNote: checkOut.note,
       closedAt: new Date(),
     })
     .where(and(eq(trade.id, id), eq(trade.userId, userId)))
@@ -638,6 +689,24 @@ export async function getEquityStats(): Promise<EquityStats> {
   return computeEquityStats(rows, startCapital, await listCashflows())
 }
 
+/**
+ * Zustand vs. Ergebnis (Etappe 4) — über alle abgeschlossenen Trades.
+ *
+ * Die Rechnung selbst liegt in `computeMoodStats` (rein, getestet); hier werden
+ * nur die Zeilen geladen. Trades ohne Check-in bleiben enthalten, damit die
+ * Abdeckungsangabe stimmt — sie landen in keiner Zustands-Gruppe.
+ */
+export async function getMoodStats(): Promise<MoodStats> {
+  const userId = await getUserId()
+  const rows = await db
+    .select()
+    .from(trade)
+    .where(and(eq(trade.userId, userId), eq(trade.status, 'abgeschlossen')))
+    .orderBy(asc(trade.closedAt), asc(trade.id))
+
+  return computeMoodStats(rows)
+}
+
 // ---------------------------------------------------------------------------
 // CSV-Export
 // ---------------------------------------------------------------------------
@@ -656,7 +725,12 @@ export async function exportTradesCsv(): Promise<string> {
     'einstieg', 'stop', 'ziel', 'stueckzahl', 'kapitaleinsatz',
     'hebel', 'gebuehr_kauf', 'gebuehr_verkauf',
     'ergebnis', 'ausstieg', 'netto_pnl', 'plan_befolgt', 'regelbrueche',
-    'wellengrad', 'wellenzaehlung', 'erstellt', 'geschlossen',
+    'wellengrad', 'wellenzaehlung',
+    // Emotions-Check-in (Etappe 4) — damit die Auswertung auch außerhalb der
+    // App nachvollziehbar ist und nicht nur als fertige Quote erscheint.
+    'zustand_einstieg', 'tags_einstieg', 'notiz_einstieg',
+    'zustand_ausstieg', 'tags_ausstieg', 'notiz_ausstieg',
+    'erstellt', 'geschlossen',
   ]
 
   const esc = (v: unknown): string => {
@@ -690,6 +764,12 @@ export async function exportTradesCsv(): Promise<string> {
         parseViolations(t.ruleViolations).join('|'),
         t.waveDegree ?? '',
         t.elliottWaveCount ?? '',
+        moodScoreLabel(t.moodEntry) ?? '',
+        parseMoodTags(t.moodEntryTags).join('|'),
+        t.moodEntryNote ?? '',
+        moodScoreLabel(t.moodExit) ?? '',
+        parseMoodTags(t.moodExitTags).join('|'),
+        t.moodExitNote ?? '',
         t.createdAt ? new Date(t.createdAt).toISOString() : '',
         t.closedAt ? new Date(t.closedAt).toISOString() : '',
       ]

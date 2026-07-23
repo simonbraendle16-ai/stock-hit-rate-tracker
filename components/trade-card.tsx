@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import type { TradeRow } from '@/lib/trade-stats'
@@ -37,6 +37,13 @@ import {
   X,
 } from 'lucide-react'
 import { EditTradeDialog } from '@/components/edit-trade-dialog'
+import {
+  MoodBadge,
+  MoodCheck,
+  emptyMoodDraft,
+  isMoodDraftComplete,
+  type MoodDraft,
+} from '@/components/mood-check'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import {
@@ -70,6 +77,7 @@ const resultStyle: Record<string, string> = {
 export function TradeCard({ t, currency = 'EUR' }: { t: TradeRow; currency?: string }) {
   const router = useRouter()
   const [busy, setBusy] = useState(false)
+  const [activateOpen, setActivateOpen] = useState(false)
   const [closeOpen, setCloseOpen] = useState(false)
   const [noTradeOpen, setNoTradeOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
@@ -193,6 +201,14 @@ export function TradeCard({ t, currency = 'EUR' }: { t: TradeRow; currency?: str
         </div>
       )}
 
+      {/* Emotions-Check-in — nur wenn erfasst; Alt-Trades bleiben leer. */}
+      {(t.moodEntry != null || t.moodExit != null) && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <MoodBadge score={t.moodEntry} tags={t.moodEntryTags} phase="entry" />
+          <MoodBadge score={t.moodExit} tags={t.moodExitTags} phase="exit" />
+        </div>
+      )}
+
       {/* Aktionen */}
       <div className="mt-4 flex flex-wrap gap-2">
         {t.status === 'geplant' && (
@@ -200,13 +216,7 @@ export function TradeCard({ t, currency = 'EUR' }: { t: TradeRow; currency?: str
             <Button
               size="sm"
               disabled={busy || !t.preTradeAnswered}
-              onClick={() =>
-                run(async () => {
-                  const { revengeWarning } = await activateTrade(t.id)
-                  if (revengeWarning)
-                    toast.warning('Revenge-Guard: kurz nach einem Verlust — handelst du den Plan oder die Wut?')
-                }, 'Trade aktiviert.')
-              }
+              onClick={() => setActivateOpen(true)}
               className="btn-teal-glow font-mono text-xs"
             >
               <Play className="size-3" /> Aktivieren
@@ -273,6 +283,7 @@ export function TradeCard({ t, currency = 'EUR' }: { t: TradeRow; currency?: str
         </Button>
       </div>
 
+      <ActivateDialog trade={t} open={activateOpen} onOpenChange={setActivateOpen} onDone={() => router.refresh()} />
       <CloseDialog trade={t} open={closeOpen} onOpenChange={setCloseOpen} onDone={() => router.refresh()} />
       <NoTradeDialog trade={t} open={noTradeOpen} onOpenChange={setNoTradeOpen} onDone={() => router.refresh()} />
       <EditTradeDialog trade={t} open={editOpen} onOpenChange={setEditOpen} onDone={() => router.refresh()} currency={currency} />
@@ -416,6 +427,86 @@ function Stat({
   )
 }
 
+/**
+ * Aktivieren mit Emotions-Check-in (Etappe 4).
+ *
+ * Der Check-in steht bewusst VOR der Aktivierung und ist nicht überspringbar:
+ * er ist zugleich Erhebung und Innehalten. Wäre er optional, fiele er genau in
+ * den aufgewühlten Momenten weg — also in denen, die die Auswertung braucht.
+ */
+function ActivateDialog({
+  trade,
+  open,
+  onOpenChange,
+  onDone,
+}: {
+  trade: TradeRow
+  open: boolean
+  onOpenChange: (v: boolean) => void
+  onDone: () => void
+}) {
+  const [mood, setMood] = useState<MoodDraft>(emptyMoodDraft)
+  const [busy, setBusy] = useState(false)
+
+  // Bei jedem Öffnen frisch starten — ein alter Entwurf wäre eine fremde Momentaufnahme.
+  useEffect(() => {
+    if (open) setMood(emptyMoodDraft())
+  }, [open])
+
+  const submit = async () => {
+    if (!isMoodDraftComplete(mood)) {
+      toast.error('Bitte auf der Skala eintragen, wie ruhig du gerade bist.')
+      return
+    }
+    setBusy(true)
+    try {
+      const { revengeWarning } = await activateTrade(trade.id, mood)
+      toast.success('Trade aktiviert.')
+      if (revengeWarning) {
+        toast.warning(
+          'Revenge-Guard: kurz nach einem Verlust — handelst du den Plan oder die Wut?',
+        )
+      }
+      onOpenChange(false)
+      onDone()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Fehler')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      {/* Höhe begrenzen und scrollen lassen — auf kleinen Fenstern rutscht der
+          Bestätigen-Knopf sonst aus dem sichtbaren Bereich. */}
+      <DialogContent className="max-h-[85svh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="font-heading tracking-wide">
+            {trade.ticker} aktivieren
+          </DialogTitle>
+          <DialogDescription className="font-mono text-xs">
+            Ab jetzt ist Geld im Markt und der Plan festgeschrieben. Halte kurz fest, in
+            welchem Zustand du einsteigst.
+          </DialogDescription>
+        </DialogHeader>
+
+        <MoodCheck value={mood} onChange={setMood} phase="entry" disabled={busy} />
+
+        <DialogFooter>
+          <Button
+            onClick={submit}
+            disabled={busy || !isMoodDraftComplete(mood)}
+            className="btn-teal-glow w-full font-mono text-sm font-bold tracking-wider sm:w-auto"
+          >
+            {busy ? 'WIRD AKTIVIERT…' : 'AKTIVIEREN'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 function NoTradeDialog({
   trade,
   open,
@@ -501,7 +592,14 @@ function CloseDialog({
   const [money, setMoney] = useState(trade.tradedWithMoney)
   const [feeEntry, setFeeEntry] = useState(String(trade.feeEntry ?? DEFAULT_ORDER_FEE))
   const [feeExit, setFeeExit] = useState(String(trade.feeExit ?? DEFAULT_ORDER_FEE))
+  const [mood, setMood] = useState<MoodDraft>(emptyMoodDraft)
   const [busy, setBusy] = useState(false)
+
+  // Der Check-in gehört in den Moment des Abschließens, nicht in einen alten
+  // Entwurf aus einem vorher geöffneten und wieder geschlossenen Dialog.
+  useEffect(() => {
+    if (open) setMood(emptyMoodDraft())
+  }, [open])
 
   const submit = async () => {
     if (result === 'verlust' && !accepted) {
@@ -514,6 +612,10 @@ function CloseDialog({
       toast.error('Bitte den tatsächlichen Ausstiegskurs eintragen.')
       return
     }
+    if (!isMoodDraftComplete(mood)) {
+      toast.error('Bitte auf der Skala eintragen, wie du aus dem Trade gehst.')
+      return
+    }
     setBusy(true)
     try {
       await closeTrade(trade.id, {
@@ -524,6 +626,7 @@ function CloseDialog({
         tradedWithMoney: money,
         feeEntry: feeEntry.trim() === '' ? null : parseFloat(feeEntry),
         feeExit: feeExit.trim() === '' ? null : parseFloat(feeExit),
+        mood,
       })
       toast.success('Trade abgeschlossen.')
       onOpenChange(false)
@@ -537,7 +640,7 @@ function CloseDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[85svh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="font-heading tracking-wide">
             {trade.ticker} abschließen
@@ -706,12 +809,24 @@ function CloseDialog({
               </span>
             </label>
           )}
+
+          {/* Zweite Momentaufnahme. Der Zustand beim Einstieg steht daneben —
+              erst der Vergleich zeigt, was der Trade mit dir gemacht hat. */}
+          <div className="space-y-2">
+            {trade.moodEntry != null && (
+              <div className="flex flex-wrap items-center gap-1.5 font-mono text-[10px] text-muted-foreground">
+                <span className="uppercase tracking-widest">Beim Einstieg:</span>
+                <MoodBadge score={trade.moodEntry} tags={trade.moodEntryTags} phase="entry" />
+              </div>
+            )}
+            <MoodCheck value={mood} onChange={setMood} phase="exit" disabled={busy} />
+          </div>
         </div>
 
         <DialogFooter>
           <Button
             onClick={submit}
-            disabled={busy}
+            disabled={busy || !isMoodDraftComplete(mood)}
             className="btn-teal-glow w-full font-mono text-sm font-bold tracking-wider sm:w-auto"
           >
             {busy ? 'WIRD GESPEICHERT…' : 'ABSCHLIESSEN'}

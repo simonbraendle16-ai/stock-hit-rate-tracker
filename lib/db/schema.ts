@@ -178,6 +178,18 @@ export const trade = pgTable('trade', {
   ruleViolations: text('ruleViolations'),
   lossAccepted: boolean('lossAccepted').notNull().default(false),
 
+  // --- Emotions-Check-in (Etappe 4) ---
+  // Zwei Momentaufnahmen: beim Aktivieren und beim Abschließen. Skala 1-5
+  // (ruhig ↔ aufgewühlt), Tags als JSON-Array aus der festen Liste in
+  // `lib/emotions.ts`. Null = Alt-Trade ohne Check-in; die Auswertung zählt
+  // solche Zeilen als „ohne Angabe" statt sie zu erfinden.
+  moodEntry: integer('moodEntry'),
+  moodEntryTags: text('moodEntryTags'),
+  moodEntryNote: text('moodEntryNote'),
+  moodExit: integer('moodExit'),
+  moodExitTags: text('moodExitTags'),
+  moodExitNote: text('moodExitNote'),
+
   // --- Outcome ---
   result: text('result'), // gewinn | verlust | breakeven
   actualExitPrice: doublePrecision('actualExitPrice'),

@@ -14,6 +14,8 @@ Der vollständige Ideenkatalog (alles, was nicht in diesen sechs Etappen steckt)
 
 **Status:** Etappe 1 (Geld-Fundament) ist erledigt — Migration `drizzle/0010` ist angewendet,
 Historie nachweislich unverändert (0 geänderte Altfelder bei 15 Trades).
+**Etappe 4 (Emotions-Check-in) ist erledigt** — Migration `drizzle/0011_emotions.sql` ist
+angewendet, ebenfalls 0 geänderte Altfelder bei 15 Trades. Details unten bei der Etappe.
 
 ---
 
@@ -183,9 +185,9 @@ statt drei Stunden auf den Chart zu starren.
 
 ---
 
-# Etappe 4 — Emotions-Check-in
+# Etappe 4 — Emotions-Check-in ✅ ERLEDIGT
 
-**Aufwand:** klein (~halbe Sitzung) · **Migration:** `0013_emotions.sql`
+**Aufwand:** klein (~halbe Sitzung) · **Migration:** `0011_emotions.sql` (angewendet)
 
 ## Warum
 
@@ -243,12 +245,46 @@ Vor jeder Aktivierung zwei Klicks (Skala + Tag). Nach ein paar Wochen zeigt `/tr
 welchem Zustand du Geld verdienst und in welchem du es verlierst — mit deinen eigenen Zahlen,
 nicht mit einer Binsenweisheit aus einem Buch.
 
-## Vor dem Bauen zu klären
+## Vor dem Bauen geklärt — so ist es entschieden
 
-- Check-in **verpflichtend** (blockiert die Aktivierung) oder **überspringbar**? Verpflichtend
-  liefert lückenlose Daten, kostet aber bei jedem Trade zwei Klicks.
-- Ist die Tag-Liste fest, oder darfst du eigene ergänzen? (Eigene Tags machen die Auswertung
-  über die Zeit unschärfer.)
+- **Check-in ist verpflichtend**, beim Aktivieren wie beim Abschließen. Ein überspringbarer
+  Check-in würde genau dann übersprungen, wenn man aufgewühlt ist — also in exakt den Fällen,
+  die die Auswertung sichtbar machen soll. Das Ergebnis wäre nicht bloß lückenhaft, es wäre
+  systematisch schöngefärbt. Pflicht ist dabei nur die **Skala**; Tags und Notiz bleiben
+  freiwillig. Grund: die Skala ist die Aufteilung, die vollständig sein muss (jeder Trade
+  gehört in genau eine Gruppe), Tags sind eine Mehrfach-Ebene darüber — ein erzwungenes Tag,
+  das nicht passt, wäre Rauschen statt Aussage. Die Abdeckungszeile über der Tabelle nennt
+  offen, wie viele Trades getaggt sind.
+- **Die Tag-Liste ist fest** — acht Einträge, keine eigenen. Ein selbst erfundenes Tag
+  zersplittert die Stichprobe und macht die Auswertung über Monate unschärfer, statt sie zu
+  verfeinern.
+
+## Abweichungen von der ursprünglichen Beschreibung
+
+| Geplant | Gebaut | Warum |
+|---|---|---|
+| `0013_emotions.sql` | `0011_emotions.sql` | Etappe 2 und 3 sind nicht gebaut; 0011 war die nächste freie Nummer. |
+| ein Feld `moodNote` | `moodEntryNote` + `moodExitNote` | Bei zwei Momentaufnahmen und einem Feld überschreibt der Ausstieg die Einstiegs-Notiz — der Vergleich vorher/nachher wäre weg. |
+| Auswertungsblock in `app/tracking/page.tsx` | `components/mood-stats.tsx`, eingebunden in `page.tsx` | Die Seite hatte schon 254 Zeilen; die Tabelle ist eine eigene Einheit. |
+| — | `moodExit`-Auswertung + Plan-Treue-Spalte | Die Daten fallen ohnehin an; der Ausstiegs-Zustand erklärt keine Ergebnisse, zeigt aber, was der Trade mit einem gemacht hat. |
+| — | CSV-Export um sechs Spalten erweitert | Sonst wäre der Zustand nur als fertige Quote in der App sichtbar, nicht nachrechenbar. |
+| — | `CHECK`-Bedingung auf 1–5 in der Datenbank | Ein Wert außerhalb der Skala wäre stumm in keiner Gruppe gelandet. |
+
+## Nachweis
+
+- Migration angewendet gegen die Produktions-DB, Vorher-Nachher-Dump verglichen:
+  **15/15 Trades, 0 geänderte Altfelder**, 6 neue Spalten vorhanden und leer (kein Backfill —
+  für den Altbestand gibt es keinen Zustand, den man ohne Erfindung eintragen könnte).
+- `CHECK`-Bedingungen greifen nachweislich (Testeinfügung mit Wert 9 abgelehnt, zurückgerollt).
+- 82 Tests grün (`pnpm test`), `tsc --noEmit` sauber, `pnpm build` erfolgreich.
+- Oberfläche visuell geprüft (Tabelle, Badges, Check-in in beiden Varianten, Auswahl-Zustände).
+
+## Offen
+
+- **Klick-Test mit echtem Login steht aus:** einen geplanten Trade aktivieren → Check-in →
+  abschließen → auf `/tracking` prüfen, dass die Zeile erscheint. Ohne Zugangsdaten nicht
+  durchführbar; Server-Validierung und Rechenlogik sind durch Tests abgedeckt, der Weg durch
+  die echte Anmeldung nicht.
 
 ---
 
@@ -514,7 +550,8 @@ Etappe 6 (Teilverkäufe)─┘  nach Etappe 3
 
 **Warum Etappe 4 zuerst:** Emotionsdaten sind nur rückwirkend nutzlos. Jeder Trade, der ohne
 Check-in läuft, fehlt später in der Auswertung. Alle anderen Etappen rechnen mit Daten, die
-ohnehin schon entstehen — diese eine nicht.
+ohnehin schon entstehen — diese eine nicht. (Deshalb ist sie erledigt; ab jetzt sammelt jeder
+Trade seinen Zustand mit.)
 
 ---
 

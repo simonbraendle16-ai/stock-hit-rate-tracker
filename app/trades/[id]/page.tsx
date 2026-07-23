@@ -89,6 +89,12 @@ export default async function TradeDetailPage({
             <Panel title="Strategie / Setup">{t.strategy}</Panel>
           )}
           {t.notes && <Panel title="Notizen">{t.notes}</Panel>}
+          {/* Die Skala und die Tags stehen schon auf der Karte — hier steht der
+              Freitext, für den dort kein Platz ist. */}
+          {t.moodEntryNote && (
+            <Panel title="Zustand beim Einstieg">{t.moodEntryNote}</Panel>
+          )}
+          {t.moodExitNote && <Panel title="Zustand beim Ausstieg">{t.moodExitNote}</Panel>}
           {t.elliottInvalidation != null && (
             <Panel title="Elliott-Invalidation">
               Analyse ungültig ab {t.elliottInvalidation}
