@@ -70,6 +70,25 @@ export const userSettings = pgTable('user_settings', {
   startCapital: doublePrecision('startCapital').notNull().default(10000),
   defaultRiskPct: doublePrecision('defaultRiskPct').notNull().default(1),
   maxRiskPct: doublePrecision('maxRiskPct').notNull().default(2),
+  // Kontowährung — reine Anzeige-/Formatierungsebene. Kurse notieren weiterhin
+  // in der Währung des Instruments und werden NICHT umgerechnet.
+  currency: text('currency').notNull().default('EUR'),
+  // Vorbelegung der Ordergebühr im Trade-Formular; pro Trade überschreibbar.
+  defaultFeeEntry: doublePrecision('defaultFeeEntry').notNull().default(9),
+  defaultFeeExit: doublePrecision('defaultFeeExit').notNull().default(9),
+})
+
+// Ein- und Auszahlungen aufs Handelskonto. Ohne sie rechnet die Rendite gegen
+// ein fixes Startkapital und wird ab der ersten Nachzahlung falsch.
+export const cashflow = pgTable('cashflow', {
+  id: serial('id').primaryKey(),
+  userId: text('userId').notNull(),
+  // immer positiv; die Richtung steckt in `kind`
+  amount: doublePrecision('amount').notNull(),
+  kind: text('kind').notNull().default('einzahlung'), // einzahlung | auszahlung
+  occurredAt: timestamp('occurredAt').notNull().defaultNow(),
+  note: text('note'),
+  createdAt: timestamp('createdAt').notNull().defaultNow(),
 })
 
 // One row per instrument (stock/crypto/forex…). The shared aggregation key:
@@ -124,8 +143,17 @@ export const trade = pgTable('trade', {
   stopLoss: doublePrecision('stopLoss').notNull(),
   takeProfit: doublePrecision('takeProfit'),
   positionSize: doublePrecision('positionSize'),
-  // Kapitaleinsatz in € (Echtgeld); Stückzahl wird daraus abgeleitet (positionSize).
+  // Kapitaleinsatz in Kontowährung (Echtgeld); die Stückzahl in positionSize
+  // wird daraus abgeleitet — bei Hebel aus Einsatz × Hebel.
   investedAmount: doublePrecision('investedAmount'),
+  // Hebel je Trade, 1 = ungehebelt. Steckt bereits in positionSize und wirkt
+  // dadurch automatisch in Risiko, P&L und Risiko-Guard mit.
+  leverage: doublePrecision('leverage').notNull().default(1),
+  // Tatsächlich gezahlte Ordergebühren, beim Abschluss eingefroren. Vorher aus
+  // einer Konstante zur Laufzeit gerechnet — eine Änderung der Standard-Gebühr
+  // hätte damit rückwirkend die gesamte Historie verschoben.
+  feeEntry: doublePrecision('feeEntry'),
+  feeExit: doublePrecision('feeExit'),
   // Verkaufsanteil beim Take-Profit in Prozent (Teilverkauf-Projektion), Standard 100.
   takeProfitPct: doublePrecision('takeProfitPct').default(100),
   strategy: text('strategy'),

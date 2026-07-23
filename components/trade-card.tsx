@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import type { TradeRow } from '@/app/actions/trades'
+import type { TradeRow } from '@/lib/trade-stats'
 import {
   activateTrade,
   abortTrade,
@@ -40,13 +40,13 @@ import { EditTradeDialog } from '@/components/edit-trade-dialog'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import {
-  ROUND_TRIP_FEE_EUR,
+  DEFAULT_ORDER_FEE,
   projectStopLoss,
   projectTakeProfit,
 } from '@/lib/trade-math'
+import { tradePnl } from '@/lib/trade-stats'
+import { formatMoney } from '@/lib/format'
 
-const eur = (n: number) =>
-  n.toLocaleString('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 })
 const num = (n: number) => n.toLocaleString('de-DE', { maximumFractionDigits: 4 })
 
 const statusStyle: Record<string, string> = {
@@ -67,7 +67,7 @@ const resultStyle: Record<string, string> = {
   breakeven: 'text-muted-foreground',
 }
 
-export function TradeCard({ t }: { t: TradeRow }) {
+export function TradeCard({ t, currency = 'EUR' }: { t: TradeRow; currency?: string }) {
   const router = useRouter()
   const [busy, setBusy] = useState(false)
   const [closeOpen, setCloseOpen] = useState(false)
@@ -165,7 +165,7 @@ export function TradeCard({ t }: { t: TradeRow }) {
         <Stat label="Ziel" value={t.takeProfit} tone="pos" />
       </div>
 
-      <MoneyPanel t={t} />
+      <MoneyPanel t={t} currency={currency} />
 
       {(t.elliottWaveCount || t.waveDegree) && (
         <div className="mt-2 flex items-center gap-1.5 font-mono text-[11px] text-primary/80">
@@ -275,37 +275,26 @@ export function TradeCard({ t }: { t: TradeRow }) {
 
       <CloseDialog trade={t} open={closeOpen} onOpenChange={setCloseOpen} onDone={() => router.refresh()} />
       <NoTradeDialog trade={t} open={noTradeOpen} onOpenChange={setNoTradeOpen} onDone={() => router.refresh()} />
-      <EditTradeDialog trade={t} open={editOpen} onOpenChange={setEditOpen} onDone={() => router.refresh()} />
+      <EditTradeDialog trade={t} open={editOpen} onOpenChange={setEditOpen} onDone={() => router.refresh()} currency={currency} />
     </div>
   )
 }
 
-function MoneyPanel({ t }: { t: TradeRow }) {
+function MoneyPanel({ t, currency = 'EUR' }: { t: TradeRow; currency?: string }) {
   if (!t.tradedWithMoney || t.investedAmount == null) return null
 
+  const eur = (n: number | null | undefined) => formatMoney(n, currency)
   const invested = t.investedAmount
   const shares = t.positionSize ?? null
+  const leverage = t.leverage ?? 1
   const closed = t.status === 'abgeschlossen' && !!t.result
 
-  // Realisiertes Netto-Ergebnis (spiegelt die Server-Logik: Brutto − 18 € Gebühren).
-  let realizedNet: number | null = null
-  if (closed && shares != null) {
-    let gross = 0
-    if (t.result === 'gewinn') {
-      gross =
-        t.actualExitPrice != null
-          ? (t.actualExitPrice - t.entryPrice) * (t.direction === 'short' ? -shares : shares)
-          : t.takeProfit != null
-            ? Math.abs(t.takeProfit - t.entryPrice) * shares
-            : 0
-    } else if (t.result === 'verlust') {
-      gross =
-        t.actualExitPrice != null
-          ? (t.actualExitPrice - t.entryPrice) * (t.direction === 'short' ? -shares : shares)
-          : -(t.stopLoss != null ? Math.abs(t.entryPrice - t.stopLoss) * shares : 0)
-    }
-    realizedNet = gross - ROUND_TRIP_FEE_EUR
-  }
+  // Realisiertes Netto-Ergebnis aus derselben Funktion wie Bilanz und Statistik —
+  // keine zweite Rechenlogik in der Anzeige. `null` = kein Ausstiegskurs erfasst.
+  const realizedNet = closed ? tradePnl(t) : null
+
+  // Geplante Gebühren des Trades; bei Altbestand ohne Wert die Vorgabe.
+  const fees = { entry: t.feeEntry ?? DEFAULT_ORDER_FEE, exit: t.feeExit ?? DEFAULT_ORDER_FEE }
 
   const tp =
     !closed && t.takeProfit != null
@@ -315,6 +304,8 @@ function MoneyPanel({ t }: { t: TradeRow }) {
           tp: t.takeProfit,
           direction: t.direction as 'long' | 'short',
           sellPct: t.takeProfitPct ?? 100,
+          leverage,
+          fees,
         })
       : null
   const sl = !closed
@@ -323,6 +314,8 @@ function MoneyPanel({ t }: { t: TradeRow }) {
         entry: t.entryPrice,
         sl: t.stopLoss,
         direction: t.direction as 'long' | 'short',
+        leverage,
+        fees,
       })
     : null
 
@@ -333,17 +326,22 @@ function MoneyPanel({ t }: { t: TradeRow }) {
       </p>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 font-mono text-xs sm:grid-cols-3">
         <MRow label="Kapitaleinsatz" value={eur(invested)} />
+        {leverage > 1 && <MRow label="Hebel" value={`${num(leverage)}×`} />}
+        {leverage > 1 && <MRow label="Positionswert" value={eur(invested * leverage)} />}
         {shares != null && <MRow label="Stückzahl" value={num(shares)} />}
-        <MRow label="Ordergebühr" value={`${eur(ROUND_TRIP_FEE_EUR)} (Round-Trip)`} />
+        <MRow label="Ordergebühr" value={`${eur(fees.entry + fees.exit)} (Kauf + Verkauf)`} />
 
         {closed ? (
-          realizedNet != null && (
+          realizedNet != null ? (
             <MRow
               label="Netto-Ergebnis"
               value={eur(realizedNet)}
               tone={realizedNet >= 0 ? 'pos' : 'neg'}
               strong
             />
+          ) : (
+            // Kein Ausstiegskurs erfasst — früher stand hier ein erfundener Betrag.
+            <MRow label="Netto-Ergebnis" value="Ausstiegskurs fehlt" tone="neg" />
           )
         ) : (
           <>
@@ -501,11 +499,19 @@ function CloseDialog({
   const [followed, setFollowed] = useState(true)
   const [accepted, setAccepted] = useState(false)
   const [money, setMoney] = useState(trade.tradedWithMoney)
+  const [feeEntry, setFeeEntry] = useState(String(trade.feeEntry ?? DEFAULT_ORDER_FEE))
+  const [feeExit, setFeeExit] = useState(String(trade.feeExit ?? DEFAULT_ORDER_FEE))
   const [busy, setBusy] = useState(false)
 
   const submit = async () => {
     if (result === 'verlust' && !accepted) {
       toast.error('Bitte den Verlust bewusst akzeptieren.')
+      return
+    }
+    // Ohne Ausstiegskurs kein berechenbares Ergebnis — der Server lehnt es
+    // ebenfalls ab, hier nur früher und freundlicher.
+    if (result !== 'breakeven' && !exit.trim()) {
+      toast.error('Bitte den tatsächlichen Ausstiegskurs eintragen.')
       return
     }
     setBusy(true)
@@ -516,6 +522,8 @@ function CloseDialog({
         followedPlan: followed,
         lossAccepted: accepted,
         tradedWithMoney: money,
+        feeEntry: feeEntry.trim() === '' ? null : parseFloat(feeEntry),
+        feeExit: feeExit.trim() === '' ? null : parseFloat(feeExit),
       })
       toast.success('Trade abgeschlossen.')
       onOpenChange(false)
@@ -569,7 +577,7 @@ function CloseDialog({
 
           <div className="space-y-2">
             <Label className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-              Ausstiegskurs
+              Ausstiegskurs {result !== 'breakeven' && <span className="text-destructive">*</span>}
             </Label>
             <Input
               type="number"
@@ -578,8 +586,47 @@ function CloseDialog({
               onChange={(e) => setExit(e.target.value)}
               placeholder="0.00"
               className="input-ocean font-mono"
+              required={result !== 'breakeven'}
             />
+            <p className="font-mono text-[10px] text-muted-foreground">
+              {result === 'breakeven'
+                ? 'Bei Breakeven optional — das Ergebnis ist ohnehin null.'
+                : 'Zu welchem Kurs bist du tatsächlich ausgestiegen? Ohne ihn lässt sich dein Ergebnis nicht berechnen.'}
+            </p>
           </div>
+
+          {/* Gebühren letztmalig korrigierbar — danach sind sie eingefroren und
+              keine spätere Einstellungsänderung verschiebt diesen Trade mehr. */}
+          {money && (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+                  Gebühr Kauf
+                </Label>
+                <Input
+                  type="number"
+                  step="any"
+                  min="0"
+                  value={feeEntry}
+                  onChange={(e) => setFeeEntry(e.target.value)}
+                  className="input-ocean font-mono"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+                  Gebühr Verkauf
+                </Label>
+                <Input
+                  type="number"
+                  step="any"
+                  min="0"
+                  value={feeExit}
+                  onChange={(e) => setFeeExit(e.target.value)}
+                  className="input-ocean font-mono"
+                />
+              </div>
+            </div>
+          )}
 
           <div className="space-y-2">
             <Label className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">

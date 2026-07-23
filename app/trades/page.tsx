@@ -3,6 +3,7 @@ import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { listTrades } from '@/app/actions/trades'
+import { getSettings } from '@/app/actions/settings'
 import { CockpitHeader } from '@/components/cockpit-header'
 import { TradeCard } from '@/components/trade-card'
 import { Button } from '@/components/ui/button'
@@ -12,7 +13,7 @@ export default async function TradesPage() {
   const session = await auth.api.getSession({ headers: await headers() })
   if (!session?.user) redirect('/sign-in')
 
-  const trades = await listTrades()
+  const [trades, settings] = await Promise.all([listTrades(), getSettings()])
 
   return (
     <div className="min-h-svh bg-background">
@@ -48,7 +49,7 @@ export default async function TradesPage() {
         ) : (
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
             {trades.map((t) => (
-              <TradeCard key={t.id} t={t} />
+              <TradeCard key={t.id} t={t} currency={settings.currency} />
             ))}
           </div>
         )}

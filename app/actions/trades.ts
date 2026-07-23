@@ -7,8 +7,24 @@ import { and, asc, desc, eq } from 'drizzle-orm'
 import { headers } from 'next/headers'
 import { revalidatePath } from 'next/cache'
 import { PRE_TRADE_QUESTIONS, type PreTradeAnswer } from '@/lib/pre-trade-questions'
-import { computeRiskReward, computeShares, ROUND_TRIP_FEE_EUR } from '@/lib/trade-math'
+import { computeRiskReward, computeShares } from '@/lib/trade-math'
+import {
+  computeDisciplineStats,
+  computeEquityStats,
+  hasPnl,
+  parseViolations,
+  tradeFees,
+  tradeGrossPnl,
+  tradePnl,
+  tradeRisk,
+  type DisciplineStats,
+  type EquityPoint,
+  type EquityStats,
+  type RuleViolation,
+  type TradeRow,
+} from '@/lib/trade-stats'
 import { getSettings } from '@/app/actions/settings'
+import { listCashflows } from '@/app/actions/cashflows'
 
 async function getUserId() {
   const session = await auth.api.getSession({ headers: await headers() })
@@ -20,8 +36,10 @@ async function getUserId() {
 // Types
 // ---------------------------------------------------------------------------
 
-export type TradeRow = typeof trade.$inferSelect
-export type RuleViolation = 'stop_moved' | 'invalidation_ignored' | 'revenge'
+// Rechenlogik und die zugehörigen Typen leben in `lib/trade-stats.ts` (testbar,
+// ohne DB/Auth) und werden von dort importiert. Kein Re-Export hier: Turbopack
+// behandelt jeden Export einer 'use server'-Datei als Server Action — auch
+// reine Typ-Re-Exports, was den Build bricht.
 
 export type TradeInput = {
   ticker: string
@@ -31,8 +49,14 @@ export type TradeInput = {
   stopLoss: number
   takeProfit?: number | null
   positionSize?: number | null
-  // Kapitaleinsatz in € (Echtgeld). Stückzahl (positionSize) wird daraus abgeleitet.
+  // Kapitaleinsatz in Kontowährung (Echtgeld). Stückzahl (positionSize) wird
+  // daraus abgeleitet — bei Hebel aus Einsatz × Hebel.
   investedAmount?: number | null
+  // Hebel, 1 = ungehebelt.
+  leverage?: number | null
+  // Geplante Ordergebühren; beim Abschluss eingefroren.
+  feeEntry?: number | null
+  feeExit?: number | null
   // Verkaufsanteil beim Take-Profit in Prozent (Teilverkauf-Projektion).
   takeProfitPct?: number | null
   strategy?: string | null
@@ -48,72 +72,18 @@ export type TradeInput = {
   preTradeAnswers?: PreTradeAnswer[]
 }
 
-export type DisciplineStats = {
-  completed: number
-  disciplineScore: number // 0-100, followed-plan ratio
-  winRate: number // 0-100
-  expectancy: number // average R-multiple
-  streak: number // consecutive plan-followed trades (most recent backwards)
-  ruleViolations: number
-  totalPnL: number
-  startCapital: number
-  currentBalance: number
-  returnPct: number
-}
-
 const COOLDOWN_MIN = 60 // Revenge-Guard window
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Ordergebühren eines ausgeführten Trades: 9 € je Kauf + 9 € je Verkauf.
- * Nur bei Echtgeld-Trades, die tatsächlich ausgeführt wurden (gewinn/verlust/breakeven) —
- * ein Breakeven-Echtgeld-Trade kostet also trotzdem die vollen 18 €.
- */
-function tradeFees(t: TradeRow): number {
-  if (!t.tradedWithMoney) return 0
-  if (t.result === 'gewinn' || t.result === 'verlust' || t.result === 'breakeven') {
-    return ROUND_TRIP_FEE_EUR
-  }
-  return 0
+/** Hebel auf einen sinnvollen Bereich begrenzen; 1 = ungehebelt. */
+function normalizeLeverage(v: number | null | undefined): number {
+  if (v == null || !Number.isFinite(v) || v <= 0) return 1
+  return Math.min(v, 500)
 }
 
-/** Brutto-P&L eines Trades vor Gebühren (B's PortfolioBalance logic). */
-function tradeGrossPnl(t: TradeRow): number {
-  const size = t.positionSize ?? 1
-  if (t.result === 'breakeven' || !t.result) return 0
-  if (t.actualExitPrice != null && t.entryPrice != null) {
-    return (t.actualExitPrice - t.entryPrice) * (t.direction === 'short' ? -size : size)
-  }
-  if (t.result === 'gewinn') {
-    return t.takeProfit != null ? Math.abs(t.takeProfit - t.entryPrice) * size : size * 10
-  }
-  // verlust
-  return -(t.stopLoss != null ? Math.abs(t.entryPrice - t.stopLoss) * size : size * 10)
-}
-
-/** Netto-P&L: Brutto minus Ordergebühren (bei Echtgeld). Fließt in Bilanz & Statistiken. */
-function tradePnl(t: TradeRow): number {
-  return tradeGrossPnl(t) - tradeFees(t)
-}
-
-/** Risk in account currency = |entry - stop| * size. */
-function tradeRisk(t: TradeRow): number {
-  const size = t.positionSize ?? 1
-  const r = Math.abs(t.entryPrice - t.stopLoss) * size
-  return r > 0 ? r : size * 10
-}
-
-function parseViolations(raw: string | null): RuleViolation[] {
-  if (!raw) return []
-  try {
-    const v = JSON.parse(raw)
-    return Array.isArray(v) ? (v as RuleViolation[]) : []
-  } catch {
-    return []
-  }
+/** Gebühr übernehmen, sonst den Standard aus den Einstellungen. Nie negativ. */
+function normalizeFee(v: number | null | undefined, fallback: number): number {
+  if (v == null || !Number.isFinite(v) || v < 0) return fallback
+  return v
 }
 
 // ---------------------------------------------------------------------------
@@ -172,15 +142,24 @@ export async function createTrade(input: TradeInput): Promise<{ id: number }> {
     input.takeProfit ?? null,
   )
 
-  // Bei Echtgeld: Stückzahl aus Kapitaleinsatz ableiten (Basis der P&L-Rechnung).
+  // Bei Echtgeld: Stückzahl aus Kapitaleinsatz und Hebel ableiten (Basis der
+  // P&L-Rechnung). Der Hebel steckt danach in positionSize und wirkt dadurch
+  // automatisch in Risiko, Guard und Statistik mit.
   const withMoney = input.tradedWithMoney ?? true
   const investedAmount =
     withMoney && input.investedAmount != null ? input.investedAmount : null
+  const leverage = normalizeLeverage(input.leverage)
   const positionSize =
     investedAmount != null
-      ? computeShares(investedAmount, input.entryPrice)
+      ? computeShares(investedAmount, input.entryPrice, leverage)
       : (input.positionSize ?? null)
   const takeProfitPct = input.takeProfitPct != null ? input.takeProfitPct : 100
+
+  // Geplante Gebühren: Vorgabe aus den Einstellungen, im Formular überschreibbar.
+  // Bei Demo-Trades fallen keine an.
+  const settings = await getSettings()
+  const feeEntry = withMoney ? normalizeFee(input.feeEntry, settings.defaultFeeEntry) : 0
+  const feeExit = withMoney ? normalizeFee(input.feeExit, settings.defaultFeeExit) : 0
 
   const [row] = await db
     .insert(trade)
@@ -195,6 +174,9 @@ export async function createTrade(input: TradeInput): Promise<{ id: number }> {
       takeProfit: input.takeProfit ?? null,
       positionSize,
       investedAmount,
+      leverage,
+      feeEntry,
+      feeExit,
       takeProfitPct,
       strategy: input.strategy?.trim() || null,
       broker: input.broker?.trim() || null,
@@ -298,12 +280,14 @@ export async function updateTradePlan(
     }
   }
 
-  // Kapitaleinsatz oder Einstieg geändert → Stückzahl neu ableiten (Echtgeld).
+  // Kapitaleinsatz, Einstieg oder Hebel geändert → Stückzahl neu ableiten (Echtgeld).
   const nextEntry = patch.entryPrice ?? t.entryPrice
   const nextInvested =
     patch.investedAmount !== undefined ? patch.investedAmount : t.investedAmount
+  const nextLeverage =
+    patch.leverage !== undefined ? normalizeLeverage(patch.leverage) : (t.leverage ?? 1)
   const derivedSize =
-    nextInvested != null ? computeShares(nextInvested, nextEntry) : undefined
+    nextInvested != null ? computeShares(nextInvested, nextEntry, nextLeverage) : undefined
 
   await db
     .update(trade)
@@ -312,6 +296,9 @@ export async function updateTradePlan(
       ...(patch.stopLoss != null ? { stopLoss: patch.stopLoss } : {}),
       ...(patch.takeProfit !== undefined ? { takeProfit: patch.takeProfit } : {}),
       ...(patch.investedAmount !== undefined ? { investedAmount: patch.investedAmount } : {}),
+      ...(patch.leverage !== undefined ? { leverage: nextLeverage } : {}),
+      ...(patch.feeEntry !== undefined ? { feeEntry: normalizeFee(patch.feeEntry, 0) } : {}),
+      ...(patch.feeExit !== undefined ? { feeExit: normalizeFee(patch.feeExit, 0) } : {}),
       ...(patch.takeProfitPct !== undefined ? { takeProfitPct: patch.takeProfitPct } : {}),
       ...(derivedSize !== undefined
         ? { positionSize: derivedSize }
@@ -349,6 +336,10 @@ export async function closeTrade(
     followedPlan: boolean
     lossAccepted?: boolean
     tradedWithMoney?: boolean
+    // Letzte Gelegenheit, die tatsächlich gezahlten Gebühren zu korrigieren —
+    // danach sind sie eingefroren.
+    feeEntry?: number | null
+    feeExit?: number | null
   },
 ): Promise<void> {
   const userId = await getUserId()
@@ -359,6 +350,15 @@ export async function closeTrade(
   if (data.result === 'verlust' && !data.lossAccepted) {
     throw new Error('Verlust bitte bewusst akzeptieren, bevor der Trade geschlossen wird.')
   }
+  // Ohne Ausstiegskurs lässt sich der P&L nicht berechnen. Früher wurde an
+  // dieser Stelle stillschweigend ein Betrag unterstellt — jetzt wird gefragt.
+  if (data.result !== 'breakeven' && data.actualExitPrice == null) {
+    throw new Error(
+      'Bitte den tatsächlichen Ausstiegskurs eintragen — ohne ihn lässt sich Gewinn oder Verlust nicht berechnen.',
+    )
+  }
+
+  const withMoney = data.tradedWithMoney ?? t.tradedWithMoney
 
   await db
     .update(trade)
@@ -371,6 +371,10 @@ export async function closeTrade(
       ...(data.tradedWithMoney !== undefined
         ? { tradedWithMoney: data.tradedWithMoney }
         : {}),
+      // Gebühren hier festschreiben: ab jetzt verändert keine spätere
+      // Einstellungsänderung mehr die Bilanz dieses Trades.
+      feeEntry: withMoney ? normalizeFee(data.feeEntry, t.feeEntry ?? 0) : 0,
+      feeExit: withMoney ? normalizeFee(data.feeExit, t.feeExit ?? 0) : 0,
       closedAt: new Date(),
     })
     .where(and(eq(trade.id, id), eq(trade.userId, userId)))
@@ -470,47 +474,7 @@ export async function getDisciplineStats(startCapitalOverride?: number): Promise
     .where(and(eq(trade.userId, userId), eq(trade.status, 'abgeschlossen')))
     .orderBy(asc(trade.closedAt), asc(trade.id))
 
-  const completed = rows.length
-  const followed = rows.filter((t) => t.followedPlan).length
-  const wins = rows.filter((t) => t.result === 'gewinn').length
-  const disciplineScore = completed ? (followed / completed) * 100 : 0
-
-  // Win rate & expectancy beide über ENTSCHIEDENE Trades (Gewinn|Verlust) —
-  // Breakeven zählt weder als Gewinn noch als Verlust, damit beide Kennzahlen
-  // denselben Nenner nutzen.
-  const decisive = rows.filter((t) => t.result === 'gewinn' || t.result === 'verlust')
-  const winRate = decisive.length ? (wins / decisive.length) * 100 : 0
-  const rSum = decisive.reduce((acc, t) => acc + tradePnl(t) / tradeRisk(t), 0)
-  const expectancy = decisive.length ? rSum / decisive.length : 0
-
-  // Streak of plan-followed trades counting back from the most recent.
-  let streak = 0
-  for (let i = rows.length - 1; i >= 0; i--) {
-    if (rows[i].followedPlan) streak++
-    else break
-  }
-
-  const ruleViolations = rows.reduce((acc, t) => acc + parseViolations(t.ruleViolations).length, 0)
-  // Kontobilanz NUR aus Echtgeld-Trades — Demo/Papertrades dürfen das reale
-  // Kapital und die Rendite nicht verfälschen.
-  const totalPnL = rows
-    .filter((t) => t.tradedWithMoney)
-    .reduce((acc, t) => acc + tradePnl(t), 0)
-  const currentBalance = startCapital + totalPnL
-  const returnPct = startCapital ? (totalPnL / startCapital) * 100 : 0
-
-  return {
-    completed,
-    disciplineScore,
-    winRate,
-    expectancy,
-    streak,
-    ruleViolations,
-    totalPnL,
-    startCapital,
-    currentBalance,
-    returnPct,
-  }
+  return computeDisciplineStats(rows, startCapital, await listCashflows())
 }
 
 export type GroupStats = {
@@ -539,7 +503,8 @@ export async function getMoneyVsPaperStats(): Promise<MoneyVsPaper> {
     const wins = list.filter((t) => t.result === 'gewinn').length
     const losses = list.filter((t) => t.result === 'verlust').length
     const decisive = wins + losses
-    const totalPnL = list.reduce((acc, t) => acc + tradePnl(t), 0)
+    // Trades ohne Ausstiegskurs haben keinen berechenbaren P&L und zählen nicht mit.
+    const totalPnL = list.filter(hasPnl).reduce((acc, t) => acc + (tradePnl(t) ?? 0), 0)
     return {
       completed: list.length,
       wins,
@@ -655,24 +620,10 @@ export async function getUnifiedHitRateTimeline(): Promise<UnifiedPoint[]> {
   return points
 }
 
-export type EquityPoint = {
-  date: string
-  label: string
-  balance: number // Kontostand nach diesem Trade
-}
-
-export type EquityStats = {
-  startCapital: number
-  points: EquityPoint[]
-  maxDrawdown: number // größter Rückgang vom Hoch, in € (>= 0)
-  maxDrawdownPct: number // relativ zum jeweiligen Hoch, 0-100
-  worstLossStreak: number // längste Serie aufeinanderfolgender Verlust-Trades
-  currentLossStreak: number // aktuelle Verlust-Serie (ab dem jüngsten Trade rückwärts)
-}
-
 /**
  * Equity-Kurve, Max-Drawdown und Verlust-Serien — NUR Echtgeld-Trades,
- * chronologisch nach Abschluss. Die Kurve startet beim konfigurierten Startkapital.
+ * chronologisch nach Abschluss. Ein- und Auszahlungen erscheinen als eigene
+ * Punkte und zählen nicht in den Drawdown (eine Auszahlung ist kein Verlust).
  */
 export async function getEquityStats(): Promise<EquityStats> {
   const userId = await getUserId()
@@ -684,57 +635,7 @@ export async function getEquityStats(): Promise<EquityStats> {
     .where(and(eq(trade.userId, userId), eq(trade.status, 'abgeschlossen')))
     .orderBy(asc(trade.closedAt), asc(trade.id))
 
-  const money = rows.filter((t) => t.tradedWithMoney)
-
-  const points: EquityPoint[] = []
-  let balance = startCapital
-  let peak = startCapital
-  let maxDrawdown = 0
-  let maxDrawdownPct = 0
-
-  for (const t of money) {
-    balance += tradePnl(t)
-    if (balance > peak) peak = balance
-    const dd = peak - balance
-    if (dd > maxDrawdown) maxDrawdown = dd
-    if (peak > 0) {
-      const ddPct = (dd / peak) * 100
-      if (ddPct > maxDrawdownPct) maxDrawdownPct = ddPct
-    }
-    const d = t.closedAt ? new Date(t.closedAt) : new Date(t.createdAt)
-    points.push({
-      date: d.toISOString(),
-      label: d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: '2-digit' }),
-      balance,
-    })
-  }
-
-  // Verlust-Serien über ALLE entschiedenen Trades (Geld + Demo), chronologisch.
-  const decisive = rows.filter((t) => t.result === 'gewinn' || t.result === 'verlust')
-  let worstLossStreak = 0
-  let run = 0
-  for (const t of decisive) {
-    if (t.result === 'verlust') {
-      run++
-      if (run > worstLossStreak) worstLossStreak = run
-    } else {
-      run = 0
-    }
-  }
-  let currentLossStreak = 0
-  for (let i = decisive.length - 1; i >= 0; i--) {
-    if (decisive[i].result === 'verlust') currentLossStreak++
-    else break
-  }
-
-  return {
-    startCapital,
-    points,
-    maxDrawdown,
-    maxDrawdownPct,
-    worstLossStreak,
-    currentLossStreak,
-  }
+  return computeEquityStats(rows, startCapital, await listCashflows())
 }
 
 // ---------------------------------------------------------------------------
@@ -753,6 +654,7 @@ export async function exportTradesCsv(): Promise<string> {
   const headerCols = [
     'id', 'ticker', 'markt', 'richtung', 'status', 'echtgeld',
     'einstieg', 'stop', 'ziel', 'stueckzahl', 'kapitaleinsatz',
+    'hebel', 'gebuehr_kauf', 'gebuehr_verkauf',
     'ergebnis', 'ausstieg', 'netto_pnl', 'plan_befolgt', 'regelbrueche',
     'wellengrad', 'wellenzaehlung', 'erstellt', 'geschlossen',
   ]
@@ -777,9 +679,13 @@ export async function exportTradesCsv(): Promise<string> {
         t.takeProfit ?? '',
         t.positionSize ?? '',
         t.investedAmount ?? '',
+        t.leverage ?? 1,
+        t.feeEntry ?? '',
+        t.feeExit ?? '',
         t.result ?? '',
         t.actualExitPrice ?? '',
-        t.status === 'abgeschlossen' ? tradePnl(t).toFixed(2) : '',
+        // Leer, wenn kein Ausstiegskurs erfasst ist — kein erfundener Betrag.
+        t.status === 'abgeschlossen' ? (tradePnl(t)?.toFixed(2) ?? '') : '',
         t.followedPlan == null ? '' : t.followedPlan ? 'ja' : 'nein',
         parseViolations(t.ruleViolations).join('|'),
         t.waveDegree ?? '',

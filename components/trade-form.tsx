@@ -28,14 +28,13 @@ import {
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import {
-  ORDER_FEE_EUR,
-  ROUND_TRIP_FEE_EUR,
+  computePositionValue,
+  computeShares,
   projectStopLoss,
   projectTakeProfit,
 } from '@/lib/trade-math'
+import { currencySymbol, formatMoney } from '@/lib/format'
 
-const eur = (n: number) =>
-  n.toLocaleString('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 })
 const num = (n: number, d = 4) =>
   n.toLocaleString('de-DE', { maximumFractionDigits: d })
 
@@ -67,14 +66,21 @@ const labelCls = 'font-mono text-[10px] tracking-widest uppercase text-primary/6
 export function TradeForm({
   startCapital = 10000,
   maxRiskPct = 2,
+  currency = 'EUR',
+  defaultFeeEntry = 9,
+  defaultFeeExit = 9,
 }: {
   startCapital?: number
   maxRiskPct?: number
+  currency?: string
+  defaultFeeEntry?: number
+  defaultFeeExit?: number
 }) {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
   const [questionsOpen, setQuestionsOpen] = useState(false)
   const [tradedWithMoney, setTradedWithMoney] = useState(true)
+  const money$ = (n: number | null | undefined) => formatMoney(n, currency)
   const [form, setForm] = useState({
     ticker: '',
     direction: 'long' as 'long' | 'short',
@@ -87,6 +93,9 @@ export function TradeForm({
     market: 'aktien',
     positionSize: '',
     investedAmount: '',
+    leverage: '1',
+    feeEntry: String(defaultFeeEntry),
+    feeExit: String(defaultFeeExit),
     takeProfitPct: '100',
     broker: '',
     strategy: '',
@@ -116,15 +125,22 @@ export function TradeForm({
     const sl = parseFloat(form.stopLoss)
     const tp = parseFloat(form.takeProfit)
     const sellPct = parseFloat(form.takeProfitPct) || 100
+    const leverage = parseFloat(form.leverage) || 1
+    // Gebühren aus dem Formular — 0 ist ein gültiger Wert (gebührenfreier Broker).
+    const feeEntry = form.feeEntry.trim() === '' ? defaultFeeEntry : parseFloat(form.feeEntry)
+    const feeExit = form.feeExit.trim() === '' ? defaultFeeExit : parseFloat(form.feeExit)
+    const fees = { entry: feeEntry, exit: feeExit }
     return {
-      shares: invested / entry,
+      shares: computeShares(invested, entry, leverage),
+      positionValue: computePositionValue(invested, leverage),
+      leverage,
       tp:
         tp > 0
-          ? projectTakeProfit({ invested, entry, tp, direction: form.direction, sellPct })
+          ? projectTakeProfit({ invested, entry, tp, direction: form.direction, sellPct, leverage, fees })
           : null,
       sl:
         sl > 0
-          ? projectStopLoss({ invested, entry, sl, direction: form.direction })
+          ? projectStopLoss({ invested, entry, sl, direction: form.direction, leverage, fees })
           : null,
     }
   }, [
@@ -134,7 +150,12 @@ export function TradeForm({
     form.stopLoss,
     form.takeProfit,
     form.takeProfitPct,
+    form.leverage,
+    form.feeEntry,
+    form.feeExit,
     form.direction,
+    defaultFeeEntry,
+    defaultFeeExit,
   ])
 
   // --- Risiko-Guard (nur Echtgeld): wie viel % des Kontos riskiert der Stop? ---
@@ -173,6 +194,9 @@ export function TradeForm({
         positionSize: form.positionSize ? parseFloat(form.positionSize) : null,
         investedAmount:
           tradedWithMoney && form.investedAmount ? parseFloat(form.investedAmount) : null,
+        leverage: form.leverage ? parseFloat(form.leverage) : 1,
+        feeEntry: form.feeEntry.trim() === '' ? null : parseFloat(form.feeEntry),
+        feeExit: form.feeExit.trim() === '' ? null : parseFloat(form.feeExit),
         takeProfitPct: form.takeProfitPct ? parseFloat(form.takeProfitPct) : 100,
         broker: form.broker || null,
         strategy: form.strategy || null,
@@ -375,10 +399,10 @@ export function TradeForm({
           <Shield className="size-4" />
           Konto-Risiko:{' '}
           <span className="font-bold">
-            {eur(risk.riskEur)} · {risk.pct.toFixed(2)} %
+            {money$(risk.riskEur)} · {risk.pct.toFixed(2)} %
           </span>
           <span className="text-muted-foreground">
-            von {eur(startCapital)} (Schwelle {num(maxRiskPct, 1)} %)
+            von {money$(startCapital)} (Schwelle {num(maxRiskPct, 1)} %)
           </span>
           {risk.over && (
             <span className="w-full text-xs font-bold">
@@ -397,13 +421,13 @@ export function TradeForm({
               KAPITAL & GEBÜHREN
             </p>
             <span className="ml-auto font-mono text-[10px] text-muted-foreground">
-              {eur(ORDER_FEE_EUR)} je Order · {eur(ROUND_TRIP_FEE_EUR)} Round-Trip
+              Gebühren gelten für diesen Trade
             </span>
           </div>
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div className="space-y-2">
-              <Label className={labelCls}>Kapitaleinsatz (€)</Label>
+              <Label className={labelCls}>Kapitaleinsatz ({currencySymbol(currency)})</Label>
               <Input
                 type="number"
                 step="any"
@@ -411,6 +435,59 @@ export function TradeForm({
                 value={form.investedAmount}
                 onChange={(e) => set('investedAmount', e.target.value)}
                 placeholder="z. B. 5000"
+                className="input-ocean h-11 font-mono"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className={labelCls}>Hebel</Label>
+              <Input
+                type="number"
+                step="any"
+                min="1"
+                value={form.leverage}
+                onChange={(e) => set('leverage', e.target.value)}
+                placeholder="1"
+                className="input-ocean h-11 font-mono"
+              />
+            </div>
+          </div>
+
+          {/* Hebel wirkt auf die Positionsgröße, nicht auf das gebundene Kapital.
+              Das Risiko bleibt der Stop — genau so wird es hier auch gezeigt. */}
+          {money && money.leverage > 1 && (
+            <div className="rounded-lg border border-warning/25 bg-warning/5 p-3">
+              <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 font-mono text-xs sm:grid-cols-3">
+                <Row label="Gebundenes Kapital" value={money$(parseFloat(form.investedAmount))} />
+                <Row label="Positionswert" value={money$(money.positionValue)} strong />
+                <Row label="Stückzahl" value={num(money.shares)} />
+              </dl>
+              <p className="mt-2 font-mono text-[10px] leading-relaxed text-muted-foreground">
+                Der Hebel vergrößert die Position, nicht dein Risiko — das bestimmt weiterhin
+                allein dein Stop. Prüfe die Risikoschwelle oben.
+              </p>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div className="space-y-2">
+              <Label className={labelCls}>Gebühr Kauf ({currencySymbol(currency)})</Label>
+              <Input
+                type="number"
+                step="any"
+                min="0"
+                value={form.feeEntry}
+                onChange={(e) => set('feeEntry', e.target.value)}
+                className="input-ocean h-11 font-mono"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className={labelCls}>Gebühr Verkauf ({currencySymbol(currency)})</Label>
+              <Input
+                type="number"
+                step="any"
+                min="0"
+                value={form.feeExit}
+                onChange={(e) => set('feeExit', e.target.value)}
                 className="input-ocean h-11 font-mono"
               />
             </div>
@@ -440,12 +517,12 @@ export function TradeForm({
                     <Row label="Stückzahl gesamt" value={num(money.tp.shares)} />
                     <Row label="Davon verkauft" value={num(money.tp.soldShares)} />
                     <Row label="Restposition" value={num(money.tp.remainingShares)} />
-                    <Row label="Verkaufserlös" value={eur(money.tp.proceeds)} />
-                    <Row label="Brutto-Gewinn" value={eur(money.tp.grossProfit)} />
-                    <Row label="Gebühren" value={`−${eur(money.tp.fees)}`} tone="neg" />
+                    <Row label="Verkaufserlös" value={money$(money.tp.proceeds)} />
+                    <Row label="Brutto-Gewinn" value={money$(money.tp.grossProfit)} />
+                    <Row label="Gebühren" value={`−${money$(money.tp.fees)}`} tone="neg" />
                     <Row
                       label="Netto-Gewinn"
-                      value={eur(money.tp.netProfit)}
+                      value={money$(money.tp.netProfit)}
                       tone={money.tp.netProfit >= 0 ? 'pos' : 'neg'}
                       strong
                     />
@@ -458,11 +535,11 @@ export function TradeForm({
                     <TrendingDown className="size-3.5" /> Beim Stop-Loss (volle Position)
                   </div>
                   <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 font-mono text-xs sm:grid-cols-3">
-                    <Row label="Kursverlust" value={eur(money.sl.grossLoss)} tone="neg" />
-                    <Row label="Gebühren" value={`−${eur(money.sl.fees)}`} tone="neg" />
+                    <Row label="Kursverlust" value={money$(money.sl.grossLoss)} tone="neg" />
+                    <Row label="Gebühren" value={`−${money$(money.sl.fees)}`} tone="neg" />
                     <Row
                       label="Netto-Verlust"
-                      value={eur(money.sl.netLoss)}
+                      value={money$(money.sl.netLoss)}
                       tone="neg"
                       strong
                     />

@@ -1,4 +1,4 @@
-import type { DisciplineStats } from '@/app/actions/trades'
+import type { DisciplineStats } from '@/lib/trade-stats'
 import { cn } from '@/lib/utils'
 import { Flame, Target, TrendingUp, ShieldAlert } from 'lucide-react'
 

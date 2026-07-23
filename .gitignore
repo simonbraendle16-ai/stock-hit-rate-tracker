@@ -13,5 +13,7 @@ __v0_jsx-dev-runtime.ts
 node_modules
 .next/
 .DS_Store
+# Datenbank-Dumps aus scripts/baseline-report.mjs (enthalten echte Trades)
+.baseline/
 # TS build cache
 *.tsbuildinfo

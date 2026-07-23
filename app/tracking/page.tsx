@@ -7,14 +7,16 @@ import {
   getMoneyVsPaperStats,
   getZoneStats,
   listTrades,
-  type TradeRow,
 } from '@/app/actions/trades'
+import type { TradeRow } from '@/lib/trade-stats'
 import { CockpitHeader } from '@/components/cockpit-header'
 import { DisciplineBar, CockpitStats } from '@/components/discipline-overview'
 import { MoneyHitRateChart } from '@/components/money-hitrate-chart'
 import { MoneyProfitChart } from '@/components/money-profit-chart'
 import { EquityChart } from '@/components/equity-chart'
 import { ExportTradesButton } from '@/components/export-trades-button'
+import { getSettings } from '@/app/actions/settings'
+import { formatMoney } from '@/lib/format'
 
 function monthKey(t: TradeRow): string {
   const d = t.closedAt ? new Date(t.closedAt) : new Date(t.createdAt)
@@ -25,12 +27,13 @@ export default async function TrackingPage() {
   const session = await auth.api.getSession({ headers: await headers() })
   if (!session?.user) redirect('/sign-in')
 
-  const [stats, trades, moneyStats, zoneStats, equity] = await Promise.all([
+  const [stats, trades, moneyStats, zoneStats, equity, settings] = await Promise.all([
     getDisciplineStats(),
     listTrades(),
     getMoneyVsPaperStats(),
     getZoneStats(),
     getEquityStats(),
+    getSettings(),
   ])
   const completed = trades.filter((t) => t.status === 'abgeschlossen')
 
@@ -105,7 +108,7 @@ export default async function TrackingPage() {
         {/* Equity-Kurve + Risiko-Kennzahlen */}
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
           <div className="lg:col-span-2">
-            <EquityChart stats={equity} />
+            <EquityChart stats={equity} currency={settings.currency} />
           </div>
           <div className="grid grid-cols-2 gap-4 lg:col-span-1 lg:grid-cols-1">
             <div className="glass-card p-4">
@@ -113,9 +116,7 @@ export default async function TrackingPage() {
                 Max. Drawdown
               </p>
               <p className="mt-1 font-heading text-3xl font-bold text-destructive">
-                {equity.maxDrawdown.toLocaleString('de-DE', {
-                  style: 'currency',
-                  currency: 'EUR',
+                {formatMoney(equity.maxDrawdown, settings.currency, {
                   maximumFractionDigits: 0,
                 })}
               </p>

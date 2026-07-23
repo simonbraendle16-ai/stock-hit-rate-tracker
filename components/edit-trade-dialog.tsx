@@ -1,7 +1,8 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import type { TradeRow } from '@/app/actions/trades'
+import type { TradeRow } from '@/lib/trade-stats'
+import { currencySymbol } from '@/lib/format'
 import { updateTradePlan } from '@/app/actions/trades'
 import {
   Dialog,
@@ -30,11 +31,13 @@ export function EditTradeDialog({
   open,
   onOpenChange,
   onDone,
+  currency = 'EUR',
 }: {
   trade: TradeRow
   open: boolean
   onOpenChange: (v: boolean) => void
   onDone: () => void
+  currency?: string
 }) {
   const isActive = trade.status === 'aktiv'
   const [entryPrice, setEntryPrice] = useState(String(trade.entryPrice ?? ''))
@@ -129,7 +132,7 @@ export function EditTradeDialog({
           </Field>
           {trade.tradedWithMoney && (
             <>
-              <Field label="Kapitaleinsatz (€)">
+              <Field label={`Kapitaleinsatz (${currencySymbol(currency)})`}>
                 <Input type="number" step="any" value={investedAmount}
                   onChange={(e) => setInvestedAmount(e.target.value)} className="input-ocean font-mono" />
               </Field>

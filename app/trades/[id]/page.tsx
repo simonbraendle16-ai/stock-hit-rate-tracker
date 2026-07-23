@@ -4,6 +4,7 @@ import { redirect, notFound } from 'next/navigation'
 import Link from 'next/link'
 import { getTrade } from '@/app/actions/trades'
 import { getStockChartUrl } from '@/app/actions/stocks'
+import { getSettings } from '@/app/actions/settings'
 import { CockpitHeader } from '@/components/cockpit-header'
 import { TradeCard } from '@/components/trade-card'
 import { ArrowLeft, LineChart, Lock } from 'lucide-react'
@@ -20,7 +21,10 @@ export default async function TradeDetailPage({
   const t = await getTrade(Number(id))
   if (!t) notFound()
 
-  const chartUrl = t.stockId != null ? await getStockChartUrl(t.stockId) : null
+  const [chartUrl, settings] = await Promise.all([
+    t.stockId != null ? getStockChartUrl(t.stockId) : Promise.resolve(null),
+    getSettings(),
+  ])
   const locked = t.status === 'aktiv' || t.status === 'abgeschlossen'
   const violations: string[] = t.ruleViolations ? JSON.parse(t.ruleViolations) : []
 
@@ -36,7 +40,7 @@ export default async function TradeDetailPage({
         </Link>
 
         <div className="grid grid-cols-1 gap-4">
-          <TradeCard t={t} />
+          <TradeCard t={t} currency={settings.currency} />
 
           {chartUrl && (
             <a

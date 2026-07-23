@@ -2,14 +2,16 @@ import { auth } from '@/lib/auth'
 import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { getSettings } from '@/app/actions/settings'
+import { listCashflows } from '@/app/actions/cashflows'
 import { CockpitHeader } from '@/components/cockpit-header'
 import { SettingsForm } from '@/components/settings-form'
+import { CashflowList } from '@/components/cashflow-list'
 
 export default async function SettingsPage() {
   const session = await auth.api.getSession({ headers: await headers() })
   if (!session?.user) redirect('/sign-in')
 
-  const settings = await getSettings()
+  const [settings, cashflows] = await Promise.all([getSettings(), listCashflows()])
 
   return (
     <div className="min-h-svh bg-background">
@@ -24,6 +26,9 @@ export default async function SettingsPage() {
           </p>
         </div>
         <SettingsForm initial={settings} />
+        <div className="mt-5">
+          <CashflowList items={cashflows} currency={settings.currency} />
+        </div>
       </main>
     </div>
   )

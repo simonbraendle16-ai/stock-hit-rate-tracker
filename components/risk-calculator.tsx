@@ -2,8 +2,10 @@
 
 import { useState } from 'react'
 import { AlertTriangle, Calculator, DollarSign, TrendingUp } from 'lucide-react'
+import { currencySymbol } from '@/lib/format'
 
-export function RiskCalculator() {
+export function RiskCalculator({ currency = 'EUR' }: { currency?: string } = {}) {
+  const sym = currencySymbol(currency)
   const [capital, setCapital] = useState('')
   const [riskPct, setRiskPct] = useState('1')
   const [entry, setEntry] = useState('')
@@ -100,9 +102,9 @@ export function RiskCalculator() {
 
         {result ? (
           <div className="grid grid-cols-3 gap-2 pt-1">
-            <Bubble label="RISIKO (€)" value={result.riskAmount} tone="text-warning" />
+            <Bubble label={`RISIKO (${sym})`} value={result.riskAmount} tone="text-warning" />
             <Bubble label="POSITION" value={result.positionSize} tone="text-primary" />
-            <Bubble label="WERT (€)" value={result.positionValue} tone="text-positive" />
+            <Bubble label={`WERT (${sym})`} value={result.positionValue} tone="text-positive" />
           </div>
         ) : (
           <div className="rounded-lg border border-dashed border-primary/15 bg-primary/[0.03] p-3 text-center">

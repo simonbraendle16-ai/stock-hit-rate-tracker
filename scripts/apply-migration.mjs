@@ -10,13 +10,28 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import pg from 'pg'
 
-const url = process.env.DATABASE_URL
-if (!url) {
-  console.error('FEHLER: DATABASE_URL ist nicht gesetzt.')
-  process.exit(1)
+const here = dirname(fileURLToPath(import.meta.url))
+
+/** DATABASE_URL aus der Umgebung oder ersatzweise aus .env.local (wie next dev). */
+function loadDatabaseUrl() {
+  if (process.env.DATABASE_URL) return process.env.DATABASE_URL
+  try {
+    const raw = readFileSync(join(here, '..', '.env.local'), 'utf8')
+    for (const line of raw.split(/\r?\n/)) {
+      const m = line.match(/^\s*DATABASE_URL\s*=\s*(.*)\s*$/)
+      if (m) return m[1].replace(/^["']|["']$/g, '')
+    }
+  } catch {
+    // keine .env.local — unten kommt die Fehlermeldung
+  }
+  return null
 }
 
-const here = dirname(fileURLToPath(import.meta.url))
+const url = loadDatabaseUrl()
+if (!url) {
+  console.error('FEHLER: DATABASE_URL ist weder gesetzt noch in .env.local zu finden.')
+  process.exit(1)
+}
 const drizzleDir = join(here, '..', 'drizzle')
 
 // Alle .sql-Migrationen in sortierter Reihenfolge (0001…, 0002…) einlesen.

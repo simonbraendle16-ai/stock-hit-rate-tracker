@@ -7,13 +7,18 @@ import {
   ChartTooltipContent,
 } from '@/components/ui/chart'
 import { Area, AreaChart, CartesianGrid, ReferenceLine, XAxis, YAxis } from 'recharts'
-import type { EquityStats } from '@/app/actions/trades'
+import type { EquityStats } from '@/lib/trade-stats'
 import { Wallet } from 'lucide-react'
+import { formatMoney } from '@/lib/format'
 
-const eur0 = (n: number) =>
-  n.toLocaleString('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
-
-export function EquityChart({ stats }: { stats: EquityStats }) {
+export function EquityChart({
+  stats,
+  currency = 'EUR',
+}: {
+  stats: EquityStats
+  currency?: string
+}) {
+  const eur0 = (n: number) => formatMoney(n, currency, { maximumFractionDigits: 0 })
   const chartData = [
     { index: 0, label: 'Start', balance: Number(stats.startCapital.toFixed(2)) },
     ...stats.points.map((p, i) => ({

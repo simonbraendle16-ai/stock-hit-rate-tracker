@@ -26,6 +26,9 @@ export default async function NewTradePage() {
         <TradeForm
           startCapital={settings.startCapital}
           maxRiskPct={settings.maxRiskPct}
+          currency={settings.currency}
+          defaultFeeEntry={settings.defaultFeeEntry}
+          defaultFeeExit={settings.defaultFeeExit}
         />
       </main>
     </div>

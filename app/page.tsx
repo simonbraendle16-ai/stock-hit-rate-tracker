@@ -3,6 +3,7 @@ import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { getDisciplineStats, getUnifiedHitRateTimeline, listTrades } from '@/app/actions/trades'
+import { getSettings } from '@/app/actions/settings'
 import { CockpitHeader } from '@/components/cockpit-header'
 import {
   DisciplineBar,
@@ -19,10 +20,11 @@ export default async function CockpitPage() {
   const session = await auth.api.getSession({ headers: await headers() })
   if (!session?.user) redirect('/sign-in')
 
-  const [stats, timeline, trades] = await Promise.all([
+  const [stats, timeline, trades, settings] = await Promise.all([
     getDisciplineStats(),
     getUnifiedHitRateTimeline(),
     listTrades(),
+    getSettings(),
   ])
   const recent = trades.slice(0, 6)
 
@@ -62,7 +64,7 @@ export default async function CockpitPage() {
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
           <div className="space-y-4 lg:col-span-2">
             <HitRateTimeline data={timeline} />
-            <RiskCalculator />
+            <RiskCalculator currency={settings.currency} />
           </div>
           <div className="lg:col-span-1">
             <FiveBeliefs />
