@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { getDisciplineStats, getUnifiedHitRateTimeline, listTrades } from '@/app/actions/trades'
 import { getSettings } from '@/app/actions/settings'
+import { listAlerts } from '@/app/actions/alerts'
 import { CockpitHeader } from '@/components/cockpit-header'
 import {
   DisciplineBar,
@@ -13,6 +14,9 @@ import {
 import { DouglasQuote } from '@/components/douglas-quote'
 import { RiskCalculator } from '@/components/risk-calculator'
 import { HitRateTimeline } from '@/components/hitrate-timeline'
+import { LivePosition } from '@/components/live-position'
+import { AlertsPanel } from '@/components/alerts-panel'
+import { AlertWatcher } from '@/components/alert-watcher'
 import { Button } from '@/components/ui/button'
 import { Plus, ArrowUpRight, ArrowDownRight } from 'lucide-react'
 
@@ -20,13 +24,15 @@ export default async function CockpitPage() {
   const session = await auth.api.getSession({ headers: await headers() })
   if (!session?.user) redirect('/sign-in')
 
-  const [stats, timeline, trades, settings] = await Promise.all([
+  const [stats, timeline, trades, settings, alerts] = await Promise.all([
     getDisciplineStats(),
     getUnifiedHitRateTimeline(),
     listTrades(),
     getSettings(),
+    listAlerts(),
   ])
   const recent = trades.slice(0, 6)
+  const openPositions = trades.filter((t) => t.status === 'aktiv')
 
   return (
     <div className="min-h-svh bg-background">
@@ -59,6 +65,54 @@ export default async function CockpitPage() {
 
         <div className="mt-4">
           <CockpitStats stats={stats} />
+        </div>
+
+        {/* Offene Positionen mit Live-Stand + Kurs-Alerts (Etappe 3). Der
+            AlertWatcher rendert nichts, prüft aber im Hintergrund. */}
+        <AlertWatcher />
+        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <div className="lg:col-span-2">
+            {openPositions.length > 0 ? (
+              <div className="glass-card p-4">
+                <p className="mb-3 font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                  Offene Positionen · {openPositions.length}
+                </p>
+                <div className="space-y-3">
+                  {openPositions.map((t) => (
+                    <div key={t.id} className="rounded-lg border border-border bg-background/40 p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <Link
+                          href={`/trades/${t.id}`}
+                          className="flex items-center gap-2 font-mono text-sm hover:text-primary"
+                        >
+                          {t.direction === 'long' ? (
+                            <ArrowUpRight className="size-4 text-positive" />
+                          ) : (
+                            <ArrowDownRight className="size-4 text-destructive" />
+                          )}
+                          <span className="font-bold text-foreground">{t.ticker}</span>
+                          <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
+                            {t.direction} · {t.market}
+                          </span>
+                        </Link>
+                      </div>
+                      <LivePosition t={t} currency={settings.currency} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="glass-card flex h-full flex-col justify-center p-6 text-center">
+                <p className="font-mono text-xs text-muted-foreground">
+                  Keine offenen Positionen. Aktivierte Trades erscheinen hier mit Live-Stand,
+                  Abstand zu Stop und Ziel und unrealisiertem P&L.
+                </p>
+              </div>
+            )}
+          </div>
+          <div className="lg:col-span-1">
+            <AlertsPanel alerts={alerts} />
+          </div>
         </div>
 
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">

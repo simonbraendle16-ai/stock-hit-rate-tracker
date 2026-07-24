@@ -31,6 +31,8 @@ import {
   Lock,
   Pencil,
   Play,
+  Plus,
+  Scissors,
   Target,
   Trash2,
   Waves,
@@ -52,7 +54,10 @@ import {
   projectTakeProfit,
 } from '@/lib/trade-math'
 import { tradePnl } from '@/lib/trade-stats'
+import type { TradeEventRow } from '@/lib/trade-events'
 import { formatMoney } from '@/lib/format'
+import { LivePosition } from '@/components/live-position'
+import { PositionAdjustDialog } from '@/components/position-adjust'
 
 const num = (n: number) => n.toLocaleString('de-DE', { maximumFractionDigits: 4 })
 
@@ -74,13 +79,23 @@ const resultStyle: Record<string, string> = {
   breakeven: 'text-muted-foreground',
 }
 
-export function TradeCard({ t, currency = 'EUR' }: { t: TradeRow; currency?: string }) {
+export function TradeCard({
+  t,
+  currency = 'EUR',
+  events,
+}: {
+  t: TradeRow
+  currency?: string
+  events?: TradeEventRow[]
+}) {
   const router = useRouter()
   const [busy, setBusy] = useState(false)
   const [activateOpen, setActivateOpen] = useState(false)
   const [closeOpen, setCloseOpen] = useState(false)
   const [noTradeOpen, setNoTradeOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
+  const [partialOpen, setPartialOpen] = useState(false)
+  const [addOpen, setAddOpen] = useState(false)
 
   const run = async (fn: () => Promise<unknown>, ok: string) => {
     setBusy(true)
@@ -175,6 +190,10 @@ export function TradeCard({ t, currency = 'EUR' }: { t: TradeRow; currency?: str
 
       <MoneyPanel t={t} currency={currency} />
 
+      {/* Live-Stand nur für offene Positionen (Etappe 3); Events zeigen zusätzlich
+          Restmenge und realisierten Anteil nach Teilverkäufen (Etappe 6). */}
+      {t.status === 'aktiv' && <LivePosition t={t} currency={currency} events={events} />}
+
       {(t.elliottWaveCount || t.waveDegree) && (
         <div className="mt-2 flex items-center gap-1.5 font-mono text-[11px] text-primary/80">
           <Waves className="size-3" />
@@ -251,8 +270,26 @@ export function TradeCard({ t, currency = 'EUR' }: { t: TradeRow; currency?: str
               size="sm"
               variant="outline"
               disabled={busy}
-              onClick={() => run(() => abortTrade(t.id), 'Trade abgebrochen.')}
+              onClick={() => setPartialOpen(true)}
               className="font-mono text-xs"
+            >
+              <Scissors className="size-3" /> Teilverkauf
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              onClick={() => setAddOpen(true)}
+              className="font-mono text-xs"
+            >
+              <Plus className="size-3" /> Nachkauf
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy}
+              onClick={() => run(() => abortTrade(t.id), 'Trade abgebrochen.')}
+              className="font-mono text-xs text-muted-foreground"
             >
               <X className="size-3" /> Abbrechen
             </Button>
@@ -287,6 +324,8 @@ export function TradeCard({ t, currency = 'EUR' }: { t: TradeRow; currency?: str
       <CloseDialog trade={t} open={closeOpen} onOpenChange={setCloseOpen} onDone={() => router.refresh()} />
       <NoTradeDialog trade={t} open={noTradeOpen} onOpenChange={setNoTradeOpen} onDone={() => router.refresh()} />
       <EditTradeDialog trade={t} open={editOpen} onOpenChange={setEditOpen} onDone={() => router.refresh()} currency={currency} />
+      <PositionAdjustDialog trade={t} mode="teilverkauf" open={partialOpen} onOpenChange={setPartialOpen} onDone={() => router.refresh()} />
+      <PositionAdjustDialog trade={t} mode="nachkauf" open={addOpen} onOpenChange={setAddOpen} onDone={() => router.refresh()} />
     </div>
   )
 }
@@ -446,11 +485,15 @@ function ActivateDialog({
   onDone: () => void
 }) {
   const [mood, setMood] = useState<MoodDraft>(emptyMoodDraft)
+  const [withAlerts, setWithAlerts] = useState(true)
   const [busy, setBusy] = useState(false)
 
   // Bei jedem Öffnen frisch starten — ein alter Entwurf wäre eine fremde Momentaufnahme.
   useEffect(() => {
-    if (open) setMood(emptyMoodDraft())
+    if (open) {
+      setMood(emptyMoodDraft())
+      setWithAlerts(true)
+    }
   }, [open])
 
   const submit = async () => {
@@ -460,8 +503,15 @@ function ActivateDialog({
     }
     setBusy(true)
     try {
-      const { revengeWarning } = await activateTrade(trade.id, mood)
+      const { revengeWarning, alertsCreated } = await activateTrade(trade.id, mood, {
+        createPlanAlerts: withAlerts,
+      })
       toast.success('Trade aktiviert.')
+      if (alertsCreated > 0) {
+        toast.success(
+          `${alertsCreated} Kurs-Alert${alertsCreated === 1 ? '' : 's'} aus dem Plan gesetzt.`,
+        )
+      }
       if (revengeWarning) {
         toast.warning(
           'Revenge-Guard: kurz nach einem Verlust — handelst du den Plan oder die Wut?',
@@ -492,6 +542,24 @@ function ActivateDialog({
         </DialogHeader>
 
         <MoodCheck value={mood} onChange={setMood} phase="entry" disabled={busy} />
+
+        {/* Kurs-Alerts aus dem Plan (Etappe 3): Stop, Ziel und — falls ein Kurs
+            vorliegt — Einstieg. Genau die Punkte, an denen etwas zu tun ist. */}
+        <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-primary/20 bg-primary/5 p-3">
+          <input
+            type="checkbox"
+            checked={withAlerts}
+            disabled={busy}
+            onChange={(e) => setWithAlerts(e.target.checked)}
+            className="mt-0.5 accent-[var(--primary)]"
+          />
+          <span className="font-mono text-[11px] text-foreground">
+            Kurs-Alerts aus dem Plan setzen — Meldung, wenn Stop oder Ziel erreicht wird.
+            <span className="mt-0.5 block text-muted-foreground">
+              Setzen und weggehen, statt am Chart zu kleben.
+            </span>
+          </span>
+        </label>
 
         <DialogFooter>
           <Button

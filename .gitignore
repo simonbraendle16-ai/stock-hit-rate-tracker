@@ -17,3 +17,5 @@ node_modules
 .baseline*/
 # TS build cache
 *.tsbuildinfo
+# Lokaler codegraph-Index (regenerierbar, groß) — nicht versionieren
+.codegraph/

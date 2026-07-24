@@ -2,7 +2,7 @@
 
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
-import { trade, assessment, stock } from '@/lib/db/schema'
+import { trade, tradeEvent, assessment, stock } from '@/lib/db/schema'
 import { and, asc, desc, eq } from 'drizzle-orm'
 import { headers } from 'next/headers'
 import { revalidatePath } from 'next/cache'
@@ -19,21 +19,25 @@ import {
   computeDisciplineStats,
   computeEquityStats,
   computeMoodStats,
-  hasPnl,
   parseViolations,
-  tradeFees,
-  tradeGrossPnl,
-  tradePnl,
-  tradeRisk,
+  tradeNetPnl,
   type DisciplineStats,
   type EquityPoint,
   type EquityStats,
   type MoodStats,
   type RuleViolation,
   type TradeRow,
+  type TradeEventsByTrade,
 } from '@/lib/trade-stats'
+import {
+  settlePosition,
+  hasPartialSale,
+  isRiskReducingStop,
+  type TradeEventRow,
+} from '@/lib/trade-events'
 import { getSettings } from '@/app/actions/settings'
 import { listCashflows } from '@/app/actions/cashflows'
+import { createPlanAlerts } from '@/app/actions/alerts'
 
 async function getUserId() {
   const session = await auth.api.getSession({ headers: await headers() })
@@ -237,6 +241,60 @@ async function loadOwnedTrade(userId: string, id: number): Promise<TradeRow> {
   return t
 }
 
+// ---------------------------------------------------------------------------
+// Event-Log (Etappe 6)
+// ---------------------------------------------------------------------------
+
+/** Alle Events eines Trades, chronologisch (owner-gefiltert). */
+async function loadTradeEvents(userId: string, tradeId: number): Promise<TradeEventRow[]> {
+  return db
+    .select()
+    .from(tradeEvent)
+    .where(and(eq(tradeEvent.tradeId, tradeId), eq(tradeEvent.userId, userId)))
+    .orderBy(asc(tradeEvent.at), asc(tradeEvent.id))
+}
+
+/** Events aller Trades eines Nutzers, nach tradeId gruppiert — für die
+ *  event-aware Statistik (computeDisciplineStats/-Equity/-Mood). */
+async function loadEventsByTrade(userId: string): Promise<TradeEventsByTrade> {
+  const rows = await db.select().from(tradeEvent).where(eq(tradeEvent.userId, userId))
+  const map: TradeEventsByTrade = new Map()
+  for (const e of rows) {
+    const arr = map.get(e.tradeId)
+    if (arr) arr.push(e)
+    else map.set(e.tradeId, [e])
+  }
+  return map
+}
+
+/** Werte für das eröffnende Event, aus der Trade-Zeile abgeleitet. Wird beim
+ *  Aktivieren geschrieben und — falls es fehlt (Trade vor Etappe 6 aktiviert) —
+ *  von den Etappe-6-Aktionen nachgezogen, damit Settlement und Timeline
+ *  vollständig sind. Der Einstiegskurs im Event ist der URSPRÜNGLICHE Plan-Einstieg;
+ *  ein späterer Nachkauf verschiebt nur den Row-Durchschnitt, nicht dieses Event. */
+function openedEventValues(t: TradeRow, userId: string, over: Partial<TradeEventInsert> = {}) {
+  return {
+    tradeId: t.id,
+    userId,
+    type: 'eroeffnet' as const,
+    at: t.openedAt ?? new Date(),
+    quantity: t.positionSize ?? null,
+    price: t.entryPrice ?? null,
+    fee: t.tradedWithMoney ? (t.feeEntry ?? 0) : 0,
+    payload: null,
+    note: null,
+    ...over,
+  }
+}
+
+type TradeEventInsert = typeof tradeEvent.$inferInsert
+
+/** Positiver Zahlenwert erzwingen (Menge/Kurs) — sonst sprechender Abbruch. */
+function requirePositive(v: number | null | undefined, msg: string): number {
+  if (v == null || !Number.isFinite(v) || v <= 0) throw new Error(msg)
+  return v
+}
+
 /**
  * Activate a planned trade. Requires the 4-questions gate to be satisfied and
  * the Emotions-Check-in (Etappe 4) — der Zustand wird im Moment des Einstiegs
@@ -246,7 +304,10 @@ async function loadOwnedTrade(userId: string, id: number): Promise<TradeRow> {
 export async function activateTrade(
   id: number,
   mood: MoodCheckInput,
-): Promise<{ revengeWarning: boolean }> {
+  // Etappe 3: auf Wunsch beim Aktivieren Kurs-Alerts aus dem Plan ableiten
+  // (Stop/Ziel/Einstieg). Bewusst optional — der Kernvorgang bleibt unverändert.
+  opts?: { createPlanAlerts?: boolean },
+): Promise<{ revengeWarning: boolean; alertsCreated: number }> {
   const userId = await getUserId()
   const t = await loadOwnedTrade(userId, id)
   if (t.status !== 'geplant') throw new Error('Nur geplante Trades können aktiviert werden.')
@@ -273,22 +334,45 @@ export async function activateTrade(
     }
   }
 
-  await db
-    .update(trade)
-    .set({
-      status: 'aktiv',
-      openedAt: new Date(),
-      ruleViolations: JSON.stringify(violations),
-      moodEntry: checkIn.score,
-      moodEntryTags: serializeMoodTags(checkIn.tags),
-      moodEntryNote: checkIn.note,
-    })
-    .where(and(eq(trade.id, id), eq(trade.userId, userId)))
+  const openedAt = new Date()
+  await db.transaction(async (tx) => {
+    await tx
+      .update(trade)
+      .set({
+        status: 'aktiv',
+        openedAt,
+        ruleViolations: JSON.stringify(violations),
+        moodEntry: checkIn.score,
+        moodEntryTags: serializeMoodTags(checkIn.tags),
+        moodEntryNote: checkIn.note,
+      })
+      .where(and(eq(trade.id, id), eq(trade.userId, userId)))
+
+    // Eröffnendes Event für die Chronik + als Anker fürs Settlement (Etappe 6).
+    await tx.insert(tradeEvent).values(
+      openedEventValues({ ...t, openedAt, positionSize: t.positionSize }, userId, {
+        at: openedAt,
+        note: 'Eröffnet',
+      }),
+    )
+  })
+
+  // Kurs-Alerts sind Beiwerk: ihre Erzeugung darf die Aktivierung nie scheitern
+  // lassen (Kurs nicht abrufbar o. Ä.). Deshalb hier gekapselt und geschluckt.
+  let alertsCreated = 0
+  if (opts?.createPlanAlerts) {
+    try {
+      const { created } = await createPlanAlerts(id)
+      alertsCreated = created
+    } catch {
+      alertsCreated = 0
+    }
+  }
 
   revalidatePath('/')
   revalidatePath('/trades')
   revalidatePath('/tracking')
-  return { revengeWarning }
+  return { revengeWarning, alertsCreated }
 }
 
 /**
@@ -309,19 +393,66 @@ export async function updateTradePlan(
   }
 
   const violations = parseViolations(t.ruleViolations)
+  const levelEvents: TradeEventInsert[] = []
   if (t.status === 'aktiv') {
+    const events = await loadTradeEvents(userId, id)
+    const partialDone = hasPartialSale(events)
     const movesStop = patch.stopLoss != null && patch.stopLoss !== t.stopLoss
     const movesInval =
       patch.elliottInvalidation != null && patch.elliottInvalidation !== t.elliottInvalidation
-    if ((movesStop || movesInval) && !force) {
+    const movesTarget = patch.takeProfit != null && patch.takeProfit !== t.takeProfit
+
+    // Nach einem Teilverkauf ist risiko-REDUZIERENDES Stop-Nachziehen (Long höher /
+    // Short tiefer, auch in den Profit) erlaubt und KEIN Regelbruch — der
+    // Kern-Workflow „bei 1 R die Hälfte verkaufen, Stop auf Einstand ziehen".
+    // Vor dem ersten Teilverkauf bleibt der Plan-Lock streng, das Aufweiten
+    // (Risiko rauf) bleibt immer ein Regelbruch. Die Invalidation bleibt streng.
+    const trailingAllowed =
+      movesStop && partialDone && isRiskReducingStop(t.direction, t.stopLoss, patch.stopLoss!)
+    const stopIsViolation = movesStop && !trailingAllowed
+
+    if ((stopIsViolation || movesInval) && !force) {
       throw new Error(
         'Plan-Lock: Stop/Invalidation eines aktiven Trades nicht verschieben (Douglas). ' +
-          'Mit force=true wird es als Regelbruch protokolliert.',
+          'Mit force=true wird es als Regelbruch protokolliert.' +
+          (movesStop && partialDone
+            ? ' Ein risiko-reduzierendes Nachziehen nach einem Teilverkauf ist dagegen ohne force erlaubt.'
+            : ''),
       )
     }
-    if (movesStop && !violations.includes('stop_moved')) violations.push('stop_moved')
+    if (stopIsViolation && !violations.includes('stop_moved')) violations.push('stop_moved')
     if (movesInval && !violations.includes('invalidation_ignored')) {
       violations.push('invalidation_ignored')
+    }
+
+    // Level-Änderungen für die Chronik festhalten (payload trägt alt→neu).
+    if (movesStop) {
+      levelEvents.push({
+        tradeId: id,
+        userId,
+        type: 'stop_verschoben',
+        at: new Date(),
+        payload: JSON.stringify({ from: t.stopLoss, to: patch.stopLoss, violation: stopIsViolation }),
+        note: trailingAllowed ? 'Stop nachgezogen (nach Teilverkauf)' : null,
+      })
+    }
+    if (movesTarget) {
+      levelEvents.push({
+        tradeId: id,
+        userId,
+        type: 'ziel_geaendert',
+        at: new Date(),
+        payload: JSON.stringify({ from: t.takeProfit, to: patch.takeProfit }),
+      })
+    }
+    if (movesInval) {
+      levelEvents.push({
+        tradeId: id,
+        userId,
+        type: 'invalidation_ignoriert',
+        at: new Date(),
+        payload: JSON.stringify({ from: t.elliottInvalidation, to: patch.elliottInvalidation }),
+      })
     }
   }
 
@@ -334,36 +465,40 @@ export async function updateTradePlan(
   const derivedSize =
     nextInvested != null ? computeShares(nextInvested, nextEntry, nextLeverage) : undefined
 
-  await db
-    .update(trade)
-    .set({
-      ...(patch.entryPrice != null ? { entryPrice: patch.entryPrice } : {}),
-      ...(patch.stopLoss != null ? { stopLoss: patch.stopLoss } : {}),
-      ...(patch.takeProfit !== undefined ? { takeProfit: patch.takeProfit } : {}),
-      ...(patch.investedAmount !== undefined ? { investedAmount: patch.investedAmount } : {}),
-      ...(patch.leverage !== undefined ? { leverage: nextLeverage } : {}),
-      ...(patch.feeEntry !== undefined ? { feeEntry: normalizeFee(patch.feeEntry, 0) } : {}),
-      ...(patch.feeExit !== undefined ? { feeExit: normalizeFee(patch.feeExit, 0) } : {}),
-      ...(patch.takeProfitPct !== undefined ? { takeProfitPct: patch.takeProfitPct } : {}),
-      ...(derivedSize !== undefined
-        ? { positionSize: derivedSize }
-        : patch.positionSize !== undefined
-          ? { positionSize: patch.positionSize }
+  await db.transaction(async (tx) => {
+    await tx
+      .update(trade)
+      .set({
+        ...(patch.entryPrice != null ? { entryPrice: patch.entryPrice } : {}),
+        ...(patch.stopLoss != null ? { stopLoss: patch.stopLoss } : {}),
+        ...(patch.takeProfit !== undefined ? { takeProfit: patch.takeProfit } : {}),
+        ...(patch.investedAmount !== undefined ? { investedAmount: patch.investedAmount } : {}),
+        ...(patch.leverage !== undefined ? { leverage: nextLeverage } : {}),
+        ...(patch.feeEntry !== undefined ? { feeEntry: normalizeFee(patch.feeEntry, 0) } : {}),
+        ...(patch.feeExit !== undefined ? { feeExit: normalizeFee(patch.feeExit, 0) } : {}),
+        ...(patch.takeProfitPct !== undefined ? { takeProfitPct: patch.takeProfitPct } : {}),
+        ...(derivedSize !== undefined
+          ? { positionSize: derivedSize }
+          : patch.positionSize !== undefined
+            ? { positionSize: patch.positionSize }
+            : {}),
+        ...(patch.strategy !== undefined ? { strategy: patch.strategy?.trim() || null } : {}),
+        ...(patch.notes !== undefined ? { notes: patch.notes?.trim() || null } : {}),
+        ...(patch.elliottWaveCount !== undefined
+          ? { elliottWaveCount: patch.elliottWaveCount?.trim() || null }
           : {}),
-      ...(patch.strategy !== undefined ? { strategy: patch.strategy?.trim() || null } : {}),
-      ...(patch.notes !== undefined ? { notes: patch.notes?.trim() || null } : {}),
-      ...(patch.elliottWaveCount !== undefined
-        ? { elliottWaveCount: patch.elliottWaveCount?.trim() || null }
-        : {}),
-      ...(patch.elliottInvalidation !== undefined
-        ? { elliottInvalidation: patch.elliottInvalidation }
-        : {}),
-      ...(patch.tradedWithMoney !== undefined
-        ? { tradedWithMoney: patch.tradedWithMoney }
-        : {}),
-      ruleViolations: JSON.stringify(violations),
-    })
-    .where(and(eq(trade.id, id), eq(trade.userId, userId)))
+        ...(patch.elliottInvalidation !== undefined
+          ? { elliottInvalidation: patch.elliottInvalidation }
+          : {}),
+        ...(patch.tradedWithMoney !== undefined
+          ? { tradedWithMoney: patch.tradedWithMoney }
+          : {}),
+        ruleViolations: JSON.stringify(violations),
+      })
+      .where(and(eq(trade.id, id), eq(trade.userId, userId)))
+
+    if (levelEvents.length) await tx.insert(tradeEvent).values(levelEvents)
+  })
 
   revalidatePath('/')
   revalidatePath('/trades')
@@ -407,32 +542,181 @@ export async function closeTrade(
   }
 
   const withMoney = data.tradedWithMoney ?? t.tradedWithMoney
+  const frozenFeeEntry = withMoney ? normalizeFee(data.feeEntry, t.feeEntry ?? 0) : 0
+  const frozenFeeExit = withMoney ? normalizeFee(data.feeExit, t.feeExit ?? 0) : 0
 
-  await db
-    .update(trade)
-    .set({
-      status: 'abgeschlossen',
-      result: data.result,
-      actualExitPrice: data.actualExitPrice ?? null,
-      followedPlan: data.followedPlan,
-      lossAccepted: data.result === 'verlust' ? true : t.lossAccepted,
-      ...(data.tradedWithMoney !== undefined
-        ? { tradedWithMoney: data.tradedWithMoney }
-        : {}),
-      // Gebühren hier festschreiben: ab jetzt verändert keine spätere
-      // Einstellungsänderung mehr die Bilanz dieses Trades.
-      feeEntry: withMoney ? normalizeFee(data.feeEntry, t.feeEntry ?? 0) : 0,
-      feeExit: withMoney ? normalizeFee(data.feeExit, t.feeExit ?? 0) : 0,
-      moodExit: checkOut.score,
-      moodExitTags: serializeMoodTags(checkOut.tags),
-      moodExitNote: checkOut.note,
-      closedAt: new Date(),
+  // Etappe 6: der Abschluss schließt die noch OFFENE Restmenge. Sie ergibt sich
+  // aus dem Event-Log (nach Teilverkäufen/Nachkäufen); ohne Events ist es die
+  // volle Position.
+  const events = await loadTradeEvents(userId, id)
+  const settle = settlePosition(t, events)
+  const openedEvent = events.find((e) => e.type === 'eroeffnet')
+  const remaining = events.length ? settle.openQty : (t.positionSize ?? 0)
+  const closedAt = new Date()
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(trade)
+      .set({
+        status: 'abgeschlossen',
+        result: data.result,
+        actualExitPrice: data.actualExitPrice ?? null,
+        followedPlan: data.followedPlan,
+        lossAccepted: data.result === 'verlust' ? true : t.lossAccepted,
+        ...(data.tradedWithMoney !== undefined
+          ? { tradedWithMoney: data.tradedWithMoney }
+          : {}),
+        // Gebühren hier festschreiben: ab jetzt verändert keine spätere
+        // Einstellungsänderung mehr die Bilanz dieses Trades.
+        feeEntry: frozenFeeEntry,
+        feeExit: frozenFeeExit,
+        moodExit: checkOut.score,
+        moodExitTags: serializeMoodTags(checkOut.tags),
+        moodExitNote: checkOut.note,
+        closedAt,
+      })
+      .where(and(eq(trade.id, id), eq(trade.userId, userId)))
+
+    // Das eröffnende Event trägt die (jetzt eingefrorene) Einstiegsgebühr des
+    // URSPRÜNGLICHEN Einstiegs — die Quelle für die Netto-Rechnung von
+    // Event-Trades. Fehlt es (Trade vor Etappe 6 aktiviert), wird es nachgezogen.
+    if (openedEvent) {
+      await tx
+        .update(tradeEvent)
+        .set({ fee: frozenFeeEntry })
+        .where(and(eq(tradeEvent.id, openedEvent.id), eq(tradeEvent.userId, userId)))
+    } else {
+      await tx
+        .insert(tradeEvent)
+        .values(openedEventValues(t, userId, { fee: frozenFeeEntry, note: 'Eröffnet' }))
+    }
+
+    // Abschluss-Event: schließt die Restmenge zum tatsächlichen Ausstiegskurs.
+    await tx.insert(tradeEvent).values({
+      tradeId: id,
+      userId,
+      type: 'geschlossen',
+      at: closedAt,
+      quantity: remaining,
+      price: data.actualExitPrice ?? null,
+      fee: frozenFeeExit,
+      note: `Geschlossen (${data.result})`,
     })
-    .where(and(eq(trade.id, id), eq(trade.userId, userId)))
+  })
 
   revalidatePath('/')
   revalidatePath('/trades')
   revalidatePath('/tracking')
+}
+
+/**
+ * Teilverkauf (Etappe 6): einen Teil der offenen Position schließen. Der Trade
+ * bleibt `aktiv` — der letzte Rest wird über `closeTrade` geschlossen (dort
+ * greifen die Douglas-Guards: Verlust bewusst annehmen, Emotions-Check-in,
+ * Ausstiegskurs). Deshalb muss beim Teilverkauf zwingend eine Restmenge offen
+ * bleiben (`quantity < openQty`).
+ */
+export async function partialClose(
+  id: number,
+  data: { quantity: number; price: number; fee?: number | null; note?: string | null },
+): Promise<void> {
+  const userId = await getUserId()
+  const t = await loadOwnedTrade(userId, id)
+  if (t.status !== 'aktiv') {
+    throw new Error('Teilverkauf nur an einem aktiven Trade möglich.')
+  }
+  const quantity = requirePositive(data.quantity, 'Bitte eine Stückzahl > 0 für den Teilverkauf eintragen.')
+  const price = requirePositive(data.price, 'Bitte den Ausführungskurs des Teilverkaufs eintragen.')
+
+  const events = await loadTradeEvents(userId, id)
+  const settle = settlePosition(t, events)
+  if (quantity >= settle.openQty) {
+    throw new Error(
+      `Beim Teilverkauf muss eine Restmenge offen bleiben (offen: ${settle.openQty}). ` +
+        'Den letzten Rest über „Position schließen".',
+    )
+  }
+
+  const toInsert: TradeEventInsert[] = []
+  if (!events.some((e) => e.type === 'eroeffnet')) {
+    toInsert.push(openedEventValues(t, userId, { note: 'Eröffnet' }))
+  }
+  toInsert.push({
+    tradeId: id,
+    userId,
+    type: 'teilverkauf',
+    at: new Date(),
+    quantity,
+    price,
+    fee: t.tradedWithMoney ? normalizeFee(data.fee, 0) : 0,
+    note: data.note?.trim() || null,
+  })
+  await db.insert(tradeEvent).values(toInsert)
+
+  revalidatePath('/')
+  revalidatePath('/trades')
+  revalidatePath('/tracking')
+}
+
+/**
+ * Nachkauf/Pyramidisieren (Etappe 6): die offene Position vergrößern. Der
+ * gewichtete Durchschnittseinstieg und die Gesamtstückzahl werden auf der
+ * Trade-Zeile fortgeschrieben (für Risiko-/Live-Anzeige); das ursprüngliche 1R
+ * bleibt über das eröffnende Event erhalten. Bewusst KEIN Regelbruch — geplantes
+ * Pyramidisieren ist Douglas-konform; es erhöht aber das Risiko über den
+ * ursprünglichen Einsatz hinaus, was in der R-Anzeige sichtbar wird.
+ */
+export async function addToPosition(
+  id: number,
+  data: { quantity: number; price: number; fee?: number | null; note?: string | null },
+): Promise<void> {
+  const userId = await getUserId()
+  const t = await loadOwnedTrade(userId, id)
+  if (t.status !== 'aktiv') {
+    throw new Error('Nachkauf nur an einem aktiven Trade möglich.')
+  }
+  const quantity = requirePositive(data.quantity, 'Bitte eine Stückzahl > 0 für den Nachkauf eintragen.')
+  const price = requirePositive(data.price, 'Bitte den Ausführungskurs des Nachkaufs eintragen.')
+
+  const events = await loadTradeEvents(userId, id)
+  const settle = settlePosition(t, events)
+  const newOpen = settle.openQty + quantity
+  const newAvgEntry = newOpen > 0 ? (settle.openQty * settle.avgEntry + quantity * price) / newOpen : settle.avgEntry
+  const newTotalEntered = settle.totalEntered + quantity
+
+  const toInsert: TradeEventInsert[] = []
+  if (!events.some((e) => e.type === 'eroeffnet')) {
+    toInsert.push(openedEventValues(t, userId, { note: 'Eröffnet' }))
+  }
+  toInsert.push({
+    tradeId: id,
+    userId,
+    type: 'nachkauf',
+    at: new Date(),
+    quantity,
+    price,
+    fee: t.tradedWithMoney ? normalizeFee(data.fee, 0) : 0,
+    note: data.note?.trim() || null,
+  })
+
+  await db.transaction(async (tx) => {
+    await tx.insert(tradeEvent).values(toInsert)
+    await tx
+      .update(trade)
+      .set({ positionSize: newTotalEntered, entryPrice: newAvgEntry })
+      .where(and(eq(trade.id, id), eq(trade.userId, userId)))
+  })
+
+  revalidatePath('/')
+  revalidatePath('/trades')
+  revalidatePath('/tracking')
+}
+
+/** Alle Events eines Trades für die Timeline (owner-gefiltert, chronologisch). */
+export async function listTradeEvents(id: number): Promise<TradeEventRow[]> {
+  const userId = await getUserId()
+  await loadOwnedTrade(userId, id) // Autorisierung
+  return loadTradeEvents(userId, id)
 }
 
 /**
@@ -463,18 +747,44 @@ export async function markNoTrade(id: number, note?: string | null): Promise<voi
 
 export async function abortTrade(id: number): Promise<void> {
   const userId = await getUserId()
-  await loadOwnedTrade(userId, id)
-  await db
-    .update(trade)
-    .set({ status: 'abgebrochen', closedAt: new Date() })
-    .where(and(eq(trade.id, id), eq(trade.userId, userId)))
+  const t = await loadOwnedTrade(userId, id)
+  const closedAt = new Date()
+  const wasActive = t.status === 'aktiv'
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(trade)
+      .set({ status: 'abgebrochen', closedAt })
+      .where(and(eq(trade.id, id), eq(trade.userId, userId)))
+
+    // Ein abgebrochener AKTIVER Trade schließt seine offene Position ohne
+    // Ausstiegskurs — als Abschluss-Event für die Chronik. Ein geplanter Trade
+    // hatte nie eine Position und braucht kein Event.
+    if (wasActive) {
+      const events = await loadTradeEvents(userId, id)
+      const remaining = events.length ? settlePosition(t, events).openQty : (t.positionSize ?? 0)
+      await tx.insert(tradeEvent).values({
+        tradeId: id,
+        userId,
+        type: 'geschlossen',
+        at: closedAt,
+        quantity: remaining,
+        price: null,
+        note: 'Abgebrochen',
+      })
+    }
+  })
   revalidatePath('/')
   revalidatePath('/trades')
 }
 
 export async function deleteTrade(id: number): Promise<void> {
   const userId = await getUserId()
-  await db.delete(trade).where(and(eq(trade.id, id), eq(trade.userId, userId)))
+  await db.transaction(async (tx) => {
+    // Events zuerst entfernen — sonst blieben verwaiste Zeilen im Log stehen.
+    await tx.delete(tradeEvent).where(and(eq(tradeEvent.tradeId, id), eq(tradeEvent.userId, userId)))
+    await tx.delete(trade).where(and(eq(trade.id, id), eq(trade.userId, userId)))
+  })
   revalidatePath('/')
   revalidatePath('/trades')
 }
@@ -525,7 +835,12 @@ export async function getDisciplineStats(startCapitalOverride?: number): Promise
     .where(and(eq(trade.userId, userId), eq(trade.status, 'abgeschlossen')))
     .orderBy(asc(trade.closedAt), asc(trade.id))
 
-  return computeDisciplineStats(rows, startCapital, await listCashflows())
+  return computeDisciplineStats(
+    rows,
+    startCapital,
+    await listCashflows(),
+    await loadEventsByTrade(userId),
+  )
 }
 
 export type GroupStats = {
@@ -549,13 +864,18 @@ export async function getMoneyVsPaperStats(): Promise<MoneyVsPaper> {
     .select()
     .from(trade)
     .where(and(eq(trade.userId, userId), eq(trade.status, 'abgeschlossen')))
+  const eventsByTrade = await loadEventsByTrade(userId)
+  const evs = (t: TradeRow) => eventsByTrade.get(t.id) ?? []
 
   const group = (list: TradeRow[]): GroupStats => {
     const wins = list.filter((t) => t.result === 'gewinn').length
     const losses = list.filter((t) => t.result === 'verlust').length
     const decisive = wins + losses
     // Trades ohne Ausstiegskurs haben keinen berechenbaren P&L und zählen nicht mit.
-    const totalPnL = list.filter(hasPnl).reduce((acc, t) => acc + (tradePnl(t) ?? 0), 0)
+    // Event-aware: Teilverkäufe/Nachkäufe fließen über tradeNetPnl korrekt ein.
+    const totalPnL = list
+      .filter((t) => tradeNetPnl(t, evs(t)) !== null)
+      .reduce((acc, t) => acc + (tradeNetPnl(t, evs(t)) ?? 0), 0)
     return {
       completed: list.length,
       wins,
@@ -686,7 +1006,7 @@ export async function getEquityStats(): Promise<EquityStats> {
     .where(and(eq(trade.userId, userId), eq(trade.status, 'abgeschlossen')))
     .orderBy(asc(trade.closedAt), asc(trade.id))
 
-  return computeEquityStats(rows, startCapital, await listCashflows())
+  return computeEquityStats(rows, startCapital, await listCashflows(), await loadEventsByTrade(userId))
 }
 
 /**
@@ -704,7 +1024,7 @@ export async function getMoodStats(): Promise<MoodStats> {
     .where(and(eq(trade.userId, userId), eq(trade.status, 'abgeschlossen')))
     .orderBy(asc(trade.closedAt), asc(trade.id))
 
-  return computeMoodStats(rows)
+  return computeMoodStats(rows, await loadEventsByTrade(userId))
 }
 
 // ---------------------------------------------------------------------------
@@ -719,6 +1039,7 @@ export async function exportTradesCsv(): Promise<string> {
     .from(trade)
     .where(eq(trade.userId, userId))
     .orderBy(asc(trade.createdAt), asc(trade.id))
+  const eventsByTrade = await loadEventsByTrade(userId)
 
   const headerCols = [
     'id', 'ticker', 'markt', 'richtung', 'status', 'echtgeld',
@@ -759,7 +1080,10 @@ export async function exportTradesCsv(): Promise<string> {
         t.result ?? '',
         t.actualExitPrice ?? '',
         // Leer, wenn kein Ausstiegskurs erfasst ist — kein erfundener Betrag.
-        t.status === 'abgeschlossen' ? (tradePnl(t)?.toFixed(2) ?? '') : '',
+        // Event-aware: bei Teilverkäufen/Nachkäufen der realisierte Gesamt-Netto.
+        t.status === 'abgeschlossen'
+          ? (tradeNetPnl(t, eventsByTrade.get(t.id) ?? [])?.toFixed(2) ?? '')
+          : '',
         t.followedPlan == null ? '' : t.followedPlan ? 'ja' : 'nein',
         parseViolations(t.ruleViolations).join('|'),
         t.waveDegree ?? '',

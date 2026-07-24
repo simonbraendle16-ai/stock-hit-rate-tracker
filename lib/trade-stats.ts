@@ -14,8 +14,15 @@ import {
   parseMoodTags,
   type MoodTone,
 } from '@/lib/emotions'
+// Hinweis: zyklischer Import mit lib/trade-events.ts. Beide nutzen die Funktionen
+// der jeweils anderen Seite ausschließlich zur Laufzeit (nie beim Modul-Laden),
+// und Funktionsdeklarationen sind gehoistet — dadurch ist der Zyklus unkritisch.
+import { settlePosition, type TradeEventRow } from '@/lib/trade-events'
 
 export type TradeRow = typeof trade.$inferSelect
+
+/** Events eines Nutzers, gruppiert nach Trade-Id — von den Actions gefüllt. */
+export type TradeEventsByTrade = Map<number, TradeEventRow[]>
 export type RuleViolation = 'stop_moved' | 'invalidation_ignored' | 'revenge'
 
 /** Eine Ein- oder Auszahlung aufs Handelskonto. */
@@ -69,11 +76,6 @@ export function hasPnl(t: TradeRow): boolean {
   return tradePnl(t) !== null
 }
 
-/** P&L oder 0 — für Summen, in denen unvollständige Trades nicht mitzählen sollen. */
-function pnlOrZero(t: TradeRow): number {
-  return tradePnl(t) ?? 0
-}
-
 /**
  * Risiko in Kontowährung = |Einstieg − Stop| × Stückzahl.
  * Der Hebel steckt bereits in `positionSize` und wirkt daher automatisch mit.
@@ -82,6 +84,49 @@ export function tradeRisk(t: TradeRow): number {
   const size = t.positionSize ?? 1
   const r = Math.abs(t.entryPrice - t.stopLoss) * size
   return r > 0 ? r : size * 10
+}
+
+/** Kursgewinn pro Stück in Richtung des Trades (Long: kauf→verkauf, Short: umgekehrt). */
+export function directionalDiff(price: number, entry: number, direction: string): number {
+  return direction === 'short' ? entry - price : price - entry
+}
+
+/**
+ * Unrealisierter Brutto-P&L einer OFFENEN Position zum übergebenen Kurs — in
+ * Kontowährung, vor Gebühren (der Ausstieg ist noch nicht bezahlt). Dieselbe
+ * Vorzeichenlogik wie `tradeGrossPnl`, nur mit dem aktuellen statt dem
+ * Ausstiegskurs. `null`, wenn keine Stückzahl oder kein gültiger Kurs vorliegt.
+ */
+export function unrealizedPnl(t: TradeRow, price: number): number | null {
+  if (!Number.isFinite(price) || t.entryPrice == null) return null
+  const size = t.positionSize ?? null
+  if (size == null) return null
+  return directionalDiff(price, t.entryPrice, t.direction) * size
+}
+
+/**
+ * Unrealisierter Gewinn/Verlust als R-Vielfaches: Kursbewegung geteilt durch die
+ * geplante Risikodistanz |Einstieg − Stop|. Größenunabhängig und dadurch direkt
+ * mit dem Erwartungswert vergleichbar. `null`, wenn die Risikodistanz 0 ist.
+ */
+export function unrealizedR(t: TradeRow, price: number): number | null {
+  if (!Number.isFinite(price) || t.entryPrice == null || t.stopLoss == null) return null
+  const riskDist = Math.abs(t.entryPrice - t.stopLoss)
+  if (riskDist === 0) return null
+  return directionalDiff(price, t.entryPrice, t.direction) / riskDist
+}
+
+/**
+ * Position eines Kurses auf der Strecke Stop (0) → Ziel (1), richtungsbewusst.
+ * Für den Balken, der zeigt, wo der Kurs zwischen Stop und Ziel steht. Werte
+ * außerhalb [0,1] sind erlaubt und aussagekräftig (Kurs jenseits von Stop/Ziel);
+ * die UI begrenzt die Balkenbreite selbst. `null` ohne Ziel oder bei Stop = Ziel.
+ */
+export function pricePositionFraction(t: TradeRow, price: number): number | null {
+  if (t.takeProfit == null || t.stopLoss == null || !Number.isFinite(price)) return null
+  const span = t.takeProfit - t.stopLoss
+  if (span === 0) return null
+  return (price - t.stopLoss) / span
 }
 
 export function parseViolations(raw: string | null): RuleViolation[] {
@@ -121,14 +166,53 @@ export type DisciplineStats = {
   incomplete: number // abgeschlossene Trades ohne berechenbaren P&L
 }
 
+// ---------------------------------------------------------------------------
+// Event-aware Brücke (Etappe 6)
+// ---------------------------------------------------------------------------
+// Ein Trade MIT Events (Teilverkäufe/Nachkäufe) wird vollständig aus dem
+// Settlement gerechnet; ein Trade OHNE Events geht exakt den bisherigen
+// Row-Pfad (tradePnl/tradeRisk). Da fast alle Trades event-los sind, bleibt die
+// Map in der Praxis leer und das Verhalten unverändert.
+
+function eventsOf(map: TradeEventsByTrade | undefined, id: number): TradeEventRow[] {
+  return map?.get(id) ?? []
+}
+
+/** Netto-P&L eines Trades — event-aware. `null`, wenn nicht berechenbar (nur Row-Pfad). */
+export function tradeNetPnl(t: TradeRow, events: TradeEventRow[] = []): number | null {
+  if (events.length > 0) return settlePosition(t, events).totalNet
+  return tradePnl(t)
+}
+
+/** Hat der Trade einen verwertbaren P&L? Event-Trades sind bei Abschluss stets abgerechnet. */
+function hasNetPnl(t: TradeRow, events: TradeEventRow[]): boolean {
+  return events.length > 0 ? true : hasPnl(t)
+}
+
+function netOrZero(t: TradeRow, events: TradeEventRow[]): number {
+  return tradeNetPnl(t, events) ?? 0
+}
+
+/** R-Vielfaches eines Trades — event-aware, konsistent zu `tradeNetPnl`. */
+function rMultiple(t: TradeRow, events: TradeEventRow[]): number {
+  if (events.length > 0) {
+    const s = settlePosition(t, events)
+    return s.plannedRiskMoney > 0 ? s.totalNet / s.plannedRiskMoney : 0
+  }
+  return (tradePnl(t) ?? 0) / tradeRisk(t)
+}
+
 /**
  * Disziplin- und Geldkennzahlen über die abgeschlossenen Trades.
  * `rows` muss chronologisch nach Abschluss sortiert sein (ältester zuerst).
+ * `eventsByTrade` (optional) macht Teilverkäufe/Nachkäufe korrekt sichtbar;
+ * ohne die Map verhält sich alles wie vor Etappe 6.
  */
 export function computeDisciplineStats(
   rows: TradeRow[],
   startCapital: number,
   cashflows: CashflowRow[] = [],
+  eventsByTrade?: TradeEventsByTrade,
 ): DisciplineStats {
   const completed = rows.length
   const followed = rows.filter((t) => t.followedPlan).length
@@ -142,8 +226,8 @@ export function computeDisciplineStats(
 
   // Erwartungswert nur über Trades mit bekanntem P&L — ein unvollständiger Trade
   // darf das R-Vielfache nicht nach unten ziehen.
-  const rated = decisive.filter(hasPnl)
-  const rSum = rated.reduce((acc, t) => acc + pnlOrZero(t) / tradeRisk(t), 0)
+  const rated = decisive.filter((t) => hasNetPnl(t, eventsOf(eventsByTrade, t.id)))
+  const rSum = rated.reduce((acc, t) => acc + rMultiple(t, eventsOf(eventsByTrade, t.id)), 0)
   const expectancy = rated.length ? rSum / rated.length : 0
 
   let streak = 0
@@ -156,7 +240,7 @@ export function computeDisciplineStats(
 
   // Kontobilanz NUR aus Echtgeld-Trades — Demo darf das reale Kapital nicht verfälschen.
   const money = rows.filter((t) => t.tradedWithMoney)
-  const totalPnL = money.reduce((acc, t) => acc + pnlOrZero(t), 0)
+  const totalPnL = money.reduce((acc, t) => acc + netOrZero(t, eventsOf(eventsByTrade, t.id)), 0)
 
   // Eingezahltes Kapital = Startkapital + Netto-Cashflows. Die Rendite misst
   // gegen das tatsächlich eingesetzte Geld, nicht gegen einen fixen Startwert.
@@ -175,7 +259,7 @@ export function computeDisciplineStats(
     startCapital,
     currentBalance,
     returnPct,
-    incomplete: rows.filter((t) => t.result && !hasPnl(t)).length,
+    incomplete: rows.filter((t) => t.result && !hasNetPnl(t, eventsOf(eventsByTrade, t.id))).length,
   }
 }
 
@@ -210,8 +294,9 @@ export function computeEquityStats(
   rows: TradeRow[],
   startCapital: number,
   cashflows: CashflowRow[] = [],
+  eventsByTrade?: TradeEventsByTrade,
 ): EquityStats {
-  const money = rows.filter((t) => t.tradedWithMoney && hasPnl(t))
+  const money = rows.filter((t) => t.tradedWithMoney && hasNetPnl(t, eventsOf(eventsByTrade, t.id)))
 
   type Event =
     | { at: Date; kind: 'trade'; delta: number }
@@ -221,7 +306,7 @@ export function computeEquityStats(
     ...money.map((t): Event => ({
       at: t.closedAt ? new Date(t.closedAt) : new Date(t.createdAt),
       kind: 'trade',
-      delta: pnlOrZero(t),
+      delta: netOrZero(t, eventsOf(eventsByTrade, t.id)),
     })),
     ...cashflows.map((c): Event => ({
       at: new Date(c.occurredAt),
@@ -338,11 +423,12 @@ function moodBucket(
   label: string,
   tone: MoodTone | 'neutral',
   rows: TradeRow[],
+  eventsByTrade?: TradeEventsByTrade,
 ): MoodBucket {
   const trades = rows.length
   const wins = rows.filter((t) => t.result === 'gewinn').length
-  const rated = rows.filter(hasPnl)
-  const rSum = rated.reduce((acc, t) => acc + pnlOrZero(t) / tradeRisk(t), 0)
+  const rated = rows.filter((t) => hasNetPnl(t, eventsOf(eventsByTrade, t.id)))
+  const rSum = rated.reduce((acc, t) => acc + rMultiple(t, eventsOf(eventsByTrade, t.id)), 0)
   const followed = rows.filter((t) => t.followedPlan).length
 
   return {
@@ -371,7 +457,7 @@ function moodBucket(
  * nicht auf die Gesamtzahl — sie beantworten je Tag die Frage „was kosten mich
  * meine FOMO-Trades", nicht „wie teilt sich mein Handel auf".
  */
-export function computeMoodStats(rows: TradeRow[]): MoodStats {
+export function computeMoodStats(rows: TradeRow[], eventsByTrade?: TradeEventsByTrade): MoodStats {
   const decided = decisiveRows(rows)
 
   const byEntryGroup = MOOD_GROUPS.map((g) =>
@@ -380,6 +466,7 @@ export function computeMoodStats(rows: TradeRow[]): MoodStats {
       g.label,
       g.tone,
       decided.filter((t) => moodGroupOf(t.moodEntry) === g.key),
+      eventsByTrade,
     ),
   )
 
@@ -389,6 +476,7 @@ export function computeMoodStats(rows: TradeRow[]): MoodStats {
       g.label,
       g.tone,
       decided.filter((t) => moodGroupOf(t.moodExit) === g.key),
+      eventsByTrade,
     ),
   )
 
@@ -398,6 +486,7 @@ export function computeMoodStats(rows: TradeRow[]): MoodStats {
       tag.label,
       tag.tone === 'tragend' ? 'ruhig' : 'unruhig',
       decided.filter((t) => parseMoodTags(t.moodEntryTags).includes(tag.key)),
+      eventsByTrade,
     ),
   ).filter((b) => b.trades > 0)
 
@@ -412,6 +501,6 @@ export function computeMoodStats(rows: TradeRow[]): MoodStats {
     byEntryGroup,
     byEntryTag,
     byExitGroup,
-    overall: moodBucket('gesamt', 'alle Trades', 'neutral', decided),
+    overall: moodBucket('gesamt', 'alle Trades', 'neutral', decided, eventsByTrade),
   }
 }

@@ -37,11 +37,12 @@ Candlesticks) · pnpm via corepack.
 - Routen (`app/`): `/` Cockpit · `/trades` (+`/new`,`/[id]`) Trade-Lifecycle ·
   `/analysis` reine Prognosen/Hit-Rate · `/tracking` Auswertung (Equity, Drawdown,
   Geld-vs-Paper, CSV) · `/stock/[id]` Instrument-Detail · `/settings` · Auth.
-- Datenzugriff: **Server Actions** (`app/actions/{trades,stocks,settings}.ts`, `'use server'`).
-  Einzige API-Route ist Better Auth (`app/api/auth/[...all]`).
+- Datenzugriff: **Server Actions** (`app/actions/{trades,stocks,settings,alerts}.ts`,
+  `'use server'`). API-Routen: Better Auth (`app/api/auth/[...all]`), Kerzen
+  (`/api/candles`, `/api/sparklines`) und Kurs-Snapshot (`/api/quote`, letzte Kerze).
 - Schema: `lib/db/schema.ts` — Kern-Tabellen `stock` (Watchlist/Instrument),
   `assessment` (reine Prognose, kein Geld), `trade` (echter/geplanter Trade mit
-  Douglas- + Elliott-Feldern).
+  Douglas- + Elliott-Feldern), `price_alert` (Kurs-Alert je Level, Etappe 3).
 
 ## Domänen-Begriffe (nicht verwechseln)
 - **assessment** = reine Prognose ohne Position (füttert Hit-Rate-Kurve).
@@ -49,13 +50,28 @@ Candlesticks) · pnpm via corepack.
 - **Disziplin-Score** ≠ Gewinnquote: misst Plan-Treue, nicht Ergebnis.
 - **Erwartungswert in R** (R-Multiple), **Plan-Streak**, **Zonen-Trefferquote**,
   **Geld-vs-Paper**-Split.
+- **Live-Stand / Kurs-Alert** (Etappe 3) = Kurs offener Positionen aus der letzten Kerze
+  (sichtbar „Kurs von 14:32", NICHT live), plus unrealisierter P&L in Geld **und** R und Balken
+  Stop↔Ziel. **Alert** = ein Preislevel (`price_alert`) mit Kreuzungsrichtung `above`/`below`,
+  geprüft per `checkAlerts()` beim 5-Min-`AlertWatcher`; Auslösung als Browser-Notification +
+  Cockpit-Eintrag (kein Push-Dienst). Logik in `lib/alerts.ts` (rein, getestet).
+- **Teilverkauf / Nachkauf / Event-Log** (Etappe 6) = jede Veränderung eines Trades ist ein
+  `trade_event` (eroeffnet | teilverkauf | nachkauf | stop_verschoben | ziel_geaendert |
+  invalidation_ignoriert | notiz | geschlossen). Ein Trade mit Teilverkauf bleibt **`aktiv`** bis
+  die letzte Einheit über `closeTrade` geht. Nach einem Teilverkauf ist risiko-**reduzierendes**
+  Stop-Nachziehen erlaubt (kein Regelbruch), Aufweiten bleibt `stop_moved`. Reine Logik in
+  `lib/trade-events.ts` (`settlePosition`, `deriveTimeline`, `isRiskReducingStop`); die
+  Geldkennzahlen in `lib/trade-stats.ts` sind **event-aware** (Trade mit Events → aus dem
+  Settlement, sonst wie bisher). Chronik auf `/trades/[id]`; Alt-Trades werden ohne Zeitstempel
+  abgeleitet (kein Backfill).
 - **Emotions-Check-in** = zwei Momentaufnahmen je Trade (Aktivieren + Abschließen):
   Skala 1–5 (ruhig ↔ aufgewühlt) + Tags aus fester Liste. **Skala ist Pflicht**, Tags/Notiz
   freiwillig. Auswertung „Zustand & Ergebnis" auf `/tracking`; unter 10 Trades je Gruppe
   zeigt sie bewusst keine Quote.
 - Guards: **Pre-Trade-Gate** (alle 9 = "ja" nötig zum Aktivieren) · **Plan-Lock**
-  (Stop/Invalidation verschieben = Regelbruch) · **Revenge-Guard** (60-Min-Cooldown nach
-  Verlust) · **bewusste Verlustannahme** beim Schließen · **Emotions-Check-in**
+  (Stop/Invalidation verschieben = Regelbruch; **Ausnahme ab Etappe 6:** nach einem Teilverkauf
+  ist risiko-reduzierendes Stop-Nachziehen erlaubt, Invalidation bleibt streng) · **Revenge-Guard**
+  (60-Min-Cooldown nach Verlust) · **bewusste Verlustannahme** beim Schließen · **Emotions-Check-in**
   (`activateTrade`/`closeTrade` lehnen ohne gültige Skala ab).
 
 ## Konventionen
@@ -75,7 +91,28 @@ Candlesticks) · pnpm via corepack.
   und den vor dem Bauen zu klärenden Fragen. **Erster Blick bei „was machen wir als Nächstes".**
 - **`IDEEN-BACKLOG.md`** — der vollständige Ideenvorrat darüber hinaus.
 - Erledigt: Chart-Cockpit (AP 0–10) · Etappe 1 „Geld-Fundament" (Migration `0010`) ·
-  Etappe 4 „Emotions-Check-in" (Migration `0011`).
+  Etappe 4 „Emotions-Check-in" (Migration `0011`) · Etappe 3 „Live-Kurse und Alerts"
+  (Migration `0012`, Tabelle `price_alert`) · Etappe 2 „Freunde" (Migration `0013`, Tabellen
+  `friendship` + `invite_code`; eine feste Sichtbarkeitsstufe, geplante + abgeschlossene Trades
+  in R, nie Beträge) · Etappe 6 „Teilverkäufe und Event-Log" (Migration `0014`, Tabelle
+  `trade_event`; echte Teilverkäufe/Nachkäufe, Timeline je Trade, event-aware Geldkennzahlen).
+
+## Code-Exploration: codegraph zuerst (überschreibt die globale Read-Effizienz-Regel)
+Dieses Projekt hat einen lokalen `codegraph`-Index (`.codegraph/`, via MCP-Server `codegraph`).
+Die globale "Read-Effizienz — PFLICHT"-Regel (Grep → Read mit offset/limit) gilt **in diesem
+Projekt NICHT als erster Schritt** für strukturelle Fragen — codegraph ersetzt sie hier.
+
+Für strukturelle Fragen — Aufrufer/Aufrufe einer Funktion, Datenfluss, Auswirkungsradius
+einer Änderung, "wie hängt X mit Y zusammen", Architektur-Überblick, Bug-Suche — **immer
+zuerst `mcp__codegraph__codegraph_explore` aufrufen, bevor Grep oder Read benutzt wird.**
+Der von codegraph gelieferte Quelltext gilt als bereits gelesen (nicht per Read nachladen).
+
+Grep/Read direkt (ohne vorherigen codegraph-Call) nur für:
+- reine Text-/String-Suche ohne Struktur-Bezug (z. B. "wo steht dieser Fehlertext")
+- wenn codegraph ein Staleness-Banner zeigt (dann zuerst syncen lassen)
+- Dateien außerhalb des indexierten Projekts
+
+Ergebnissen von codegraph vertrauen, keine Grep-Verifikation hinterherschieben.
 
 ## Fallstricke, die schon Zeit gekostet haben
 - **`'use server'`-Dateien dürfen ausschließlich async Funktionen exportieren.** Turbopack

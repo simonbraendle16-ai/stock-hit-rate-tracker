@@ -16,12 +16,22 @@ Der vollständige Ideenkatalog (alles, was nicht in diesen sechs Etappen steckt)
 Historie nachweislich unverändert (0 geänderte Altfelder bei 15 Trades).
 **Etappe 4 (Emotions-Check-in) ist erledigt** — Migration `drizzle/0011_emotions.sql` ist
 angewendet, ebenfalls 0 geänderte Altfelder bei 15 Trades. Details unten bei der Etappe.
+**Etappe 3 (Live-Kurse und Alerts) ist erledigt** — Migration `drizzle/0012_alerts.sql`
+(neue Tabelle `price_alert`) ist angewendet, Trade-Dump vorher/nachher byte-identisch
+(15/15). Details unten bei der Etappe. Damit ist die Voraussetzung für Etappe 6 erfüllt.
+**Etappe 2 (Freunde) ist erledigt** — Migration `drizzle/0013_friendship.sql` (neue Tabellen
+`friendship` + `invite_code`) ist angewendet, Trade-Dump vorher/nachher byte-identisch (15/15).
+Details unten bei der Etappe.
+**Etappe 6 (Teilverkäufe und Event-Log) ist erledigt** — Migration `drizzle/0014_trade_events.sql`
+(neue Tabelle `trade_event`) ist angewendet, Trade-Dump vorher/nachher byte-identisch (15/15).
+Echte Teilverkäufe/Nachkäufe, eine lesbare Chronik je Trade und event-aware Geldkennzahlen.
+Details unten bei der Etappe.
 
 ---
 
-# Etappe 2 — Freunde
+# Etappe 2 — Freunde ✅ ERLEDIGT
 
-**Aufwand:** mittel (~1 Sitzung) · **Migration:** `0011_friendship.sql`
+**Aufwand:** mittel (~1 Sitzung) · **Migration:** `0013_friendship.sql` (angewendet)
 
 ## Warum
 
@@ -90,12 +100,14 @@ sondern als Eintrag in einer gemeinsamen Übersicht.
 
 | Datei | Änderung |
 |---|---|
-| `lib/db/schema.ts` · `drizzle/0011_friendship.sql` | neu: `friendship`, `invite_code` |
-| `app/actions/friends.ts` | **neu** — `createInvite`, `redeemInvite`, `listFriends`, `setVisibility`, `removeFriend`, `getFriendJournal`, `assertCanView` |
-| `app/friends/page.tsx` | **neu** — Freundesliste, Einladungscode erzeugen/einlösen |
-| `app/friends/[id]/page.tsx` | **neu** — Journal eines Freundes, gefiltert nach Stufe |
+| `lib/db/schema.ts` · `drizzle/0013_friendship.sql` | neu: `friendship`, `invite_code` (ohne `visibility`) |
+| `lib/friends.ts` · `lib/friends.test.ts` | **neu** — reine Logik: Code-Erzeugung/Ablauf, R-Projektion, Whitelist-Filter (`projectFriendTrades`, `toFriendSummary`) |
+| `app/actions/friends.ts` | **neu** — `createInvite`, `redeemInvite`, `listFriends`, `getFriendJournal`, `removeFriend`; intern `assertCanView`, `friendshipBetween`, `summaryFor` |
+| `app/friends/page.tsx` | **neu** — Freundesliste (nach Regelbrüchen sortiert) + Einladen/Einlösen |
+| `app/friends/[id]/page.tsx` | **neu** — Journal eines Freundes (geplant + abgeschlossen in R), guarded |
+| `components/invite-panel.tsx` · `friend-remove-button.tsx` · `friend-stats.tsx` | **neu** — Client-/Präsentations-Teile |
 | `components/cockpit-nav.tsx` | Navigationspunkt „Freunde" |
-| `lib/trade-stats.ts` | unverändert wiederverwendet |
+| `lib/trade-stats.ts` | unverändert wiederverwendet (`computeDisciplineStats`, `tradePnl`, `tradeRisk`) |
 
 ## Konkretes Ergebnis
 
@@ -104,20 +116,70 @@ siehst du unter `/friends/[id]` seinen Disziplin-Score, seine Plan-Streak und se
 abgeschlossenen Trades in R — und er deine. Laufende Trades bleiben auf beiden Seiten verdeckt.
 Bricht einer von euch eine Regel, taucht das beim anderen auf.
 
-## Vor dem Bauen zu klären
+## Vor dem Bauen geklärt — so ist es entschieden
 
-- Sollen Freundschaften **gegenseitig** sein (beide sehen einander) oder **je Richtung
-  einstellbar** (du zeigst Stufe 2, er zeigt Stufe 1)?
-- Soll die Accountability-Meldung **aktiv** sein (Benachrichtigung) oder **passiv** (nur in der
-  Übersicht sichtbar)? Aktiv braucht Etappe 3 als Unterbau.
-- Was passiert beim Entfernen einer Freundschaft — sofort blind, oder bleiben bereits gesehene
-  Daten sichtbar?
+- **Keine wählbaren Sichtbarkeitsstufen.** Statt der drei Stufen (`disziplin` /
+  `r_vielfache` / `vollstaendig`) gibt es genau **eine feste Stufe**, nicht einstellbar: ein
+  Freund sieht die Disziplin-Kennzahlen (Score, Quote, Erwartungswert in R, Plan-Streak,
+  Regelbrüche, Anzahl) **und** die Trades in **R-Vielfachen** — **nie einen Betrag**. Das ist
+  der Douglas-konforme Kern (größenunabhängig, verrät die Kontogröße nicht) ohne die Komplexität
+  einer Stufen-Wahl. Deshalb hat `friendship` **keine** `visibility`-Spalte und es gibt **kein**
+  `setVisibility`.
+- **Freundschaft ist gegenseitig** und gleich für beide Seiten (eine Zeile pro Paar). Da es nur
+  eine Stufe gibt, entfällt die Richtungs-Frage.
+- **Accountability passiv.** Regelbrüche eines Freundes erscheinen in der Übersicht (die
+  Freundesliste ist nach protokollierten Regelbrüchen absteigend sortiert) und im Journal —
+  sichtbar beim Nachsehen, keine aktive Benachrichtigung. Kein Eingriff in den Etappe-3-Watcher.
+- **Entfernen macht sofort blind.** `removeFriend` löscht die Freundschaftszeile beidseitig;
+  `assertCanView` wirft ab dem nächsten Zugriff. Nichts bleibt zwischengespeichert sichtbar.
+- **Geplante Trades sind sichtbar** (Nutzer-Entscheidung dieser Sitzung, bewusst über die
+  ursprüngliche „erst nach Abschluss"-Regel hinweg): Der aktuelle Bestand hat 0 abgeschlossene,
+  aber 14 geplante Trades — ohne geplante sähe ein Freund fast nichts. Sichtbar sind damit
+  **geplante** (mit geplantem Chance-Risiko-Verhältnis) **und abgeschlossene** (Ergebnis in R);
+  **laufende (`aktiv`) und abgebrochene bleiben verborgen** — ein offener Trade wäre kopierbar,
+  ohne dass ein Ergebnis daraus lernbar ist.
+
+## Abweichungen von der ursprünglichen Beschreibung
+
+| Geplant | Gebaut | Warum |
+|---|---|---|
+| `0011_friendship.sql` | `0013_friendship.sql` | 0011 (Emotions) und 0012 (Alerts) sind belegt; 0013 war die nächste freie Nummer. |
+| `friendship(… visibility …)` + drei Stufen + `setVisibility` | eine feste Stufe, **keine** `visibility`-Spalte, kein `setVisibility` | Entscheidung der Sitzung: eine Stufe genügt und spart die Stufen-Komplexität; die feste Stufe ist der Douglas-Kern (R + Disziplin, nie Beträge). |
+| Trades erst **nach Abschluss** sichtbar | **geplante** Trades zusätzlich sichtbar (mit geplantem CRV) | Nutzer-Wunsch; der reale Bestand hat 0 abgeschlossene / 14 geplante Trades — ohne geplante wäre das Journal leer. `aktiv`/`abgebrochen` bleiben verborgen (Copy-Trading-Schutz). |
+| `getFriendJournal`/`assertCanView` in der Action | zusätzlich reines Modul `lib/friends.ts` (+ `lib/friends.test.ts`) | Projektionslogik (was ist teilbar) und Code-/Ablauf-Logik gehören in eine reine, testbare Quelle (wie `lib/alerts.ts`) — nicht in die `'use server'`-Action. Die Action liest nur und ruft hinein. |
+| E-Mail-Einladung | Einladungscode, `createInvite` verwendet einen noch gültigen, nicht eingelösten Code wieder | Kein Mailer konfiguriert (wie geplant); Wiederverwendung verhindert, dass wiederholtes Klicken Dutzende Codes anlegt. |
+| — | `FriendSummary`/`toFriendSummary` als Whitelist-Filter | Zweite Verteidigungslinie: `computeDisciplineStats` rechnet auch Geldfelder — `toFriendSummary` lässt nur die betragsfreien durch, getestet gegen Durchsickern. |
+
+## Nachweis
+
+- Migration `0013_friendship.sql` gegen die Produktions-DB angewendet (additiv, nur neue
+  Tabellen): **Trade-Dump vorher/nachher byte-identisch, 15/15 Trades unverändert** (einziger
+  Diff: der Report-eigene Zeitstempel).
+- `friendship` verifiziert: 6 Spalten wie entworfen, **0 Zeilen**, `status`-Default `angenommen`,
+  Unique-Index `friendship_pair_idx` + `friendship_addressee_idx` angelegt,
+  `friendship_status_check` greift (Einfügung mit `status = 'quatsch'` abgelehnt, gültiger Wert
+  akzeptiert, beides zurückgerollt).
+- `invite_code` verifiziert: 5 Spalten wie entworfen, **0 Zeilen** (kein Backfill), Teilindex
+  `invite_code_user_idx` angelegt.
+- **121 Tests grün** (`vitest`, davon 12 neu in `lib/friends.test.ts`: Code-Erzeugung/Alphabet,
+  Ablauf, R-Projektion Long/Short, Sichtbarkeits-Filter geplant/aktiv/abgeschlossen,
+  Whitelist ohne Geld-Leck), `tsc --noEmit` sauber, `next build` erfolgreich (Routen `/friends`
+  und `/friends/[id]` registriert).
+
+## Offen
+
+- **Klick-Test mit echtem Login steht aus:** unter `/friends` einen Code erzeugen, mit einem
+  zweiten Konto einlösen, das Journal des Freundes öffnen (geplante + abgeschlossene Trades in R,
+  keine Beträge), einen Regelbruch beim Freund provozieren und prüfen, dass er in der Liste oben
+  steht, dann die Freundschaft entfernen und prüfen, dass `/friends/[id]` „kein Zugriff" zeigt.
+  Server-Filter (`assertCanView`), Projektion und Whitelist sind durch Tests abgedeckt, der Weg
+  durch echte Anmeldung nicht.
 
 ---
 
-# Etappe 3 — Live-Kurse und Alerts
+# Etappe 3 — Live-Kurse und Alerts ✅ ERLEDIGT
 
-**Aufwand:** mittel (~1 Sitzung) · **Migration:** `0012_alerts.sql`
+**Aufwand:** mittel (~1 Sitzung) · **Migration:** `0012_alerts.sql` (angewendet)
 
 ## Warum
 
@@ -173,15 +235,54 @@ Im Cockpit siehst du auf einen Blick, wo deine offenen Positionen stehen: „AAP
 Einstiegslevel, schließt den Browser-Tab, und bekommst eine Meldung, wenn der Kurs ankommt —
 statt drei Stunden auf den Chart zu starren.
 
-## Vor dem Bauen zu klären
+## Vor dem Bauen geklärt — so ist es entschieden
 
-- Alerts nur bei **geöffneter App** (kostenlos, aber du musst den Tab offen haben) oder echte
-  Push-Benachrichtigungen (braucht Service Worker + VAPID, deutlich mehr Arbeit, weiterhin
-  gratis)?
-- Wie oft darf der Kurs abgerufen werden? Twelve Data Free liegt bei ~800 Anfragen/Tag —
-  bei vielen offenen Positionen wird das knapp und braucht eine Staffelung.
-- Sollen Alerts auch für **Watchlist-Instrumente ohne Trade** möglich sein („sag Bescheid, wenn
-  BTC unter 50k fällt")?
+- **Alerts nur bei geöffneter App**, über die `Notification`-API — kein Service Worker, kein
+  VAPID, kein Push-Dienst. Der „Was gebaut wird"-Abschnitt oben legt das bereits fest; der Preis
+  ist, dass der Tab offen sein muss. Verpasste Alerts gehen aber nicht verloren: ausgelöste
+  Alerts bleiben als Eintrag im Cockpit-Panel stehen, bis man sie wegräumt.
+- **Kursabruf gestaffelt über den bestehenden Cache.** Es gibt keinen neuen Dienst: der Kurs ist
+  der Schluss der letzten Kerze aus `getCachedCandles` (15 Min intraday gecacht). Der Abgleich
+  (`checkAlerts`) holt je **Symbol nur einen** Kurs — mehrere Alerts/Positionen auf dasselbe
+  Instrument teilen sich einen Abruf. Der Hintergrund-Abgleich läuft alle 5 Minuten (plus beim
+  Zurückkehren auf den Tab), was zum 15-Min-Cache passt, ohne ihn oft zu verfehlen.
+- **Ja, Alerts auch ohne Trade.** `price_alert` trägt `ticker`/`market` eigenständig (plus
+  optional `stockId`/`tradeId`), der Kursabruf braucht keinen Join. Ein Alert lässt sich damit
+  auf jedem Instrument setzen — der „Alert setzen"-Dialog hängt an der Live-Position, ist aber
+  nicht an einen laufenden Trade gebunden.
+
+## Abweichungen von der ursprünglichen Beschreibung
+
+| Geplant | Gebaut | Warum |
+|---|---|---|
+| `price_alert(… stockId …)` | zusätzlich `ticker`, `market`, `tradeId`, `kind`, `active` | Ein Trade kann ohne `stockId` existieren; das Symbol muss eigenständig auf der Zeile stehen, damit der Kursabruf ohne Join geht. `kind` trennt Plan-Alerts (einstieg/stop/ziel) von manuellen, `active` räumt Ausgelöste weg, ohne die Historie zu löschen. |
+| `direction` | `'above'` / `'below'` (Kreuzungsrichtung) statt long/short | Ein Level wird durch Steigen ODER Fallen erreicht — das ist unabhängig von der Trade-Richtung und deckt auch „BTC unter 50k" auf einem reinen Watchlist-Instrument ab. |
+| `lib/market-data/quote.ts` | dazu `lib/alerts.ts` (rein, getestet) | Auslöse- und Richtungslogik gehört in eine reine, testbare Quelle (wie `lib/emotions.ts`) — nicht in die 'use server'-Action. |
+| Auto-Alerts: Einstieg, Stop, Ziel | Stop + Ziel immer, **Einstieg nur mit aktuellem Kurs** | Ohne Live-Kurs ist die Einstiegs-Richtung nicht bestimmbar (Level == Bezug); Stop und Ziel liegen dagegen immer eindeutig auf je einer Seite des Einstiegs. Bereits erreichte Level werden übersprungen, statt sofort auszulösen. |
+| Abgleich „beim Laden der Kerzen" | eigener `checkAlerts()` + 5-Min-`AlertWatcher` im Cockpit | Der Abgleich hängt nicht an einer zufälligen Chart-Ansicht, sondern läuft verlässlich, solange das Cockpit offen ist — und nutzt High/Low der letzten Kerze, um eine kurze Berührung innerhalb der Kerze nicht zu übersehen. |
+| `unrealizedPnl(trade, kurs)` | dazu `unrealizedR` + `pricePositionFraction` | R-Vielfaches ist größenunabhängig und direkt mit dem Erwartungswert vergleichbar; die Balken-Position braucht eine eigene, richtungsbewusste reine Funktion. |
+| — | Anlege-Guard gegen Sofort-Auslösung | Ein Alert, dessen Level der Kurs schon erreicht hat, wird beim Anlegen abgelehnt — sonst wäre er kein „setzen und weggehen", sondern feuerte sofort. |
+
+## Nachweis
+
+- Migration `0012_alerts.sql` gegen die Produktions-DB angewendet (additiv, nur neue Tabelle):
+  **Trade-Dump vorher/nachher byte-identisch, 15/15 Trades unverändert.**
+- `price_alert` verifiziert: 13 Spalten wie entworfen, **0 Zeilen** (kein Backfill), beide
+  `CHECK`-Bedingungen (direction/kind) vorhanden und wirksam (Testeinfügung mit `direction =
+  'sideways'` abgelehnt, zurückgerollt), Teilindex `price_alert_active_idx` angelegt.
+- **109 Tests grün** (`vitest`, davon neu: `lib/alerts.test.ts` und die unrealized-/Balken-Tests
+  in `lib/trade-stats.test.ts`), `tsc --noEmit` sauber, `next build` erfolgreich (Route
+  `/api/quote` registriert).
+
+## Offen
+
+- **Klick-Test mit echtem Login steht aus:** an einer aktiven Position (aktuell 1 in der DB) den
+  Live-Stand laden, einen Alert setzen, warten bis der Kurs das Level kreuzt und die
+  Notification/den Cockpit-Eintrag prüfen. Server-Abgleich und Rechenlogik sind durch Tests
+  abgedeckt, der Weg durch echte Anmeldung und Browser-Notification nicht.
+- **Twelve-Data-Gratislimit unter Last ungetestet:** der Ein-Abruf-je-Symbol-Ansatz plus
+  15-Min-Cache hält das Limit bei wenigen Positionen problemlos; bei vielen offenen Positionen
+  auf verschiedenen Instrumenten wäre eine zusätzliche Staffelung/Priorisierung zu prüfen.
 
 ---
 
@@ -372,9 +473,9 @@ diszipliniert sein solltest, sondern *wie viel* Undiszipliniertheit kostet.
 
 ---
 
-# Etappe 6 — Teilverkäufe und Event-Log
+# Etappe 6 — Teilverkäufe und Event-Log ✅ ERLEDIGT
 
-**Aufwand:** groß (~1–2 Sitzungen) · **Migration:** `0014_trade_events.sql` · **setzt Etappe 3 voraus**
+**Aufwand:** groß (~1–2 Sitzungen) · **Migration:** `0014_trade_events.sql` (angewendet) · **setzt Etappe 3 voraus (erledigt)**
 
 ## Warum
 
@@ -441,13 +542,64 @@ Du verkaufst bei 1 R die Hälfte, ziehst den Stop auf Einstand, lässt den Rest 
 App bildet das korrekt ab statt es auf einen einzigen Ausstiegskurs zu verkürzen. Auf der
 Detailseite steht die vollständige Geschichte des Trades mit Zeitstempeln.
 
-## Vor dem Bauen zu klären
+## Vor dem Bauen geklärt — so ist es entschieden
 
-- Ist ein Stop-Nachziehen auf Einstand ein **Regelbruch**? Nach reiner Douglas-Lesart ja (der
-  Plan stand vorher fest), nach gängiger Praxis nein. Möglich wäre ein Plan-Feld „Stop
-  nachziehen ab X R erlaubt" — dann ist es regelkonform statt Bruch.
-- Sollen bestehende `ruleViolations` **rückwirkend** in Events umgewandelt werden (ohne
-  Zeitstempel, da unbekannt) oder bleibt die Historie unberührt?
+- **Voller Umfang gebaut:** echte Teilverkäufe (`partialClose`), Nachkauf/Pyramidisieren
+  (`addToPosition`, gewichteter Durchschnittseinstieg), Event-Log (`trade_event`) und die
+  lesbare Timeline auf der Detailseite.
+- **Status-Modell:** Teilverkäufe/Nachkäufe sind Events an einem weiter **`aktiven`** Trade; der
+  Trade wird erst **`abgeschlossen`**, wenn die letzte Einheit über das bestehende `closeTrade`
+  geschlossen wird — so bleiben die Douglas-Guards (Verlust bewusst annehmen, Emotions-Check-in,
+  Ausstiegskurs) intakt. Kein neuer Status `teilweise_geschlossen`. Der Restbestand wird über den
+  Live-Kurs aus Etappe 3 bewertet (realisiert vs. unrealisiert getrennt).
+- **Stop-Nachziehen nach Teilverkauf:** Sobald ein Teilverkauf stattfand, ist risiko-**reduzierendes**
+  Nachziehen des Stops (Long höher / Short tiefer, auch in den Profit) **kein** Regelbruch und
+  braucht kein `force` — der Kern-Workflow „bei 1 R die Hälfte verkaufen, Stop auf Einstand ziehen".
+  **Vor** dem ersten Teilverkauf bleibt der Plan-Lock streng (jede Stop-Verschiebung = `stop_moved`);
+  das **Aufweiten** (Risiko rauf) bleibt immer ein Regelbruch. Die **Invalidation bleibt streng**
+  (jede Änderung = `invalidation_ignored`), unabhängig von Teilverkäufen. Kein neues Plan-Feld
+  „Stop nachziehen ab X R" — die richtungsbewusste Regel deckt den Fall ohne zusätzliches Feld ab.
+- **Additiv, kein Backfill:** bestehende `ruleViolations` werden **nicht** rückwirkend in Events
+  umgewandelt. Alt-Trades ohne Events bekommen ihre Timeline zur Anzeigezeit aus vorhandenen
+  Feldern **abgeleitet** (openedAt / ruleViolations / closedAt) — ohne erfundene Zeitstempel
+  (`deriveTimeline`, markiert als „abgeleitet"). Entspricht der Projektkonvention (0 Backfill).
+- **Nachkauf ist kein Regelbruch** (geplantes Pyramidisieren ist Douglas-konform); er erhöht aber
+  das Risiko über den ursprünglichen Einsatz hinaus, was in der R-Anzeige sichtbar wird.
+
+## Abweichungen von der ursprünglichen Beschreibung
+
+| Geplant | Gebaut | Warum |
+|---|---|---|
+| `trade_event(… payload JSON …)` als einziger Träger | zusätzlich Spalten `quantity`/`price`/`fee`; `payload` nur für Level-Events (`{from,to,violation}`) | Die Geldmathematik (Menge × Kurs) bleibt spaltenbasiert und ohne JSON-Parsing rechenbar; nur die Level-Änderungen brauchen ein freies Feld. |
+| Rechenlogik teils in der Action | reines Modul `lib/trade-events.ts` (+ Test): `settlePosition`, `deriveTimeline`, `isRiskReducingStop` | Wie bei `lib/alerts.ts`/`lib/emotions.ts`: die testbare Logik gehört nicht in die `'use server'`-Action. |
+| Durchschnittsrechnung in `trade-stats.ts` dupliziert | **event-aware** `computeDisciplineStats`/`-Equity`/`-Mood` + `getMoneyVsPaperStats` + CSV; ohne Event-Map identisch zum Alt-Verhalten | Ein Trade MIT Events wird vollständig aus dem Settlement gerechnet, ein event-loser Trade exakt wie bisher — dadurch bleiben alle Altkennzahlen unverändert. |
+| `ruleViolations` „ab dann abgeleitet" | `ruleViolations` bleibt weiter **führend** geschrieben; Timeline liest Events (bzw. leitet ab) | Der Disziplin-Score hängt an `ruleViolations`; ihn umzustellen hätte den Kern-Guard berührt, ohne Mehrwert. |
+| — | `entryPrice`/`positionSize` wandern bei Nachkauf auf den gewichteten Durchschnitt / die Gesamtmenge | Damit Risiko- und Live-Anzeige stimmen; das ursprüngliche 1R bleibt über das eröffnende Event erhalten (Settlement bezieht R immer auf den Ursprungsplan). |
+| — | Teilverkauf erzwingt eine offene Restmenge (`< openQty`) | Der letzte Rest läuft bewusst über `closeTrade`, damit dort die Douglas-Guards greifen. |
+
+## Nachweis
+
+- Migration `0014_trade_events.sql` gegen die Produktions-DB angewendet (additiv, nur neue
+  Tabelle): **Trade-Dump vorher/nachher byte-identisch, 15/15 Trades unverändert.**
+- `trade_event` verifiziert: 11 Spalten wie entworfen, **0 Zeilen** (kein Backfill), Index
+  `trade_event_trade_idx` angelegt, `trade_event_type_check` greift (Einfügung mit ungültigem
+  `type` abgelehnt, gültiger akzeptiert, beides zurückgerollt).
+- **139 Tests grün** (`vitest`, davon 14 neu in `lib/trade-events.test.ts`: Teilverkauf Long/Short,
+  Nachkauf-Durchschnitt, verschachtelt, vollständige Schließung, Ableitung ohne Events,
+  Richtungslogik; + 4 Integrationstests in `lib/trade-stats.test.ts`: event-aware Disziplin-/Equity-
+  Kennzahlen und Row-Fallback), `tsc --noEmit` sauber, `next build` erfolgreich (Route `/trades/[id]`
+  mit Timeline).
+
+## Offen
+
+- **Klick-Test mit echtem Login steht aus:** an der aktiven Position einen Teilverkauf buchen
+  (Restmenge + realisierter R erscheinen), den Stop danach in Gewinnrichtung ziehen (kein
+  Regelbruch) und ihn aufweiten (Regelbruch), einen Nachkauf buchen (Durchschnittseinstieg wandert),
+  dann abschließen und die vollständige Chronik prüfen. Settlement, Richtungsregel und die
+  event-aware Statistik sind durch Tests abgedeckt, der Weg durch die echte Anmeldung nicht.
+- **R-Konvention bei verschachteltem Nachkauf + Teilverkauf** ist eine dokumentierte
+  Modellierung (gewichteter Durchschnittseinstieg zum Zeitpunkt jedes Teilverkaufs, 1R fix aus dem
+  Ursprungsplan); bei reinen Teilverkäufen ohne Nachkauf exakt.
 
 ---
 

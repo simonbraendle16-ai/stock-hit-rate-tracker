@@ -5,13 +5,19 @@ import {
   computeEquityStats,
   computeMoodStats,
   netCashflow,
+  pricePositionFraction,
   tradeFees,
   tradeGrossPnl,
   tradePnl,
   tradeRisk,
+  unrealizedPnl,
+  unrealizedR,
+  tradeNetPnl,
   type CashflowRow,
+  type TradeEventsByTrade,
   type TradeRow,
 } from './trade-stats'
+import type { TradeEventRow } from './trade-events'
 
 /** Minimaler abgeschlossener Trade; einzelne Felder je Test überschreiben. */
 function makeTrade(over: Partial<TradeRow> = {}): TradeRow {
@@ -118,6 +124,70 @@ describe('tradeRisk', () => {
 
   it('wächst mit dem Hebel, weil der in der Stückzahl steckt', () => {
     expect(tradeRisk(makeTrade({ positionSize: 30 }))).toBe(300)
+  })
+})
+
+describe('unrealizedPnl (offene Position)', () => {
+  const open = makeTrade({ status: 'aktiv', result: null, actualExitPrice: null, positionSize: 10 })
+
+  it('rechnet Long aus dem aktuellen Kurs', () => {
+    expect(unrealizedPnl(open, 110)).toBe(100) // (110-100)*10
+  })
+
+  it('ist bei Long negativ, wenn der Kurs unter dem Einstieg steht', () => {
+    expect(unrealizedPnl(open, 95)).toBe(-50)
+  })
+
+  it('dreht das Vorzeichen bei Short', () => {
+    const short = makeTrade({ direction: 'short', entryPrice: 100, positionSize: 10, status: 'aktiv' })
+    expect(unrealizedPnl(short, 90)).toBe(100) // Short im Gewinn, wenn Kurs fällt
+    expect(unrealizedPnl(short, 110)).toBe(-100)
+  })
+
+  it('liefert null ohne Stückzahl oder bei ungültigem Kurs', () => {
+    expect(unrealizedPnl(makeTrade({ positionSize: null }), 110)).toBeNull()
+    expect(unrealizedPnl(open, NaN)).toBeNull()
+  })
+})
+
+describe('unrealizedR', () => {
+  const open = makeTrade({ entryPrice: 100, stopLoss: 90 }) // Risikodistanz 10
+
+  it('ist die Kursbewegung geteilt durch die Risikodistanz', () => {
+    expect(unrealizedR(open, 110)).toBe(1) // +10 / 10 = +1 R
+    expect(unrealizedR(open, 85)).toBe(-1.5) // -15 / 10
+  })
+
+  it('ist größenunabhängig (Hebel/Stückzahl egal)', () => {
+    expect(unrealizedR(makeTrade({ entryPrice: 100, stopLoss: 90, positionSize: 999 }), 110)).toBe(1)
+  })
+
+  it('rechnet Short korrekt', () => {
+    const short = makeTrade({ direction: 'short', entryPrice: 100, stopLoss: 110 })
+    expect(unrealizedR(short, 90)).toBe(1) // Kurs fällt um 10, Risiko 10 → +1 R
+  })
+
+  it('liefert null bei Risikodistanz 0', () => {
+    expect(unrealizedR(makeTrade({ entryPrice: 100, stopLoss: 100 }), 110)).toBeNull()
+  })
+})
+
+describe('pricePositionFraction (Balken Stop→Ziel)', () => {
+  it('ist 0 am Stop und 1 am Ziel (Long)', () => {
+    const t = makeTrade({ stopLoss: 90, takeProfit: 120 })
+    expect(pricePositionFraction(t, 90)).toBe(0)
+    expect(pricePositionFraction(t, 120)).toBe(1)
+    expect(pricePositionFraction(t, 105)).toBeCloseTo(0.5)
+  })
+
+  it('funktioniert richtungsbewusst bei Short (Ziel unter dem Stop)', () => {
+    const t = makeTrade({ direction: 'short', stopLoss: 110, takeProfit: 80 })
+    expect(pricePositionFraction(t, 110)).toBeCloseTo(0) // am Stop (−0 ist ok)
+    expect(pricePositionFraction(t, 80)).toBe(1) // am Ziel
+  })
+
+  it('liefert null ohne Ziel', () => {
+    expect(pricePositionFraction(makeTrade({ takeProfit: null }), 100)).toBeNull()
   })
 })
 
@@ -414,5 +484,75 @@ describe('computeMoodStats', () => {
     expect(g.rated).toBe(1)
     expect(g.winRate).toBe(50)
     expect(g.expectancy).toBeCloseTo(1.82, 5)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Event-aware Integration (Etappe 6): Teilverkäufe fließen korrekt in die
+// Aggregat-Kennzahlen; ohne Event-Map bleibt alles beim Alt-Verhalten.
+// ---------------------------------------------------------------------------
+
+let evSeq = 0
+function evt(over: Partial<TradeEventRow>): TradeEventRow {
+  evSeq++
+  return {
+    id: evSeq,
+    tradeId: 1,
+    userId: 'u1',
+    type: 'notiz',
+    at: new Date(`2026-01-02T10:${String(evSeq).padStart(2, '0')}:00Z`),
+    quantity: null,
+    price: null,
+    fee: null,
+    payload: null,
+    note: null,
+    createdAt: new Date(),
+    ...over,
+  } as TradeEventRow
+}
+
+describe('computeDisciplineStats — event-aware', () => {
+  // Trade: 10 @100 eröffnet, 5 @110 teilverkauft, Rest 5 @120 geschlossen.
+  // Brutto = (110-100)*5 + (120-100)*5 = 150; ohne Gebühren = totalNet 150.
+  // plannedRisk = |100-90|*10 = 100 → R = 150/100 = 1,5.
+  const events = [
+    evt({ type: 'eroeffnet', quantity: 10, price: 100, fee: 0 }),
+    evt({ type: 'teilverkauf', quantity: 5, price: 110, fee: 0 }),
+    evt({ type: 'geschlossen', quantity: 5, price: 120, fee: 0 }),
+  ]
+  const trade = makeTrade({ id: 1, result: 'gewinn', actualExitPrice: 120, positionSize: 10 })
+  const map: TradeEventsByTrade = new Map([[1, events]])
+
+  it('rechnet P&L und Erwartungswert aus dem Settlement, nicht aus der Zeile', () => {
+    const s = computeDisciplineStats([trade], 1000, [], map)
+    expect(s.totalPnL).toBeCloseTo(150)
+    expect(s.expectancy).toBeCloseTo(1.5)
+    expect(s.currentBalance).toBeCloseTo(1150)
+    expect(s.incomplete).toBe(0)
+  })
+
+  it('ohne Event-Map bleibt es beim Row-basierten Alt-Verhalten', () => {
+    // Row: (120-100)*10 - (9+9) = 200 - 18 = 182.
+    const s = computeDisciplineStats([trade], 1000)
+    expect(s.totalPnL).toBeCloseTo(182)
+  })
+
+  it('tradeNetPnl liefert den realisierten Gesamt-Netto eines Event-Trades', () => {
+    expect(tradeNetPnl(trade, events)).toBeCloseTo(150)
+    expect(tradeNetPnl(trade, [])).toBeCloseTo(182) // Fallback = tradePnl
+  })
+})
+
+describe('computeEquityStats — event-aware', () => {
+  it('trägt den realisierten Gesamt-Netto zum Abschluss in die Kurve', () => {
+    const events = [
+      evt({ type: 'eroeffnet', quantity: 10, price: 100, fee: 0 }),
+      evt({ type: 'teilverkauf', quantity: 5, price: 110, fee: 0 }),
+      evt({ type: 'geschlossen', quantity: 5, price: 120, fee: 0 }),
+    ]
+    const trade = makeTrade({ id: 1, result: 'gewinn', actualExitPrice: 120, positionSize: 10 })
+    const s = computeEquityStats([trade], 1000, [], new Map([[1, events]]))
+    const last = s.points[s.points.length - 1]
+    expect(last.balance).toBeCloseTo(1150)
   })
 })

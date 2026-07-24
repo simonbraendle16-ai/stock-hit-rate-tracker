@@ -2,11 +2,12 @@ import { auth } from '@/lib/auth'
 import { headers } from 'next/headers'
 import { redirect, notFound } from 'next/navigation'
 import Link from 'next/link'
-import { getTrade } from '@/app/actions/trades'
+import { getTrade, listTradeEvents } from '@/app/actions/trades'
 import { getStockChartUrl } from '@/app/actions/stocks'
 import { getSettings } from '@/app/actions/settings'
 import { CockpitHeader } from '@/components/cockpit-header'
 import { TradeCard } from '@/components/trade-card'
+import { TradeTimeline } from '@/components/trade-timeline'
 import { ArrowLeft, LineChart, Lock } from 'lucide-react'
 
 export default async function TradeDetailPage({
@@ -21,9 +22,10 @@ export default async function TradeDetailPage({
   const t = await getTrade(Number(id))
   if (!t) notFound()
 
-  const [chartUrl, settings] = await Promise.all([
+  const [chartUrl, settings, events] = await Promise.all([
     t.stockId != null ? getStockChartUrl(t.stockId) : Promise.resolve(null),
     getSettings(),
+    listTradeEvents(t.id),
   ])
   const locked = t.status === 'aktiv' || t.status === 'abgeschlossen'
   const violations: string[] = t.ruleViolations ? JSON.parse(t.ruleViolations) : []
@@ -40,7 +42,9 @@ export default async function TradeDetailPage({
         </Link>
 
         <div className="grid grid-cols-1 gap-4">
-          <TradeCard t={t} currency={settings.currency} />
+          <TradeCard t={t} currency={settings.currency} events={events} />
+
+          <TradeTimeline trade={t} events={events} />
 
           {chartUrl && (
             <a

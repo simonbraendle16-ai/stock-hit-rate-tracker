@@ -202,6 +202,32 @@ export const trade = pgTable('trade', {
   createdAt: timestamp('createdAt').notNull().defaultNow(),
 })
 
+// Kurs-Alerts (Etappe 3): ein vom Nutzer gesetztes Preislevel, das beim Laden
+// der Kerzen gegen den aktuellen Kurs geprüft wird. Das Symbol (ticker/market)
+// steht eigenständig auf der Zeile, damit der Kursabruf ohne Join funktioniert —
+// ein Trade kann ohne verknüpftes Instrument (stockId) existieren.
+export const priceAlert = pgTable('price_alert', {
+  id: serial('id').primaryKey(),
+  userId: text('userId').notNull(),
+  // optionaler Bezug auf Watchlist-Instrument bzw. auslösenden Trade
+  stockId: integer('stockId'),
+  tradeId: integer('tradeId'),
+  ticker: text('ticker').notNull(),
+  market: text('market').notNull().default('aktien'),
+  // zu erreichendes Kurslevel
+  price: doublePrecision('price').notNull(),
+  // Kreuzungsrichtung: 'above' (Kurs steigt bis/über) | 'below' (fällt bis/unter)
+  direction: text('direction').notNull(),
+  // Herkunft: 'einstieg' | 'stop' | 'ziel' (aus dem Plan) | 'manuell'
+  kind: text('kind').notNull().default('manuell'),
+  note: text('note'),
+  // aktiv & nicht ausgelöst → wird bei jedem Kursabruf geprüft
+  active: boolean('active').notNull().default(true),
+  // Auslösezeitpunkt; null = noch nicht erreicht
+  triggeredAt: timestamp('triggeredAt'),
+  createdAt: timestamp('createdAt').notNull().defaultNow(),
+})
+
 // Persistente Chart-Zeichnungen (Trendlinien, Fibs, Level, Notizen) je Instrument.
 export const chartDrawing = pgTable('chart_drawing', {
   id: serial('id').primaryKey(),
@@ -213,5 +239,56 @@ export const chartDrawing = pgTable('chart_drawing', {
   points: text('points').notNull(),
   // JSON: { color?, dashed?, label? }
   style: text('style'),
+  createdAt: timestamp('createdAt').notNull().defaultNow(),
+})
+
+// Freunde (Etappe 2): gegenseitige Accountability. Eine Freundschaft ist eine
+// Zeile; für beide Seiten gilt dieselbe feste Stufe (Disziplin-Kennzahlen +
+// abgeschlossene Trades in R-Vielfachen, nie Beträge). Trades werden erst nach
+// Abschluss sichtbar — kein Copy-Trading. Entstehung nur per Einladungscode.
+export const friendship = pgTable('friendship', {
+  id: serial('id').primaryKey(),
+  requesterId: text('requesterId').notNull(),
+  addresseeId: text('addresseeId').notNull(),
+  // offen | angenommen | abgelehnt
+  status: text('status').notNull().default('angenommen'),
+  createdAt: timestamp('createdAt').notNull().defaultNow(),
+  respondedAt: timestamp('respondedAt'),
+})
+
+// Einladungscode statt E-Mail-Versand (lib/auth.ts hat keinen Mailer). Der
+// Ersteller erzeugt einen Code, gibt ihn über einen beliebigen Kanal weiter,
+// der andere löst ihn ein → daraus entsteht die gegenseitige Freundschaft.
+export const inviteCode = pgTable('invite_code', {
+  code: text('code').primaryKey(),
+  userId: text('userId').notNull(),
+  createdAt: timestamp('createdAt').notNull().defaultNow(),
+  expiresAt: timestamp('expiresAt').notNull(),
+  usedByUserId: text('usedByUserId'),
+})
+
+// Event-Log (Etappe 6): jede Veränderung eines Trades als eigenes Ereignis —
+// Eröffnung, Teilverkauf, Nachkauf, Stop-/Ziel-Verschiebung, Notiz, Abschluss.
+// Daraus entsteht die lesbare Chronik auf der Trade-Detailseite und die Basis für
+// echte Teilverkäufe (gewichteter Durchschnitt, realisiert vs. unrealisiert).
+// userId steht eigenständig neben tradeId (wie bei price_alert), damit die
+// Event-Abfrage ohne Join auf "trade" auskommt. Kein Backfill: Alt-Trades leiten
+// ihre Timeline zur Anzeigezeit aus vorhandenen Feldern ab.
+export const tradeEvent = pgTable('trade_event', {
+  id: serial('id').primaryKey(),
+  tradeId: integer('tradeId').notNull(),
+  userId: text('userId').notNull(),
+  // eroeffnet | teilverkauf | nachkauf | stop_verschoben | ziel_geaendert |
+  // invalidation_ignoriert | notiz | geschlossen (feste Liste in lib/trade-events.ts)
+  type: text('type').notNull(),
+  // fachlicher Zeitpunkt des Ereignisses; createdAt = technischer Schreibzeitpunkt
+  at: timestamp('at').notNull().defaultNow(),
+  // nur bei teilverkauf/nachkauf: Stückzahl, Ausführungskurs, anteilige Gebühr
+  quantity: doublePrecision('quantity'),
+  price: doublePrecision('price'),
+  fee: doublePrecision('fee'),
+  // JSON für Level-Ereignisse: { from, to }
+  payload: text('payload'),
+  note: text('note'),
   createdAt: timestamp('createdAt').notNull().defaultNow(),
 })
