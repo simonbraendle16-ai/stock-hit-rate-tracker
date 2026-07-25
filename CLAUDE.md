@@ -64,6 +64,30 @@ Candlesticks) · pnpm via corepack.
   Geldkennzahlen in `lib/trade-stats.ts` sind **event-aware** (Trade mit Events → aus dem
   Settlement, sonst wie bisher). Chronik auf `/trades/[id]`; Alt-Trades werden ohne Zeitstempel
   abgeleitet (kein Backfill).
+- **Wahrscheinlichkeits-Simulation** (Etappe 7a) = Monte-Carlo über die **eigene** R-Verteilung:
+  aus den abgerechneten Trades werden mit Zurücklegen 10.000 Verläufe à 50 Trades gezogen
+  (Bootstrap, fester Seed → reproduzierbar). Antwortet auf „gehört diese Verlustserie zu meinen
+  Zahlen?", **nicht** auf „wie läuft der nächste Trade". Logik in `lib/monte-carlo.ts` (rein,
+  getestet, gegen eine geschlossene Markov-Lösung geprüft); Eingang sind `ratedRMultiples`
+  (dieselbe Auswahl wie der Erwartungswert) und `medianRiskFraction` (Median über Echtgeld-Trades
+  mit echter Stopdistanz — nur damit wird ein Rückgang in R zu Kontoprozent). Unter
+  `MIN_TRADES` = 20 abgerechneten Trades erscheint **keine** Wahrscheinlichkeit, sondern
+  „x von 20". Panel: `components/monte-carlo-panel.tsx` auf `/tracking`.
+- **Bot-Zwilling** (Etappe 5) = derselbe Plan mechanisch nachgerechnet: Kerze für Kerze ab
+  `openedAt`, **über den echten Ausstieg hinaus**, bis Stop oder Ziel berührt ist (beides in
+  derselben Kerze → konservativ der Stop). Antwortet auf „was kostet mich mein eigenes
+  Eingreifen?". Die **Differenz ist `Du − Bot`**: negativ = das Eingreifen hat gekostet, positiv =
+  der Plan gehört überarbeitet. Aufschlüsselung in fünf Eimer (zu früh · zu spät · Stop verschoben
+  · besser als der Plan · wie geplant), jeder Trade in genau einem. Logik in `lib/bot-twin.ts`
+  (rein, getestet), Laden/Auflösung in `app/actions/bot-twin.ts`, Anzeige in
+  `components/bot-twin-panel.tsx` + `-curve` + `bot-outcome-dialog`. **Schreibt nichts** —
+  gerechnet wird live über `getCachedCandles`. Auflösung adaptiv nach Haltedauer (≤3 T
+  Stundenkerzen, ≤1 Mon 4h, sonst Tageskerzen) mit Rückfall auf gröber, wenn die Historie nicht
+  zurückreicht. Das Minutenlimit gilt **je Anbieter** (Binance ≠ Twelve Data). Nicht simulierbare
+  Trades werden mit Grund ausgewiesen und dürfen von Hand nachgetragen werden
+  (`bot_manual_outcome`, Migration 0015) — Messung schlägt dabei immer Eingabe. Geplante, nie
+  eingegangene Trades (`kein_handel`) laufen in einem **getrennten** Block, nie in der
+  Hauptdifferenz.
 - **Emotions-Check-in** = zwei Momentaufnahmen je Trade (Aktivieren + Abschließen):
   Skala 1–5 (ruhig ↔ aufgewühlt) + Tags aus fester Liste. **Skala ist Pflicht**, Tags/Notiz
   freiwillig. Auswertung „Zustand & Ergebnis" auf `/tracking`; unter 10 Trades je Gruppe
@@ -76,10 +100,31 @@ Candlesticks) · pnpm via corepack.
 
 ## Konventionen
 - **Sprache:** UI und Texte auf Deutsch; Umlaute (ä/ö/ü/ß) immer korrekt.
-- **Design:** edel/institutionell "Privatbank-Nacht" (App läuft dark), IBM Plex,
-  Geldfarben kräftig & strahlend — **kein Neon/Glow/Sci-Fi**. Farbvariablen in
-  `app/globals.css` (BG `#0b1522`, Akzent `#45a8ec`, Grün `#4FBE8C`, Rot `#D8505F`,
-  Gold `#D4AC4E`). Karten-Optik: `.glass-card`.
+- **Design:** edel/institutionell "Indigo-Nacht" (App läuft dark), IBM Plex,
+  Geldfarben kräftig & strahlend — **kein Neon, kein Sci-Fi**. Farbvariablen in
+  `app/globals.css` (Seite `#0f1124`, Panel `#191c3a`, Hell `#ecebfa`, Akzent
+  `#7b6bf6`, Grün `#4fd6a0`, Rot `#f2607a`, Gold `#e0b455`). Karten-Optik:
+  `.panel` / `.panel-raised` / `.panel-sunken` (`.glass-card` ist ein Alias auf
+  `.panel`; noch in Formularen und `components/chart/*` in Gebrauch).
+- **Tiefe kommt aus Ebenen, nicht aus Leuchten.** Die Stufen Seite → Panel →
+  `.panel-raised` sind bewusst weit auseinandergezogen; eng beieinander liegende
+  Töne lassen die Oberfläche flach wirken. Der Seitenhintergrund
+  (`components/app-backdrop.tsx`) trägt leuchtende Kerzen in den Randzonen neben
+  der Inhaltsspalte — **nie darunter**, damit Daten lesbar bleiben.
+- **Keine deckende Fläche über das Layout legen.** Ein `bg-background` auf dem
+  Seiten-Wrapper verdeckt den App-Hintergrund vollständig. Die Routen-Wurzel ist
+  deshalb `<div className="min-h-svh">` ohne Hintergrundfarbe.
+- **Glow ist die Ausnahme, nicht die Regel.** Erlaubt ausschließlich am
+  Disziplin-Ring (`.svg-glow`) und an Statuspunkten (`.dot-glow`). Nirgends sonst —
+  insbesondere nicht auf Geldbeträgen: das rückt Ergebnis vor Prozess.
+- **Bewegung:** Aufbau beim Mount und bei Zustandswechseln (`.rise-in`, `.bar-fill`,
+  `.ring-value`, `CHART_MOTION`). **Dauerbewegung nur, wo echter Zustand
+  dahintersteht** — ein offener Alert pulst (`.dot-pulse`), weil er tatsächlich auf
+  eine Kursmarke wartet; ein ausgelöster steht still. **Niemals an Kursdaten**: die
+  sind bis zu 5 Minuten alt, ein "LIVE"-Signal wäre eine Falschaussage. Ausgenommen
+  ist die kontrastarme Hero-Atmosphäre (`.hero-atmo`) und die Leerzustands-Schleife
+  (`.empty-path`). Alles gehört in `@media (prefers-reduced-motion: no-preference)`,
+  und der Endzustand muss ohne Bewegung korrekt aussehen.
 - **Nicht neu erfinden:** Geld-/R:R-/Positionsmathematik lebt in `lib/trade-math.ts`,
   die Pre-Trade-Fragen in `lib/pre-trade-questions.ts`, Skala und Emotions-Tags in
   `lib/emotions.ts` (je gemeinsame Quelle für Client + Server-Gate + Auswertung).
@@ -95,7 +140,12 @@ Candlesticks) · pnpm via corepack.
   (Migration `0012`, Tabelle `price_alert`) · Etappe 2 „Freunde" (Migration `0013`, Tabellen
   `friendship` + `invite_code`; eine feste Sichtbarkeitsstufe, geplante + abgeschlossene Trades
   in R, nie Beträge) · Etappe 6 „Teilverkäufe und Event-Log" (Migration `0014`, Tabelle
-  `trade_event`; echte Teilverkäufe/Nachkäufe, Timeline je Trade, event-aware Geldkennzahlen).
+  `trade_event`; echte Teilverkäufe/Nachkäufe, Timeline je Trade, event-aware Geldkennzahlen) ·
+  Etappe 7a „Monte-Carlo-Simulator" (**ohne Migration**, rechnet nur über vorhandene Trades;
+  `lib/monte-carlo.ts` + Panel auf `/tracking`) · Etappe 5 „Bot-Zwilling" (Migration `0015`,
+  Tabelle `bot_manual_outcome` **nur** für Nachträge; die Simulation selbst schreibt nichts —
+  `lib/bot-twin.ts` + Panel auf `/tracking`). Offen aus Etappe 7: 7b Setup-Vergleich,
+  7c MAE/MFE, 7d Zeit-Heatmap. Offen aus dem Design: Etappe E (Formulare + Chart-Cockpit).
 
 ## Code-Exploration: codegraph zuerst (überschreibt die globale Read-Effizienz-Regel)
 Dieses Projekt hat einen lokalen `codegraph`-Index (`.codegraph/`, via MCP-Server `codegraph`).

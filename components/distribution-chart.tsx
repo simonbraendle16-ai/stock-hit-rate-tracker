@@ -1,7 +1,8 @@
 'use client'
 
-import { Card } from '@/components/ui/card'
 import { ChartContainer } from '@/components/ui/chart'
+import { ChartEmpty, ChartHeader } from '@/components/chart-frame'
+import { CHART_MOTION } from '@/lib/chart-theme'
 import { Cell, Label, Pie, PieChart } from 'recharts'
 import { PieChart as PieIcon } from 'lucide-react'
 
@@ -19,27 +20,20 @@ export function DistributionChart({
   ]
 
   return (
-    <Card className="flex h-full flex-col p-4 sm:p-6">
-      <div className="mb-4 flex items-center gap-2">
-        <PieIcon className="size-4 text-primary" />
-        <div>
-          <h3 className="text-sm font-semibold text-foreground">
-            Richtig / Falsch
-          </h3>
-          <p className="text-xs text-muted-foreground">Gesamtverteilung</p>
-        </div>
-      </div>
+    <div className="panel sheen flex h-full flex-col p-4 sm:p-6">
+      <ChartHeader
+        icon={PieIcon}
+        title="Richtig / Falsch"
+        subtitle="Gesamtverteilung"
+      />
 
       {total === 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center rounded-lg border border-dashed border-border py-10 text-center">
-          <PieIcon className="size-8 text-muted-foreground/40" />
-          <p className="mt-3 text-sm font-medium text-foreground">
-            Noch keine Daten
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Erfasse Einschätzungen, um die Verteilung zu sehen.
-          </p>
-        </div>
+        <ChartEmpty
+          icon={PieIcon}
+          className="flex-1 py-10"
+          title="Noch keine Daten"
+          hint="Erfasse Einschätzungen, um die Verteilung zu sehen."
+        />
       ) : (
         <>
           <ChartContainer
@@ -58,6 +52,7 @@ export function DistributionChart({
                 outerRadius={80}
                 strokeWidth={2}
                 stroke="var(--card)"
+                {...CHART_MOTION}
               >
                 {data.map((entry) => (
                   <Cell key={entry.name} fill={entry.fill} />
@@ -111,6 +106,6 @@ export function DistributionChart({
           </div>
         </>
       )}
-    </Card>
+    </div>
   )
 }

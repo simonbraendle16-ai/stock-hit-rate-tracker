@@ -19,7 +19,7 @@ export function DouglasQuote() {
     return () => clearInterval(id)
   }, [])
   return (
-    <div className="glass-card flex items-start gap-3 p-4">
+    <div className="panel sheen flex h-full items-start gap-3 p-4 sm:p-5">
       <Quote className="mt-0.5 size-4 shrink-0 text-primary" />
       <p className="font-heading text-base italic leading-snug text-foreground/90 transition-opacity">
         {quotes[i]}

@@ -56,7 +56,7 @@ export function AlertsPanel({ alerts }: { alerts: AlertView[] }) {
   const pending = alerts.filter((a) => a.triggeredAt == null)
 
   return (
-    <div className="glass-card p-4">
+    <div className="panel sheen p-4">
       <div className="mb-3 flex items-center justify-between gap-2">
         <p className="flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
           <Bell className="size-3.5" /> Kurs-Alerts
@@ -155,6 +155,16 @@ function AlertRow({
     >
       <div className="min-w-0">
         <p className="flex items-center gap-1.5 font-mono text-xs">
+          {/* Der Puls ist an echten Zustand gebunden: ein offener Alert wartet
+              tatsächlich auf eine Kursmarke. Ausgelöste stehen still — und an
+              Kursdaten pulst nichts, die sind bis zu 5 Minuten alt. */}
+          <span
+            className={cn(
+              'dot shrink-0',
+              fired ? 'text-warning' : 'dot-pulse dot-glow text-primary',
+            )}
+            aria-hidden="true"
+          />
           <span className="font-bold text-foreground">{a.ticker}</span>
           <span className="text-muted-foreground">
             {directionVerb(a.direction)}{' '}

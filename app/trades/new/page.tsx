@@ -12,7 +12,7 @@ export default async function NewTradePage() {
   const settings = await getSettings()
 
   return (
-    <div className="min-h-svh bg-background">
+    <div className="min-h-svh">
       <CockpitHeader userLabel={session.user.name || session.user.email} />
       <main className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
         <div className="mb-6">

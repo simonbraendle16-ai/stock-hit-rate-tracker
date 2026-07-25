@@ -78,7 +78,7 @@ export function InvitePanel() {
   return (
     <div className="grid gap-4 sm:grid-cols-2">
       {/* Code erzeugen */}
-      <div className="glass-card flex flex-col gap-3 p-5">
+      <div className="panel sheen flex flex-col gap-3 p-5">
         <div className="flex items-center gap-2">
           <Ticket className="size-4 text-primary" />
           <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
@@ -134,7 +134,7 @@ export function InvitePanel() {
       </div>
 
       {/* Code einlösen */}
-      <div className="glass-card flex flex-col gap-3 p-5">
+      <div className="panel sheen flex flex-col gap-3 p-5">
         <div className="flex items-center gap-2">
           <UserPlus className="size-4 text-primary" />
           <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">

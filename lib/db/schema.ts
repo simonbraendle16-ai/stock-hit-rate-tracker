@@ -292,3 +292,22 @@ export const tradeEvent = pgTable('trade_event', {
   note: text('note'),
   createdAt: timestamp('createdAt').notNull().defaultNow(),
 })
+
+// Bot-Zwilling (Etappe 5): von Hand nachgetragener Ausgang eines Trades, den die
+// Simulation nicht rechnen kann (keine Historie, unbekannter Ticker, Gratis-Limit).
+// Die Simulation selbst speichert NICHTS — sie rechnet live über die Kerzen. Diese
+// Tabelle füllt nur die Lücken, und ihre Zeilen werden in der Auswertung sichtbar
+// als „nachgetragen" gekennzeichnet. Liegen später doch Kerzen vor, gewinnt das
+// simulierte Ergebnis: eine Handeingabe überstimmt keine Messung.
+export const botManualOutcome = pgTable('bot_manual_outcome', {
+  id: serial('id').primaryKey(),
+  tradeId: integer('tradeId').notNull(),
+  userId: text('userId').notNull(),
+  // ziel | stop | offen (feste Liste in lib/bot-twin.ts → BotOutcome)
+  outcome: text('outcome').notNull(),
+  // nur bei 'offen' nötig; bei ziel/stop ergibt sich der Kurs aus dem Plan
+  exitPrice: doublePrecision('exitPrice'),
+  note: text('note'),
+  createdAt: timestamp('createdAt').notNull().defaultNow(),
+  updatedAt: timestamp('updatedAt').notNull().defaultNow(),
+})

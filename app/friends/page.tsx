@@ -16,14 +16,15 @@ export default async function FriendsPage() {
   const friends = await listFriends()
 
   return (
-    <div className="min-h-svh bg-background">
+    <div className="min-h-svh">
       <CockpitHeader userLabel={session.user.name || session.user.email} />
       <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
         <div className="mb-6">
-          <h2 className="font-heading text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-            Freunde
+          <p className="eyebrow">Freunde</p>
+          <h2 className="mt-1 font-heading text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+            Rechenschaft statt Applaus
           </h2>
-          <p className="mt-1 max-w-2xl font-mono text-xs leading-relaxed text-muted-foreground">
+          <p className="note mt-1.5 max-w-2xl leading-relaxed">
             Ein Journal, das niemand sieht, hält niemanden ehrlich. Hier sieht jemand deine
             Regelbrüche — und du seine. Abgeschlossene Trades erscheinen nur in R-Vielfachen, nie in
             Beträgen: vergleichbar, ohne die Kontogröße zu verraten. Kein Copy-Trading.
@@ -38,7 +39,7 @@ export default async function FriendsPage() {
           </h3>
 
           {friends.length === 0 ? (
-            <div className="glass-card flex flex-col items-center gap-2 p-10 text-center">
+            <div className="panel sheen flex flex-col items-center gap-2 p-10 text-center">
               <Users className="size-8 text-muted-foreground/50" />
               <p className="font-mono text-sm text-muted-foreground">
                 Noch keine Freunde verbunden.
@@ -51,7 +52,7 @@ export default async function FriendsPage() {
           ) : (
             <div className="grid gap-4">
               {friends.map((f) => (
-                <div key={f.friendId} className="glass-card p-5">
+                <div key={f.friendId} className="panel sheen p-5">
                   <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
                       <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10 font-heading text-sm font-bold text-primary">

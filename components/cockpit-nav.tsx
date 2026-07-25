@@ -25,8 +25,9 @@ export function CockpitNav() {
           <Link
             key={href}
             href={href}
+            data-active={active}
             className={cn(
-              'flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-mono text-xs tracking-wide transition-colors',
+              'nav-item flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-mono text-xs tracking-wide transition-colors',
               active
                 ? 'bg-primary/10 text-primary'
                 : 'text-muted-foreground hover:text-foreground',

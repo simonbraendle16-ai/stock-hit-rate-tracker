@@ -67,7 +67,7 @@ export default async function StockDetailPage({
   }))
 
   return (
-    <div className="min-h-svh bg-background">
+    <div className="min-h-svh">
       <CockpitHeader userLabel={session.user.name || session.user.email} />
 
       <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
@@ -141,7 +141,7 @@ export default async function StockDetailPage({
         </div>
 
         {/* Echte Trades zu diesem Instrument */}
-        <div className="mt-6 glass-card p-4">
+        <div className="mt-6 panel sheen p-4">
           <p className="mb-3 font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
             Echte Trades zu diesem Instrument
           </p>

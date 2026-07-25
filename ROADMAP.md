@@ -12,6 +12,11 @@ der jeweiligen Sitzung in den `drill`.
 Der vollständige Ideenkatalog (alles, was nicht in diesen sechs Etappen steckt) liegt in
 [`IDEEN-BACKLOG.md`](./IDEEN-BACKLOG.md).
 
+> **Zwei Zählungen, nicht verwechseln.** Die **nummerierten** Etappen 2–7 hier sind
+> *Feature*-Arbeit. Die **Design-Arbeit** wird mit **Buchstaben** geführt (Design A–D, siehe
+> Abschnitt am Ende dieser Datei) — genau deshalb, weil es früher zwei „Etappe 1" gab: das
+> Geld-Fundament und das Cockpit-Design.
+
 **Status:** Etappe 1 (Geld-Fundament) ist erledigt — Migration `drizzle/0010` ist angewendet,
 Historie nachweislich unverändert (0 geänderte Altfelder bei 15 Trades).
 **Etappe 4 (Emotions-Check-in) ist erledigt** — Migration `drizzle/0011_emotions.sql` ist
@@ -26,6 +31,17 @@ Details unten bei der Etappe.
 (neue Tabelle `trade_event`) ist angewendet, Trade-Dump vorher/nachher byte-identisch (15/15).
 Echte Teilverkäufe/Nachkäufe, eine lesbare Chronik je Trade und event-aware Geldkennzahlen.
 Details unten bei der Etappe.
+**Etappe 7a (Monte-Carlo-Simulator) ist erledigt** — **ohne Migration und ohne jede
+Schreiboperation**: die Simulation rechnet ausschließlich über bereits vorhandene Trades.
+Neu sind `lib/monte-carlo.ts` (rein, seed-fest, 27 Tests) und das Panel auf `/tracking`.
+Details unten bei Etappe 7.
+**Etappe 5 (Bot-Zwilling) ist erledigt** — Migration `drizzle/0015_bot_twin.sql` (neue Tabelle
+`bot_manual_outcome`, **nur** für von Hand nachgetragene Ausgänge) ist angewendet, Trade-Dump
+vorher/nachher byte-identisch (16/16). Die Simulation selbst schreibt nichts: sie rechnet live
+über den Kerzen-Cache. Neu sind `lib/bot-twin.ts` (rein, 49 Tests) und der Vergleichsblock auf
+`/tracking`. Details unten bei der Etappe.
+
+**Damit sind alle nummerierten Etappen bis auf 7b–7d abgearbeitet.**
 
 ---
 
@@ -389,9 +405,10 @@ nicht mit einer Binsenweisheit aus einem Buch.
 
 ---
 
-# Etappe 5 — Der Bot-Zwilling
+# Etappe 5 — Der Bot-Zwilling ✅ ERLEDIGT (25.07.2026)
 
-**Aufwand:** groß (~1–2 Sitzungen) · **Migration:** keine (Berechnung, keine neuen Daten)
+**Aufwand:** groß · **Migration:** `0015_bot_twin.sql` (angewendet) — **nur für die
+von Hand nachgetragenen Ausgänge**; die Simulation selbst speichert nichts
 
 ## Warum
 
@@ -406,8 +423,9 @@ ohne Zögern, ohne vorzeitigen Ausstieg, ohne verschobenen Stop.
 
 ## Was gebaut wird
 
-**Die Simulation.** Für jeden abgeschlossenen Trade werden die Kerzen zwischen `openedAt` und
-`closedAt` geladen (`lib/market-data/`) und Kerze für Kerze durchlaufen:
+**Die Simulation.** Für jeden abgeschlossenen Trade werden die Kerzen ab `openedAt` geladen
+(`lib/market-data/`) und Kerze für Kerze durchlaufen — **über den echten Ausstieg hinaus**, bis
+der Plan selbst endet:
 
 1. Wird der Stop berührt → Trade endet als Verlust, exakt am Stop
 2. Wird das Ziel berührt → Trade endet als Gewinn, exakt am Ziel
@@ -449,27 +467,88 @@ Grenzen verschweigt, ist manipulativ.
 
 | Datei | Änderung |
 |---|---|
-| `lib/bot-twin.ts` | **neu** — `simulateTrade(trade, candles)`, rein und testbar |
-| `lib/bot-twin.test.ts` | **neu** — Stop zuerst, Ziel zuerst, beides in einer Kerze, Short, keine Daten |
-| `app/actions/bot-twin.ts` | **neu** — Kerzen laden, simulieren, Ergebnis cachen |
-| `components/bot-twin-panel.tsx` | **neu** — Doppelkurve + Differenz + Aufschlüsselung |
-| `app/tracking/page.tsx` | Panel einhängen |
-| `lib/market-data/cached.ts` | wiederverwendet |
+| `lib/bot-twin.ts` | **neu** — `simulateTrade`, `simulateMissedTrade`, `manualOutcomeRun`, `compareBotAndTrader`, `classifyDifference`, `preferredInterval` — rein und testbar |
+| `lib/bot-twin.test.ts` | **neu** — 49 Tests: Stop zuerst, Ziel zuerst, beides in einer Kerze, Short, Gebühren, Nenner, jede Abbruchursache, Nachträge, Aggregation, Auflösungswahl |
+| `app/actions/bot-twin.ts` | **neu** — Kerzen laden (anbieter-getrenntes Limit), Auflösung wählen, simulieren; `setBotOutcome` / `clearBotOutcome` |
+| `components/bot-twin-panel.tsx` | **neu** — Aussage, Abrechnung, Aufschlüsselung, Lücken, Nachträge, Grenzen |
+| `components/bot-twin-curve.tsx` | **neu** — Doppelkurve (Bot gestrichelt/neutral, du durchgezogen) |
+| `components/bot-outcome-dialog.tsx` | **neu** — Ausgang von Hand nachtragen, ändern, entfernen |
+| `lib/db/schema.ts` · `drizzle/0015_bot_twin.sql` | **neu** — Tabelle `bot_manual_outcome` |
+| `lib/trade-stats.ts` | `tradeRMultiple` + `tradePlannedRisk` exportiert — beide Seiten teilen denselben Nenner |
+| `app/tracking/page.tsx` | Panel eingehängt |
+| `lib/market-data/cached.ts` · `lib/alerts.ts` | wiederverwendet (Kerzen-Cache, `candleReachesLevel`, `directionForLevel`) |
 
 ## Konkretes Ergebnis
 
-Auf `/tracking` steht eine Zahl, die dir sagt, was dich Emotionen in R gekostet haben — und eine
-Aufschlüsselung, durch welches Verhalten. Nach einem Monat weißt du nicht mehr nur, *dass* du
+Auf `/tracking` steht eine Zahl, die dir sagt, was dich dein Eingreifen in R gekostet hat — und
+eine Aufschlüsselung, durch welches Verhalten. Nach einem Monat weißt du nicht mehr nur, *dass* du
 diszipliniert sein solltest, sondern *wie viel* Undiszipliniertheit kostet.
 
-## Vor dem Bauen zu klären
+## Vor dem Bauen geklärt — so ist es entschieden
 
-- Simulation **live bei jedem Aufruf** (langsam, kostet Datenabrufe) oder **einmal berechnet und
-  gespeichert** (schneller, braucht eine Spalte oder Tabelle)?
-- Was passiert bei Trades ohne verfügbare Kerzen — auslassen oder als „nicht simulierbar"
-  ausweisen?
-- Soll der Bot auch **geplante, aber nie eingegangene** Trades bewerten (Status `kein_handel`)?
-  Das wäre die Antwort auf „was hätte ich verpasst" — psychologisch heikel, aber ehrlich.
+- **Live bei jedem Aufruf**, nicht gespeichert. Gerechnet wird über den bestehenden Kerzen-Cache
+  (`getCachedCandles`: 15 min intraday, 12 h täglich), ein Abruf je Symbol und Auflösung. Damit
+  gibt es kein Ergebnis, das veraltet, während neue Kerzen nachlaufen — und keine
+  Invalidierungsregel, die irgendwann falsch liegt.
+- **Kerzen-Auflösung adaptiv nach Haltedauer:** bis 3 Tage Stundenkerzen, bis ~1 Monat
+  4-Stunden-Kerzen, darüber Tageskerzen. Reicht die Historie nicht bis zum Einstieg zurück, fällt
+  die Rechnung automatisch auf die nächstgröbere Auflösung. `15min` ist bewusst nicht dabei: im
+  Gratis-Tier reichen 500 Kerzen damit nur ~19 Handelstage zurück.
+- **Trades ohne Kursdaten werden ausgewiesen, nicht ausgelassen** — mit Grund
+  („Ticker unbekannt", „Minutenlimit", „Historie reicht nicht zurück"). **Ergänzung des Nutzers:**
+  dort lässt sich von Hand nachtragen, was aus dem Handel geworden wäre. Genau dafür — und nur
+  dafür — gibt es Migration `0015`.
+- **Nicht eingegangene Trades (`kein_handel`) werden bewertet, aber streng getrennt.** Eigener
+  Block mit eigener Summe, außerhalb der Hauptdifferenz: nicht eingegangen zu sein ist eine andere
+  Fehlerart als falsch auszusteigen, und beides zu vermischen macht beide Aussagen unbrauchbar.
+
+## Wie der Nachtrag ehrlich bleibt
+
+Ein Feld, in das man selbst schreibt, was „gewesen wäre", ist eine offene Flanke. Drei Regeln
+halten sie zu:
+
+1. **Kein frei erfundener Betrag.** Nachgetragen wird nur die *Aussage* „ins Ziel gelaufen" oder
+   „in den Stop gelaufen" — der Kurs kommt dann aus dem Plan. Nur „weder noch" braucht einen
+   eigenen Bewertungskurs.
+2. **Messung schlägt Eingabe.** Ein Nachtrag greift ausschließlich dort, wo die Simulation nichts
+   liefert. Kommen später Kerzen, gilt wieder die Rechnung; der Nachtrag tritt zurück.
+3. **Sichtbar bis zum Schluss.** Nachgetragene Ergebnisse stehen in einem eigenen Block, sind
+   jederzeit änderbar und löschbar, und die Ehrlichkeitszeile nennt ihre Zahl.
+
+## Abweichungen von der ursprünglichen Beschreibung
+
+| Beschrieben | Gebaut | Warum |
+|---|---|---|
+| „Migration: keine" | `0015_bot_twin.sql` (neue Tabelle `bot_manual_outcome`) | Der Nachtrag muss überleben. Die Simulation selbst schreibt weiterhin nichts. |
+| Kerzen „zwischen `openedAt` und `closedAt`" | Kerzen ab `openedAt` **über den echten Ausstieg hinaus**, bis Stop oder Ziel berührt sind | Sonst wäre ein vorzeitiger Ausstieg per Konstruktion gleichwertig mit dem Plan — genau die Differenz, um die es geht, wäre nie messbar. |
+| Differenz als „Bot − Du" | `Du − Bot` | Die Zahl beschreibt **deine** Seite: negativ = das Eingreifen hat gekostet. So steht sie auch im Beispiel dieser Roadmap. |
+| eine feste Auflösung | adaptiv nach Haltedauer, mit Rückfallkette | Bei Tageskerzen entscheidet die konservative Stop-Regel fast jeden kurzen Trade; bei Stundenkerzen fehlt die Reichweite für lange. |
+| — | Minutenlimit **je Anbieter** statt global | Ein erschöpftes Twelve-Data-Kontingent hatte im ersten Live-Lauf auch alle Binance-Abrufe blockiert. Krypto und Aktien haben nichts miteinander zu tun. |
+| — | eigener Block „Von Hand nachgetragen" | Ein Nachtrag zählt mit und verschwand dadurch aus der Lückenliste — er war danach weder zu erkennen noch zu korrigieren. |
+| — | Abrechnung mit zwei Nachkommastellen | Mit einer Stelle ergab −1,0 und +2,0 optisch +3,0, während die Differenz +3,1 war. Eine Abrechnung, die sichtbar nicht aufgeht, kostet mehr Vertrauen als eine Stelle mehr. |
+
+## Nachweis
+
+- **49 Tests** in `lib/bot-twin.test.ts`, gesamte Suite **226/226 grün**, `tsc --noEmit` und
+  `next build` sauber.
+- **Trockenlauf gegen echte Kerzen:** 500 BTC-Stundenkerzen von Binance, synthetischer Trade,
+  Ergebnis unabhängig gegengerechnet — identischer Ausgang, identischer Ausstiegskurs.
+- **Sichtprüfung mit echten Daten** über einen wegwerfbaren Sandbox-Nutzer (eigene Trades, eigene
+  Kurse): Aussage, Doppelkurve, Aufschlüsselung, Lücken, Nachtrag (setzen → zählt mit → ändern →
+  entfernen → wieder Lücke) und der getrennte Block für nicht eingegangene Trades. Sandbox
+  anschließend restlos entfernt.
+- **Deine Daten unangetastet:** Trade-Dump vor der Migration und nach dem Aufräumen
+  byte-identisch (16/16 Trades, 0 geänderte Felder).
+
+## Offen
+
+- **Noch keine echten Zahlen.** Die Datenbank enthält aktuell keinen abgeschlossenen Trade; der
+  Block zeigt deshalb seinen Leerzustand. Mit dem ersten Abschluss rechnet er los.
+- **Slippage und Spread** fehlen weiterhin — der Bot ist dadurch leicht zu optimistisch. Eine
+  pauschale Annahme wäre eine erfundene Zahl; ehrlicher ist der Hinweis unter der Auswertung.
+- **Teilverkäufe (Etappe 6) simuliert der Bot nicht.** Er handelt den Plan: ganze Position, ein
+  Ausstieg. Die echte Seite rechnet dagegen event-aware. Das ist gewollt — der Vergleich lautet
+  „Plan gegen Wirklichkeit", nicht „Plan gegen Plan".
 
 ---
 
@@ -605,7 +684,8 @@ Detailseite steht die vollständige Geschichte des Trades mit Zeitstempeln.
 
 # Etappe 7 — Statistik-Ausbau
 
-**Aufwand:** groß, aber gut teilbar · **Migration:** keine
+**Aufwand:** groß, aber gut teilbar · **Migration:** keine ·
+**7a ist erledigt, 7b–7d sind offen**
 
 ## Warum
 
@@ -613,7 +693,7 @@ Alle vier Bausteine rechnen ausschließlich mit Daten, die bereits da sind — s
 neues Feld, keine neue Eingabe, keinen neuen Dienst. Diese Etappe kann in vier unabhängige
 Prompts zerlegt werden.
 
-## 7a · Monte-Carlo-Simulator
+## 7a · Monte-Carlo-Simulator ✅ ERLEDIGT (25.07.2026)
 
 **Das nützlichste Einzelfeature der ganzen Etappe.** Aus deiner eigenen Trefferquote und deiner
 R-Verteilung werden 10.000 Mal die nächsten 50 Trades simuliert. Ergebnis:
@@ -631,6 +711,86 @@ zur Wahrscheinlichkeitsverteilung gehört und kein Beweis dafür ist, dass „da
 ist. Genau dieser Denkfehler zerstört Systeme.
 
 Neu: `lib/monte-carlo.ts` (rein, testbar mit festem Zufalls-Seed) + Panel auf `/tracking`.
+(Die Zahlen im Kasten oben sind ein Beispiel, keine echten Werte.)
+
+### Wie es gebaut wurde — die Entscheidungen
+
+- **Verfahren: Bootstrap statt Verteilungsannahme.** Jeder simulierte Trade ist ein zufällig
+  gezogenes R-Vielfaches aus dem eigenen Bestand (mit Zurücklegen). Damit bleibt die
+  tatsächliche Form der Verteilung inklusive Ausreißern erhalten — eine unterstellte
+  Normalverteilung hätte genau die dicken Ränder wegglättet, um die es hier geht.
+  Die Annahme, die dabei bleibt (Trades unabhängig, gleiche Verteilung), steht in der UI.
+- **Fester Zufalls-Seed.** `Math.random()` wäre hier falsch: dieselbe Seite zeigte bei jedem
+  Aufruf andere Zahlen, und kein Test könnte etwas festnageln. Der PRNG (`mulberry32`) ist
+  ein Dutzend Zeilen und macht das Ergebnis reproduzierbar.
+- **Mindestens 20 abgerechnete Trades** (offene Frage der Etappe, so entschieden). Darunter
+  erscheint **keine einzige Wahrscheinlichkeit**, sondern der Zähler „x von 20" — dieselbe
+  Haltung wie bei der Emotions-Auswertung: eine Verteilung aus fünf Trades sieht aus wie ein
+  Befund und ist Rauschen.
+- **Dieselbe Grundlage wie der Erwartungswert daneben.** `ratedRMultiples` benutzt exakt die
+  Auswahl und die Rechnung von `computeDisciplineStats` (entschieden, P&L bekannt,
+  event-aware). Die Simulation kann dadurch nie auf anderen Zahlen stehen als die Kachel
+  daneben. Echtgeld und Demo zählen gemeinsam — R ist größenunabhängig.
+- **Prozent nur mit Deckung.** Ein Rückgang in R wird nur dann in Kontoprozent übersetzt,
+  wenn sich ein typisches Risiko je Trade bestimmen lässt (`medianRiskFraction`: Median über
+  **Echtgeld**-Trades mit echter Stopdistanz). Sonst zeigt die Kachel den Rückgang in R statt
+  einer geschätzten Prozentzahl. Bewusst der Median, nicht der Durchschnitt — ein einzelner
+  überdimensionierter Trade darf den Maßstab nicht verschieben.
+- **Douglas-Filter bestanden:** Der Block sagt nichts über den nächsten Trade. Er ordnet die
+  eigene Verlustserie in die eigene Verteilung ein — genau die Denkbewegung, die Douglas
+  verlangt. Deshalb steht die Serien-Aussage groß oben und die Endstand-Bandbreite darunter,
+  nicht umgekehrt.
+
+### Dateien
+
+| Datei | Änderung |
+|---|---|
+| `lib/monte-carlo.ts` | **neu** — Simulation, PRNG, Perzentile, Serien-Statistik |
+| `lib/monte-carlo.test.ts` | **neu** — 27 Tests |
+| `lib/trade-stats.ts` | `ratedRMultiples`, `medianRiskFraction` (beide event-aware) |
+| `lib/trade-stats.test.ts` | 11 Tests für die beiden neuen Funktionen |
+| `app/actions/trades.ts` | `getMonteCarloStats()` — lädt Zeilen, rechnet nichts selbst |
+| `components/monte-carlo-panel.tsx` | **neu** — Panel inkl. Leerzustand und Ehrlichkeitsgrenzen |
+| `app/tracking/page.tsx` | Panel unter den Risiko-Kennzahlen eingehängt |
+
+### Nachweis
+
+- **Keine Migration, kein Schreibzugriff.** Die Etappe fügt kein Feld und keine Tabelle hinzu
+  und führt keine einzige schreibende Abfrage aus — der Trade-Bestand kann sich nicht geändert
+  haben. Deshalb wurde bewusst kein Baseline-Dump-Vergleich gefahren.
+- **Die Verlustserien-Wahrscheinlichkeit ist gegen eine geschlossene Lösung geprüft.** Der Test
+  rechnet dieselbe Wahrscheinlichkeit exakt per Markov-Kette (Zustand = Länge der laufenden
+  Verluststrecke) und vergleicht sie mit der Simulation — für den fairen Münzwurf *und* für
+  eine schiefe Verteilung (25 % Treffer à +3 R). Abweichung unter 2 Prozentpunkten bei 10.000
+  Verläufen, wie es der Standardfehler erlaubt. Die Zahlen im Panel sind damit nicht nur
+  „plausibel", sondern nachgerechnet.
+- **Randfälle abgedeckt:** leere Eingabe, unter der Mindestzahl, nicht-endliche Werte, nur
+  Gewinner, nur Verlierer, Serie jenseits des Horizonts, fehlender Risikoanteil.
+  Determinismus (gleicher Seed → identisches Ergebnis) ist ein eigener Test.
+- **Prüfläufe grün:** `tsc --noEmit`, `vitest run` (177 Tests, 7 Dateien), `next build`.
+- **Visuell geprüft** über eine temporäre Vorschau-Route (danach gelöscht): gefüllter Zustand,
+  Leerzustand, seltene Serie (8,7 %), fehlender Risikoanteil — und derselbe Weg einmal mit den
+  **echten** Zeilen aus der Datenbank (nur lesend), der korrekt „0 von 20" zeigt.
+
+### Abweichungen von der ursprünglichen Beschreibung
+
+| Ursprünglich | Jetzt | Warum |
+|---|---|---|
+| „Aus deiner Trefferquote und deiner R-Verteilung" | ausschließlich aus der R-Verteilung (Bootstrap) | Trefferquote und R-Verteilung getrennt zu ziehen hieße, die Verteilung zweimal zu modellieren; die Trefferquote steckt bereits in ihr. Sie wird als Kennzahl der Stichprobe trotzdem angezeigt. |
+| „Wahrscheinlichkeit eines Drawdowns über 20 %" | nur bei bestimmbarem Risikoanteil, sonst Rückgang in R | Ohne Echtgeld-Trades mit Stopdistanz gäbe es keinen ehrlichen Umrechnungsschlüssel. |
+| — | Verlustserien-Tabelle lässt praktisch sichere Längen weg | „1 in Folge: 100 %" ist keine Information und verdrängte genau die Zeilen, wegen derer man hinschaut. Die selbst erlebte Serie steht immer drin. |
+| — | Leerzustand zählt mit („0 von 20", es fehlen 20) | Ein leerer Block ohne Zähler wirkt wie ein Fehler; so ist sichtbar, wann er sich füllt. |
+
+### Offen
+
+- **Der Block ist bis auf Weiteres leer:** der Bestand hat 0 abgeschlossene Trades. Die
+  Simulation ist damit gebaut und geprüft, aber am echten Journal noch nie sichtbar gewesen.
+  Ab dem 20. abgerechneten Trade schaltet sie sich von selbst frei.
+- **Autokorrelation wird ignoriert.** Wer nach einem Verlust anders handelt (Rache-Trade,
+  Zögern), erzeugt abhängige Trades — der Bootstrap unterstellt Unabhängigkeit. Sichtbar wäre
+  das erst mit deutlich mehr Daten; die Emotions-Auswertung (Etappe 4) greift dieselbe Frage
+  von der anderen Seite an.
+- **Zinseszins ist nicht abgebildet** (gleichbleibendes Risiko je Trade). Steht so in der UI.
 
 ## 7b · Setup-Vergleich
 
@@ -680,24 +840,30 @@ schlecht?
 
 - Ab wie vielen Trades wird eine Auswertung überhaupt angezeigt? (Vorschlag: 20 für
   Monte-Carlo, 10 je Setup — darunter „noch zu wenige Daten".)
+  → **Für 7a entschieden: 20** (`MIN_TRADES` in `lib/monte-carlo.ts`). Für 7b/7c/7d weiterhin
+  offen; 10 je Setup ist der Vorschlag.
 - Sollen alle vier Teile zusammen kommen oder einzeln als eigene Prompts?
+  → **Einzeln**, wie es die Reihenfolge-Empfehlung unten vorsieht: 7a ist als eigener Schritt
+  gebaut und abgeschlossen, 7b–7d bleiben je ein eigener Arbeitsschritt.
 
 ---
 
 # Reihenfolge-Empfehlung
 
 ```
-Etappe 4 (Emotionen)  ─┐  kleiner Aufwand, sofort Datensammlung startet
-                       │  → je früher, desto mehr Daten für später
-Etappe 3 (Live+Alerts) ─┤  Voraussetzung für Etappe 6
+Etappe 4 (Emotionen)  ─┐  ✅ erledigt — sammelt ab jetzt bei jedem Trade mit
                        │
-Etappe 2 (Freunde)     ─┤  unabhängig, jederzeit möglich
+Etappe 3 (Live+Alerts) ─┤  ✅ erledigt — Voraussetzung für Etappe 6
                        │
-Etappe 7a (Monte-Carlo)─┤  bester Erkenntnisgewinn ohne neue Eingaben
+Etappe 2 (Freunde)     ─┤  ✅ erledigt
                        │
-Etappe 5 (Bot-Zwilling)─┤  das stärkste Feature, aber der größte Brocken
+Etappe 7a (Monte-Carlo)─┤  ✅ erledigt — bester Erkenntnisgewinn ohne neue Eingaben
                        │
-Etappe 6 (Teilverkäufe)─┘  nach Etappe 3
+Etappe 5 (Bot-Zwilling)─┤  ✅ erledigt — das stärkste Feature und der größte Brocken
+                       │
+Etappe 6 (Teilverkäufe)─┘  ✅ erledigt — nach Etappe 3
+
+offen: 7b Setup-Vergleich · 7c MAE/MFE · 7d Zeit-Heatmap · Design E (Formulare/Chart)
 ```
 
 **Warum Etappe 4 zuerst:** Emotionsdaten sind nur rückwirkend nutzlos. Jeder Trade, der ohne
@@ -716,3 +882,53 @@ Trade seinen Zustand mit.)
   Etappe 1 verursacht.
 - **Währungswechsel ungetestet gegen echte Daten** — die Umrechnung ist gebaut und typgeprüft,
   aber noch nie ausgeführt worden. Vor dem ersten echten Einsatz mit einem Testkonto prüfen.
+
+---
+
+# Design A–D — Visuelle Überarbeitung ✅ ERLEDIGT (25.07.2026)
+
+Eigene Zählung mit **Buchstaben**, damit sie sich nicht mit den Feature-Etappen oben beißt.
+Vorlauf: `drill`-Briefing zu Gestaltung und Bewegung; Vorbild war ein Cockpit-Entwurf
+(Lovable) mit Radial-Ring, Statuszeichen und Hintergrund-Atmosphäre.
+
+## Die Leitplanken, die dabei entschieden wurden
+
+- **Navy → Indigo.** Die alte „Privatbank-Nacht" hatte zu wenig Abstand zwischen Seite
+  (`#0b1522`) und Karte (`#162534`) — die Oberfläche wirkte flach. Neu: „Indigo-Nacht"
+  mit klar getrennten Ebenen. Werte stehen in `CLAUDE.md`.
+- **Glow ist die Ausnahme.** Erlaubt nur am Disziplin-Ring (`.svg-glow`) und an
+  Statuspunkten (`.dot-glow`). Nicht auf Geldbeträgen — das rückt Ergebnis vor Prozess.
+- **Bewegung braucht einen Grund.** Aufbau beim Mount und bei Zustandswechseln.
+  Dauerbewegung nur, wo echter Zustand dahintersteht: ein offener Alert pulst, ein
+  ausgelöster nicht. **Nie an Kursdaten** — die sind bis zu 5 Minuten alt, ein
+  „LIVE"-Signal wäre eine Falschaussage.
+- **Kein Index-Ticker.** Fällt unter den Douglas-Feature-Filter und hat keine Datenquelle.
+- **Handgebaut in SVG/CSS**, kein `@remotion/player` — das Bundle bleibt unverändert.
+
+## Was gebaut wurde
+
+| Block | Inhalt | Kern-Dateien |
+|---|---|---|
+| **A** | Analyse-Flächen auf die gemeinsame Sprache; `ChartHeader`/`ChartEmpty` statt Einzellösungen | `stat-cards.tsx`, `assessment-list.tsx`, `stock-ranking.tsx`, 6 Chart-Dateien |
+| **B** | Trade-Karte und Trades-Liste, gestaffelter Aufbau | `trade-card.tsx`, `app/trades/page.tsx` |
+| **C** | Restrouten angeglichen, `glass-card` → `panel sheen` | Watchlist, Stock-Detail, Freunde, Tracking, Trade-Detail |
+| **D** | Trade-Replay: Plan wird gezeichnet, echter Kursverlauf läuft hinein | `trade-replay.tsx` (neu) |
+
+Davor (dieselbe Sitzung): Disziplin-Ring mit neutralem Ruhezustand, animierte Leerzustände,
+Alert-Puls, Sheen, App-Hintergrund mit leuchtenden Kerzen, Palette, Video-Re-Render.
+
+## Bewusst NICHT dabei
+
+- **Formulare** (`trade-form.tsx`, `settings-form.tsx`, Pre-Trade-Fragen, Mood-Check) und
+  **`components/chart/*`** — sie erben Palette und Panel-Optik, wurden aber nicht angefasst.
+  Sie tragen Douglas-Guards, die nicht verrutschen dürfen.
+- Keine Änderung an Server Actions, Schema, Migrationen oder Geschäftslogik.
+
+## Offen
+
+- **Trade-Replay zeigt meist den Fallback.** Das Gratis-Limit von Twelve Data
+  (~8 Anfragen/Minute) wird durch Watchlist und `AlertWatcher` schnell ausgeschöpft.
+  Sobald Kerzen kommen, läuft der Kurs in den Plan hinein — der Weg ist gebaut und getestet.
+- **Drei Trades ohne Watchlist-Verknüpfung:** `ADBE`, `TEAM`, `FI` existieren nicht als
+  Instrument, deshalb ist dort `stockId` leer.
+- Design-Etappe **E** wäre: Formulare und Chart-Cockpit angleichen.

@@ -8,6 +8,7 @@ import { getSettings } from '@/app/actions/settings'
 import { CockpitHeader } from '@/components/cockpit-header'
 import { TradeCard } from '@/components/trade-card'
 import { TradeTimeline } from '@/components/trade-timeline'
+import { TradeReplay } from '@/components/trade-replay'
 import { ArrowLeft, LineChart, Lock } from 'lucide-react'
 
 export default async function TradeDetailPage({
@@ -31,7 +32,7 @@ export default async function TradeDetailPage({
   const violations: string[] = t.ruleViolations ? JSON.parse(t.ruleViolations) : []
 
   return (
-    <div className="min-h-svh bg-background">
+    <div className="min-h-svh">
       <CockpitHeader userLabel={session.user.name || session.user.email} />
       <main className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
         <Link
@@ -44,6 +45,8 @@ export default async function TradeDetailPage({
         <div className="grid grid-cols-1 gap-4">
           <TradeCard t={t} currency={settings.currency} events={events} />
 
+          <TradeReplay t={t} />
+
           <TradeTimeline trade={t} events={events} />
 
           {chartUrl && (
@@ -51,14 +54,14 @@ export default async function TradeDetailPage({
               href={chartUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="glass-card flex items-center gap-2 p-3 font-mono text-[11px] text-primary hover:underline"
+              className="panel sheen flex items-center gap-2 p-3 font-mono text-[11px] text-primary hover:underline"
             >
               <LineChart className="size-4" /> Chart dieses Instruments öffnen
             </a>
           )}
 
           {locked && (
-            <div className="glass-card flex items-center gap-2 p-3">
+            <div className="panel sheen flex items-center gap-2 p-3">
               <Lock className="size-4 text-primary" />
               <p className="font-mono text-[11px] text-muted-foreground">
                 Plan-Lock aktiv: Einstieg, Stop und Invalidation sind festgeschrieben. Der Stop
@@ -68,7 +71,7 @@ export default async function TradeDetailPage({
           )}
 
           {violations.length > 0 && (
-            <div className="glass-card border-destructive/30 p-4">
+            <div className="panel sheen border-destructive/30 p-4">
               <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-destructive">
                 Regelbrüche
               </p>
@@ -112,7 +115,7 @@ export default async function TradeDetailPage({
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="glass-card p-4">
+    <div className="panel sheen p-4">
       <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-primary/70">
         {title}
       </p>

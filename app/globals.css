@@ -97,50 +97,119 @@
 }
 
 /* ---------------------------------------------------------------------------
-   Institutionelles Terminal — „Privatbank-Nacht": tiefes Stahl-Navy,
-   ein kräftiger Stahlblau-Akzent, Geldfarben in satter, stählerner Note.
-   Navy #0B1522 · Panel #162534 · Creme #F1ECE0 · Stahlblau #45A8EC ·
-   Gewinn (Geldgrün) #4FBE8C · Verlust (Burgund) #D8505F · Warnung (Gold) #D4AC4E.
-   Strahlende Geldfarben auf tiefer Basis — kein Glow, kein Neon.
+   Institutionelles Terminal — „Indigo-Nacht": tiefe, kühle Indigo-Basis mit
+   klar getrennten Ebenen, ein kräftiger Indigo-Violett-Akzent, Geldfarben
+   satt und strahlend.
+   Seite #0F1124 · Panel #191C3A · Hell #ECEBFA · Akzent #7B6BF6 ·
+   Gewinn #4FD6A0 · Verlust #F2607A · Warnung #E0B455.
+   Kein Neon, kein Sci-Fi — die Tiefe kommt aus den Ebenen, nicht aus Leuchten.
 --------------------------------------------------------------------------- */
 .dark {
   color-scheme: dark;
-  --background: #0b1522;
-  --foreground: #f1ece0;
-  --card: #162534;
-  --card-foreground: #f1ece0;
-  --popover: #15212e;
-  --popover-foreground: #f1ece0;
-  --primary: #45a8ec;
-  --primary-foreground: #07111e;
-  --secondary: #1d2c3b;
-  --secondary-foreground: #f1ece0;
-  --muted: #121d29;
-  --muted-foreground: #9aacbd;
-  --accent: #20303f;
-  --accent-foreground: #f1ece0;
-  --destructive: #d8505f;
-  --border: #2c4053;
-  --input: #3a5066;
-  --ring: rgba(69, 168, 236, 0.45);
-  --positive: #4fbe8c;
-  --positive-foreground: #06140d;
-  --negative: #d8505f;
-  --negative-foreground: #1c0e10;
-  --warning: #d4ac4e;
-  --chart-1: #45a8ec;
-  --chart-2: #4fbe8c;
-  --chart-3: #d8505f;
-  --chart-4: #d4ac4e;
-  --chart-5: #9aacbd;
-  --sidebar: #101b27;
-  --sidebar-foreground: #f1ece0;
-  --sidebar-primary: #45a8ec;
-  --sidebar-primary-foreground: #07111e;
-  --sidebar-accent: #20303f;
-  --sidebar-accent-foreground: #f1ece0;
-  --sidebar-border: #2c4053;
-  --sidebar-ring: rgba(69, 168, 236, 0.45);
+  /* Die Stufen sind bewusst weit auseinandergezogen. Vorher lagen Seite
+     (#0b1522) und Karte (#162534) so eng beieinander, dass die Oberfläche
+     flach wirkte — jede Tiefenwirkung verpuffte. */
+  --background: #0f1124;
+  --foreground: #ecebfa;
+  --card: #191c3a;
+  --card-foreground: #ecebfa;
+  --popover: #171a35;
+  --popover-foreground: #ecebfa;
+  --primary: #7b6bf6;
+  --primary-foreground: #0a0b16;
+  --secondary: #212450;
+  --secondary-foreground: #ecebfa;
+  --muted: #161831;
+  --muted-foreground: #a3a6cd;
+  --accent: #262a58;
+  --accent-foreground: #ecebfa;
+  --destructive: #f2607a;
+  --border: #2e3369;
+  --input: #3a4185;
+  --ring: rgba(123, 107, 246, 0.45);
+  --positive: #4fd6a0;
+  --positive-foreground: #04150e;
+  --negative: #f2607a;
+  --negative-foreground: #1c0e14;
+  --warning: #e0b455;
+  --chart-1: #7b6bf6;
+  --chart-2: #4fd6a0;
+  --chart-3: #f2607a;
+  --chart-4: #e0b455;
+  --chart-5: #a3a6cd;
+  --sidebar: #14162e;
+  --sidebar-foreground: #ecebfa;
+  --sidebar-primary: #7b6bf6;
+  --sidebar-primary-foreground: #0a0b16;
+  --sidebar-accent: #262a58;
+  --sidebar-accent-foreground: #ecebfa;
+  --sidebar-border: #2e3369;
+  --sidebar-ring: rgba(123, 107, 246, 0.45);
+}
+
+body {
+  background-color: var(--background);
+}
+
+/* ---------------------------------------------------------------------------
+   App-Hintergrund (`components/app-backdrop.tsx`): leuchtende Kerzen auf
+   tiefem Verlauf, fest am Viewport, hinter allen Routen.
+
+   Lesbarkeit schlägt Effekt: Der Scrim wird zur Mitte hin dicht, damit die
+   Inhaltsspalte auf ruhigem Grund steht. Die Kerzen leben in den Rändern.
+--------------------------------------------------------------------------- */
+.app-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.app-backdrop-art {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.app-backdrop .candle-lit {
+  color: #ffffff;
+  filter: drop-shadow(0 0 10px color-mix(in oklab, var(--primary) 90%, transparent))
+    drop-shadow(0 0 30px color-mix(in oklab, var(--primary) 65%, transparent))
+    drop-shadow(0 0 70px color-mix(in oklab, var(--primary) 40%, transparent));
+}
+.app-backdrop .candle-dim {
+  color: color-mix(in oklab, var(--border) 60%, var(--foreground));
+  opacity: 0.5;
+}
+.app-backdrop-scrim {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(
+      58% 66% at 50% 45%,
+      color-mix(in srgb, var(--background) 90%, transparent) 0%,
+      color-mix(in srgb, var(--background) 58%, transparent) 62%,
+      transparent 100%
+    ),
+    linear-gradient(
+      color-mix(in srgb, var(--background) 8%, transparent),
+      color-mix(in srgb, var(--background) 8%, transparent)
+    );
+}
+
+/* Ohne Randzonen gäbe es keinen Platz für die Kerzen — dort nur der Verlauf. */
+@media (max-width: 1180px) {
+  .app-backdrop .candle-group {
+    display: none;
+  }
+}
+
+/* Alle Seiteninhalte liegen über dem Hintergrund. */
+body > * {
+  position: relative;
+  z-index: 1;
+}
+body > .app-backdrop {
+  z-index: 0;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -180,6 +249,19 @@
   }
 }
 
+/* ---------------------------------------------------------------------------
+   Bewegung — knapp gehalten und überall dieselbe Kurve.
+   Regel: Bewegung nur beim Mount und bei Zustandswechseln. Keine Dauerschleifen,
+   keine Bewegung auf großen Flächen beim Hover. Jede Animation liegt hinter
+   `prefers-reduced-motion: no-preference`.
+--------------------------------------------------------------------------- */
+:root {
+  --motion-fast: 120ms;
+  --motion-base: 260ms;
+  --motion-slow: 700ms;
+  --ease-out: cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -206,11 +288,32 @@
    Disciplined Cockpit utilities
 --------------------------------------------------------------------------- */
 @layer components {
-  /* Flaches, mattes Panel mit Haarlinie — kein Glas, kein Glow. */
+  /* -------------------------------------------------------------------------
+     Drei Panel-Ebenen statt einer Fläche. Tiefe entsteht über Schatten und
+     Kantenlicht — nie über Glow. `.glass-card` ist der historische Name der
+     Standardebene und bleibt app-weit gültig.
+  ------------------------------------------------------------------------- */
+  .panel,
   .glass-card {
     background: var(--card);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
+  }
+  /* Ebene 2 — trägt das Wichtigste einer Seite (Hero, Formularkarte). */
+  .panel-raised {
+    background: color-mix(in oklab, var(--card) 94%, #ecebfa 7%);
+    border: 1px solid color-mix(in oklab, var(--border) 84%, #ecebfa 18%);
+    border-radius: var(--radius-lg);
+    box-shadow:
+      inset 0 1px 0 rgba(241, 236, 224, 0.07),
+      0 1px 2px rgba(0, 0, 0, 0.45),
+      0 12px 32px -16px rgba(0, 0, 0, 0.7);
+  }
+  /* Ebene 3 — verschachtelte Zeilen, liest sich vertieft statt aufgesetzt. */
+  .panel-sunken {
+    background: color-mix(in oklab, var(--background) 74%, #000 26%);
+    border: 1px solid color-mix(in oklab, var(--border) 55%, transparent);
+    border-radius: var(--radius-md);
   }
   .input-ocean {
     background: color-mix(in oklab, var(--background) 55%, var(--card));
@@ -248,5 +351,485 @@
   }
   .line-glow {
     filter: none;
+  }
+
+  /* -------------------------------------------------------------------------
+     Typografische Rollen. Vorher wurden 10px/11px/xs/sm für dieselbe Sache
+     gemischt — das ist der Hauptgrund, warum alles gleich wichtig wirkte.
+     Drei Rollen, sonst nichts: Eyebrow beschriftet, Metric trägt die Zahl,
+     Note erklärt.
+  ------------------------------------------------------------------------- */
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 0.625rem;
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+  }
+  .note {
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    line-height: 1.45;
+    color: var(--muted-foreground);
+  }
+  .metric {
+    font-family: var(--font-heading);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1;
+    letter-spacing: -0.02em;
+    line-height: 1;
+  }
+  .metric-hero {
+    font-size: clamp(3.5rem, 8vw, 4.75rem);
+  }
+  .metric-lg {
+    font-size: 1.75rem;
+  }
+  .metric-sm {
+    font-size: 1.125rem;
+  }
+
+  /* Sektionsüberschrift mit auslaufender Haarlinie — gliedert die Seite,
+     ohne eine zweite Überschriftenebene aufzumachen. */
+  .section-rule {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  .section-rule::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(to right, var(--border), transparent);
+  }
+
+  /* Navigation: die Pille bleibt, dazu eine Unterkante, die beim Wechsel
+     aufzieht statt zu springen. */
+  .nav-item {
+    position: relative;
+  }
+  .nav-item::after {
+    content: '';
+    position: absolute;
+    left: 0.6rem;
+    right: 0.6rem;
+    bottom: -1px;
+    height: 2px;
+    border-radius: 1px;
+    background: var(--primary);
+    transform: scaleX(0);
+  }
+  .nav-item[data-active='true']::after {
+    transform: scaleX(1);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Anmeldeseite: die Remotion-Motion-Graphik als Hintergrund.
+   Das Video liegt als `public/auth-bg.mp4`, das Standbild als
+   `public/auth-bg-poster.webp` — beide aus derselben Komposition gerendert
+   (`remotion/zone-run/`). Der Wechsel auf das Standbild läuft rein über CSS,
+   damit die Seite ohne JavaScript und ohne Hydration korrekt ist.
+--------------------------------------------------------------------------- */
+.auth-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background: var(--background);
+}
+.auth-backdrop-video,
+.auth-backdrop-still {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.auth-backdrop-still {
+  display: none;
+}
+/* Grundabdunklung plus dichter Kern genau dort, wo die Formularkarte liegt.
+   Ergebnis: die Kerzen bleiben ringsum sichtbar, das Formular steht auf
+   ruhigem Navy.
+
+   Die Vignette hält sich bewusst eng an die Karte (`max-w-sm`). Weiter
+   aufgezogen deckt sie genau das Band ab, in dem die Kerzen laufen, und die
+   Motion-Graphik verschwindet — bei 93 % Kern über 60 % Grundton überleben nur
+   ~3 % des Videos.
+
+   Auch der Grundton muss zurückhaltend bleiben: Die Komposition ist selbst schon
+   dunkles Navy mit ruhigen Kerzen, sie verträgt keine kräftige zweite Abdunklung.
+   Bei 60 % war sie praktisch nicht mehr zu sehen. 30 % lassen die Kerzen deutlich
+   stehen und bleiben trotzdem weit von „Hintergrundbild mit Text drauf" entfernt.
+   Das Formular trägt seinen Kontrast ohnehin selbst: `.panel-raised` ist deckend,
+   hängt also nicht am Scrim. */
+.auth-backdrop-scrim {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(
+      ellipse 30% 40% at 50% 46%,
+      color-mix(in srgb, var(--background) 82%, transparent) 0%,
+      color-mix(in srgb, var(--background) 45%, transparent) 55%,
+      transparent 100%
+    ),
+    linear-gradient(
+      color-mix(in srgb, var(--background) 30%, transparent),
+      color-mix(in srgb, var(--background) 30%, transparent)
+    );
+}
+.auth-shell {
+  position: relative;
+  z-index: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-backdrop-video {
+    display: none;
+  }
+  .auth-backdrop-still {
+    display: block;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Mount-Bewegung. Nur beim Erscheinen, nie als Schleife.
+--------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes rise-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes bar-fill {
+    from {
+      transform: scaleX(0);
+    }
+    to {
+      transform: scaleX(1);
+    }
+  }
+
+  .rise-in {
+    animation: rise-in var(--motion-base) var(--ease-out) both;
+  }
+  .rise-in-1 {
+    animation-delay: 40ms;
+  }
+  .rise-in-2 {
+    animation-delay: 80ms;
+  }
+  .rise-in-3 {
+    animation-delay: 120ms;
+  }
+  .rise-in-4 {
+    animation-delay: 160ms;
+  }
+  .bar-fill {
+    transform-origin: left center;
+    animation: bar-fill var(--motion-slow) var(--ease-out) both;
+  }
+  .nav-item::after {
+    transition: transform var(--motion-base) var(--ease-out);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Disziplin-Ring, Statuspunkte, Sheen und Hero-Atmosphäre.
+
+   Glow ist in diesem Projekt die Ausnahme, nicht die Regel: erlaubt sind
+   ausschliesslich der Disziplin-Ring und Statuspunkte (siehe CLAUDE.md).
+   Alles hier ist so gebaut, dass der Endzustand ohne Bewegung korrekt ist —
+   die Animationen legen sich nur darüber.
+--------------------------------------------------------------------------- */
+
+/* Ring: `--dash` ist der Umfang, `--dash-to` der Rest zum Sollwert. Ohne
+   Bewegung steht der Ring sofort richtig. */
+.ring-value {
+  stroke-dasharray: var(--dash);
+  stroke-dashoffset: var(--dash-to);
+}
+/* Glow für SVG-Formen. `box-shadow` greift dort nicht, deshalb drop-shadow.
+   Nimmt currentColor, folgt also automatisch der Score-/Serienfarbe. */
+.svg-glow {
+  filter: drop-shadow(0 0 4px color-mix(in oklab, currentColor 40%, transparent))
+    drop-shadow(0 0 11px color-mix(in oklab, currentColor 18%, transparent));
+}
+
+/* Statuspunkt. Ohne Bewegung bleibt er sichtbar — er hört nur auf zu pulsen. */
+.dot {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 9999px;
+  background: currentColor;
+}
+.dot-glow {
+  box-shadow: 0 0 6px color-mix(in oklab, currentColor 55%, transparent);
+}
+
+/* Sheen: ein einzelner Wisch beim Hover, keine Schleife. */
+.sheen {
+  position: relative;
+  overflow: hidden;
+}
+.sheen::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(
+    105deg,
+    transparent 42%,
+    color-mix(in oklab, #ecebfa 9%, transparent) 50%,
+    transparent 58%
+  );
+  transform: translateX(-110%);
+}
+
+/* Trade-Replay: erst der Plan, dann der Kurs. Ohne Bewegung steht beides. */
+.replay-price {
+  stroke-dasharray: var(--dash);
+  stroke-dashoffset: 0;
+}
+
+/* Leerzustand der Diagramme: ohne Bewegung steht das Bild fertig da. */
+.empty-path {
+  stroke-dasharray: var(--dash);
+  stroke-dashoffset: 0;
+}
+
+/* Senkrechte Linie, die sich von oben nach unten aufbaut (Grundüberzeugungen). */
+.line-draw-y {
+  transform-origin: top center;
+}
+
+/* Hero-Atmosphäre: zwei sehr langsame Verläufe plus eine wandernde
+   Rasterlinie. Kontrastarm — sie darf nie mit Daten konkurrieren. */
+.hero-atmo {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  border-radius: inherit;
+}
+.hero-atmo::before,
+.hero-atmo::after {
+  content: '';
+  position: absolute;
+  width: 62%;
+  height: 160%;
+  border-radius: 9999px;
+  filter: blur(58px);
+}
+.hero-atmo::before {
+  left: -10%;
+  top: -62%;
+  background: color-mix(in oklab, var(--primary) 44%, transparent);
+}
+.hero-atmo::after {
+  right: -12%;
+  bottom: -72%;
+  /* Zweiter Ton aus derselben Familie statt Grün — Geldfarben bleiben den
+     Daten vorbehalten, der Hintergrund darf sie nicht vorwegnehmen. */
+  background: color-mix(in oklab, #4a7bf7 34%, transparent);
+}
+.hero-scan {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklab, var(--primary) 55%, transparent),
+    transparent
+  );
+  opacity: 0;
+}
+
+/* Ruhemarke des Disziplin-Rings, solange kein Score gemessen ist. */
+.ring-idle {
+  transform-box: view-box;
+  transform-origin: 60px 60px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes ring-draw {
+    from {
+      stroke-dashoffset: var(--dash);
+    }
+    to {
+      stroke-dashoffset: var(--dash-to);
+    }
+  }
+  @keyframes dot-pulse {
+    0% {
+      box-shadow: 0 0 0 0 color-mix(in oklab, currentColor 50%, transparent);
+    }
+    70% {
+      box-shadow: 0 0 0 7px transparent;
+    }
+    100% {
+      box-shadow: 0 0 0 0 transparent;
+    }
+  }
+  @keyframes drift-a {
+    0%,
+    100% {
+      transform: translate3d(0, 0, 0) scale(1);
+    }
+    50% {
+      transform: translate3d(26%, 9%, 0) scale(1.18);
+    }
+  }
+  @keyframes drift-b {
+    0%,
+    100% {
+      transform: translate3d(0, 0, 0) scale(1.12);
+    }
+    50% {
+      transform: translate3d(-22%, -10%, 0) scale(1);
+    }
+  }
+  @keyframes ring-idle {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @keyframes grid-scan {
+    0% {
+      transform: translateY(0);
+      opacity: 0;
+    }
+    12%,
+    76% {
+      opacity: 1;
+    }
+    100% {
+      transform: translateY(var(--scan-distance, 340px));
+      opacity: 0;
+    }
+  }
+  @keyframes sheen-sweep {
+    from {
+      transform: translateX(-110%);
+      opacity: 1;
+    }
+    to {
+      transform: translateX(110%);
+      opacity: 1;
+    }
+  }
+  @keyframes line-draw-y {
+    from {
+      transform: scaleY(0);
+    }
+    to {
+      transform: scaleY(1);
+    }
+  }
+  /* Leerzustand: der Kurs läuft in die Zielzone, hält kurz, blendet aus.
+     Dieselbe Erzählung wie auf der Anmeldeseite, nur als stille Schleife. */
+  @keyframes empty-draw {
+    0% {
+      stroke-dashoffset: var(--dash);
+      opacity: 0;
+    }
+    10% {
+      opacity: 1;
+    }
+    55%,
+    86% {
+      stroke-dashoffset: 0;
+      opacity: 1;
+    }
+    100% {
+      stroke-dashoffset: 0;
+      opacity: 0;
+    }
+  }
+  @keyframes empty-zone {
+    0%,
+    26% {
+      opacity: 0;
+    }
+    50%,
+    86% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0;
+    }
+  }
+
+  .ring-value {
+    animation: ring-draw var(--motion-slow) var(--ease-out) both;
+  }
+  /* Puls nur, wo echter Zustand dahintersteht (offener Alert). */
+  .dot-pulse {
+    animation: dot-pulse 2.4s var(--ease-out) infinite;
+  }
+  .sheen:hover::after {
+    animation: sheen-sweep 600ms var(--ease-out);
+  }
+  .line-draw-y {
+    animation: line-draw-y var(--motion-slow) var(--ease-out) both;
+  }
+  /* Der Plan baut sich zuerst auf, der Kurs läuft erst danach hinein —
+     die Dramaturgie der Anmeldeseite, hier mit echten Daten. */
+  @keyframes replay-plan-in {
+    from {
+      opacity: 0;
+      transform: translateX(-8px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes replay-price-in {
+    from {
+      stroke-dashoffset: var(--dash);
+    }
+    to {
+      stroke-dashoffset: 0;
+    }
+  }
+  .replay-plan {
+    animation: replay-plan-in var(--motion-base) var(--ease-out) both;
+  }
+  .replay-price {
+    animation: replay-price-in 1400ms var(--ease-out) 380ms both;
+  }
+  .empty-path {
+    animation: empty-draw 8s var(--ease-out) infinite;
+  }
+  .empty-zone {
+    animation: empty-zone 8s var(--ease-out) infinite;
+  }
+  .hero-atmo::before {
+    animation: drift-a 18s ease-in-out infinite;
+  }
+  .hero-atmo::after {
+    animation: drift-b 23s ease-in-out infinite;
+  }
+  .hero-scan {
+    animation: grid-scan 7s linear infinite;
+  }
+  .ring-idle {
+    animation: ring-idle 7s linear infinite;
   }
 }

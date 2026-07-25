@@ -87,7 +87,7 @@ export function TradeTimeline({ trade, events }: { trade: TradeRow; events: Trad
   if (items.length === 0) return null
 
   return (
-    <div className="glass-card p-4">
+    <div className="panel sheen p-4">
       <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-primary/70">
         Chronik
       </p>

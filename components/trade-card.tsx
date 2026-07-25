@@ -83,10 +83,13 @@ export function TradeCard({
   t,
   currency = 'EUR',
   events,
+  delayMs = 0,
 }: {
   t: TradeRow
   currency?: string
   events?: TradeEventRow[]
+  /** Versatz für den gestaffelten Aufbau in Listen. */
+  delayMs?: number
 }) {
   const router = useRouter()
   const [busy, setBusy] = useState(false)
@@ -129,7 +132,10 @@ export function TradeCard({
   const isLong = t.direction === 'long'
 
   return (
-    <div className="glass-card p-4">
+    <div
+      className="panel sheen rise-in flex h-full flex-col p-4"
+      style={delayMs ? { animationDelay: `${delayMs}ms` } : undefined}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-2">
           <span
@@ -451,7 +457,7 @@ function Stat({
   tone?: 'pos' | 'neg'
 }) {
   return (
-    <div className="rounded-md border border-border bg-background/40 px-2 py-1.5">
+    <div className="panel-sunken px-2 py-1.5">
       <p className="text-[9px] uppercase tracking-widest text-muted-foreground">{label}</p>
       <p
         className={cn(

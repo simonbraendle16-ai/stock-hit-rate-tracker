@@ -4,7 +4,9 @@ import {
   computeDisciplineStats,
   computeEquityStats,
   computeMoodStats,
+  medianRiskFraction,
   netCashflow,
+  ratedRMultiples,
   pricePositionFraction,
   tradeFees,
   tradeGrossPnl,
@@ -554,5 +556,109 @@ describe('computeEquityStats — event-aware', () => {
     const s = computeEquityStats([trade], 1000, [], new Map([[1, events]]))
     const last = s.points[s.points.length - 1]
     expect(last.balance).toBeCloseTo(1150)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Eingangsgrößen der Monte-Carlo-Simulation (Etappe 7a)
+// ---------------------------------------------------------------------------
+
+describe('ratedRMultiples', () => {
+  it('liefert je entschiedenem Trade sein R-Vielfaches', () => {
+    // Risiko = |100-90| * 10 = 100; Netto = (120-100)*10 - 18 = 182 → 1,82 R
+    const gewinn = makeTrade({ id: 1 })
+    // Netto = (85-100)*10 - 18 = -168 → -1,68 R
+    const verlust = makeTrade({ id: 2, result: 'verlust', actualExitPrice: 85 })
+    expect(ratedRMultiples([gewinn, verlust])).toEqual([1.82, -1.68])
+  })
+
+  it('lässt Breakeven, offene und unvollständige Trades draußen', () => {
+    const breakeven = makeTrade({ id: 1, result: 'breakeven', actualExitPrice: 100 })
+    const ohneErgebnis = makeTrade({ id: 2, result: null, actualExitPrice: null })
+    // Ergebnis steht, aber ohne Ausstiegskurs ist der P&L nicht berechenbar.
+    const unvollstaendig = makeTrade({ id: 3, result: 'gewinn', actualExitPrice: null })
+    const zaehlt = makeTrade({ id: 4 })
+    expect(ratedRMultiples([breakeven, ohneErgebnis, unvollstaendig, zaehlt])).toEqual([1.82])
+  })
+
+  it('nimmt Demotrades mit — R ist größen- und währungsunabhängig', () => {
+    const demo = makeTrade({ id: 1, tradedWithMoney: false })
+    // ohne Gebühren (Demo kostet nichts): 200 / 100 = 2 R
+    expect(ratedRMultiples([demo])).toEqual([2])
+  })
+
+  it('rechnet Trades mit Teilverkäufen aus dem Settlement', () => {
+    const events = [
+      evt({ type: 'eroeffnet', quantity: 10, price: 100, fee: 0 }),
+      evt({ type: 'teilverkauf', quantity: 5, price: 110, fee: 0 }),
+      evt({ type: 'geschlossen', quantity: 5, price: 120, fee: 0 }),
+    ]
+    const trade = makeTrade({ id: 1, positionSize: 10 })
+    // Netto 150 bei geplantem 1R = |100-90| * 10 = 100 → 1,5 R
+    expect(ratedRMultiples([trade], new Map([[1, events]]))).toEqual([1.5])
+  })
+
+  it('ist deckungsgleich mit dem Erwartungswert aus computeDisciplineStats', () => {
+    const rows = [
+      makeTrade({ id: 1 }),
+      makeTrade({ id: 2, result: 'verlust', actualExitPrice: 85 }),
+      makeTrade({ id: 3, result: 'breakeven', actualExitPrice: 100 }),
+    ]
+    const rs = ratedRMultiples(rows)
+    const avg = rs.reduce((a, b) => a + b, 0) / rs.length
+    expect(computeDisciplineStats(rows, 1000).expectancy).toBeCloseTo(avg, 10)
+  })
+})
+
+describe('medianRiskFraction', () => {
+  it('nimmt den Median des Risikos je Trade, nicht den Durchschnitt', () => {
+    const rows = [
+      makeTrade({ id: 1, entryPrice: 100, stopLoss: 90, positionSize: 10 }), // 100 → 1 %
+      makeTrade({ id: 2, entryPrice: 100, stopLoss: 98, positionSize: 10 }), // 20 → 0,2 %
+      // Ausreißer: würde den Durchschnitt auf über 3 % ziehen
+      makeTrade({ id: 3, entryPrice: 100, stopLoss: 10, positionSize: 10 }), // 900 → 9 %
+    ]
+    expect(medianRiskFraction(rows, 10_000)).toBeCloseTo(0.01, 10)
+  })
+
+  it('mittelt bei gerader Anzahl die beiden inneren Werte', () => {
+    const rows = [
+      makeTrade({ id: 1, entryPrice: 100, stopLoss: 90, positionSize: 10 }), // 1 %
+      makeTrade({ id: 2, entryPrice: 100, stopLoss: 80, positionSize: 10 }), // 2 %
+    ]
+    expect(medianRiskFraction(rows, 10_000)).toBeCloseTo(0.015, 10)
+  })
+
+  it('zählt nur Echtgeld — Demotrades haben keinen Kontobezug', () => {
+    const rows = [
+      makeTrade({ id: 1, tradedWithMoney: false, entryPrice: 100, stopLoss: 90, positionSize: 10 }),
+      makeTrade({ id: 2, tradedWithMoney: true, entryPrice: 100, stopLoss: 95, positionSize: 10 }),
+    ]
+    expect(medianRiskFraction(rows, 10_000)).toBeCloseTo(0.005, 10)
+    expect(medianRiskFraction([rows[0]], 10_000)).toBeNull()
+  })
+
+  it('überspringt Trades ohne echte Risikodistanz statt sie zu schätzen', () => {
+    // Stop = Einstieg: `tradeRisk` hätte hier eine Ersatzannahme geliefert.
+    const rows = [makeTrade({ id: 1, entryPrice: 100, stopLoss: 100, positionSize: 10 })]
+    expect(medianRiskFraction(rows, 10_000)).toBeNull()
+  })
+
+  it('nutzt bei Event-Trades das ursprünglich geplante 1R', () => {
+    const events = [
+      evt({ type: 'eroeffnet', quantity: 10, price: 100, fee: 0 }),
+      evt({ type: 'nachkauf', quantity: 10, price: 105, fee: 0 }),
+    ]
+    // Trade-Zeile wurde durch den Nachkauf fortgeschrieben (20 Stück), das
+    // geplante Risiko bleibt aber das der Eröffnung: |100-90| * 10 = 100.
+    const trade = makeTrade({ id: 1, positionSize: 20, entryPrice: 102.5, stopLoss: 90 })
+    expect(medianRiskFraction([trade], 10_000, new Map([[1, events]]))).toBeCloseTo(0.01, 10)
+  })
+
+  it('ohne eingesetztes Kapital gibt es keine Quote', () => {
+    const rows = [makeTrade({ id: 1 })]
+    expect(medianRiskFraction(rows, 0)).toBeNull()
+    expect(medianRiskFraction(rows, -100)).toBeNull()
+    expect(medianRiskFraction([], 10_000)).toBeNull()
   })
 })

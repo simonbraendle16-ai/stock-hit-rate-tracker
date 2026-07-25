@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { Card } from '@/components/ui/card'
+import { ChartEmpty, ChartHeader } from '@/components/chart-frame'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -84,18 +84,12 @@ export function StockRanking({ stocks }: { stocks: StockWithStats[] }) {
   }
 
   return (
-    <Card className="p-4 sm:p-6">
-      <div className="mb-4 flex items-center gap-2">
-        <Trophy className="size-4 text-primary" />
-        <div>
-          <h3 className="text-sm font-semibold text-foreground">
-            Ranking nach Trefferquote
-          </h3>
-          <p className="text-xs text-muted-foreground">
-            Aktien sortiert von bester zu schwächster Quote
-          </p>
-        </div>
-      </div>
+    <div className="panel sheen p-4 sm:p-6">
+      <ChartHeader
+        icon={Trophy}
+        title="Ranking nach Trefferquote"
+        subtitle="Aktien sortiert von bester zu schwächster Quote"
+      />
 
       {stocks.length > 0 && (
         <div className="relative mb-3">
@@ -121,23 +115,22 @@ export function StockRanking({ stocks }: { stocks: StockWithStats[] }) {
       )}
 
       {stocks.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-12 text-center">
-          <BarChart3 className="size-8 text-muted-foreground/40" />
-          <p className="mt-3 text-sm font-medium text-foreground">
-            Noch keine Aktien
-          </p>
-          <p className="mt-1 max-w-xs text-xs text-muted-foreground">
-            Füge oben deine erste Aktie hinzu und beginne, deine Trefferquote zu
-            tracken.
-          </p>
-        </div>
+        <ChartEmpty
+          icon={BarChart3}
+          title="Noch keine Aktien"
+          hint="Füge oben deine erste Aktie hinzu und beginne, deine Trefferquote zu tracken."
+          className="py-10"
+        />
       ) : filtered.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-12 text-center">
-          <Search className="size-8 text-muted-foreground/40" />
+        /* Ein leeres Suchergebnis ist kein Anfangszustand — hier wäre die
+           Motion-Schleife fehl am Platz, es fehlt ja nichts, es passt nur
+           nichts. Deshalb bewusst schlicht. */
+        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-10 text-center">
+          <Search className="size-7 text-muted-foreground/40" />
           <p className="mt-3 text-sm font-medium text-foreground">
             Keine Treffer für „{query}“
           </p>
-          <p className="mt-1 max-w-xs text-xs text-muted-foreground">
+          <p className="note mt-1.5 max-w-xs">
             Prüfe die Schreibweise oder setze die Suche zurück.
           </p>
         </div>
@@ -270,6 +263,6 @@ export function StockRanking({ stocks }: { stocks: StockWithStats[] }) {
           onOpenChange={setChartDialogOpen}
         />
       )}
-    </Card>
+    </div>
   )
 }

@@ -1,6 +1,8 @@
 import type { DisciplineStats } from '@/lib/trade-stats'
 import { cn } from '@/lib/utils'
-import { Flame, Target, TrendingUp, ShieldAlert } from 'lucide-react'
+import { CountUp } from '@/components/count-up'
+import { DisciplineRing } from '@/components/discipline-ring'
+import { ShieldAlert } from 'lucide-react'
 
 function scoreColor(v: number) {
   if (v >= 80) return 'text-positive'
@@ -16,84 +18,140 @@ function winRateColor(v: number) {
   return 'text-destructive'
 }
 
-/** The discipline score gets the one bold-contrast treatment in the app. */
+/**
+ * Die Hero-Kennzahl der App. Es gibt bewusst nur EINE große Zahl — und es ist
+ * der Disziplin-Score, nicht die Gewinnquote: gemessen wird Plan-Treue, nicht
+ * Ergebnis (Douglas-Leitplanke aus CLAUDE.md).
+ *
+ * Der Ring hat den früheren Balken abgelöst; die Atmosphäre dahinter ist die
+ * einzige Dauerbewegung auf dieser Fläche und bewusst kontrastarm.
+ */
 export function DisciplineBar({ stats }: { stats: DisciplineStats }) {
-  const v = Math.round(stats.disciplineScore)
   const color = scoreColor(stats.disciplineScore)
+  const hasData = stats.completed > 0
+
   return (
-    <div className="glass-card p-5">
-      <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-        Disziplin-Score
-      </p>
-      <div className="mt-1 flex items-end gap-3">
-        <span className={cn('font-heading text-5xl font-bold leading-none', color)}>
-          {v}%
-        </span>
-        <span className="mb-1 font-mono text-[11px] text-muted-foreground">
-          {stats.completed} abgeschlossene Trades · Plan befolgt
-        </span>
+    <div className="panel-raised sheen rise-in relative flex h-full items-center gap-6 p-5 sm:gap-8 sm:p-6">
+      <div className="hero-atmo" aria-hidden="true">
+        <div className="hero-scan" />
       </div>
-      <div className="bar-track mt-3 h-3">
-        <div
-          className={cn('bar-glow h-full rounded-full bg-current transition-all', color)}
-          style={{ width: `${Math.max(2, v)}%` }}
-        />
-      </div>
-      {stats.ruleViolations > 0 && (
-        <p className="mt-2 flex items-center gap-1 font-mono text-[11px] text-destructive">
-          <ShieldAlert className="size-3" /> {stats.ruleViolations} protokollierte Regelbrüche
+
+      <DisciplineRing
+        value={stats.disciplineScore}
+        colorClass={color}
+        hasData={hasData}
+        className="relative size-36 sm:size-44"
+      />
+
+      <div className="relative min-w-0 flex-1">
+        <p className="eyebrow">Disziplin-Score</p>
+        <p className="mt-2 text-sm text-foreground">
+          {hasData
+            ? `${stats.completed} abgeschlossene Trades · Plan befolgt`
+            : 'Noch kein Score — er entsteht mit dem ersten abgeschlossenen Trade.'}
         </p>
-      )}
+        {stats.ruleViolations > 0 && (
+          <p className="mt-2.5 flex items-center gap-1.5 font-mono text-[11px] text-destructive">
+            <ShieldAlert className="size-3.5" /> {stats.ruleViolations} protokollierte
+            Regelbrüche
+          </p>
+        )}
+        <p className="note mt-4 border-t border-border pt-3">
+          Der Score misst Plan-Treue, nicht Gewinn. Ein guter Trade ist ein plan-konformer
+          Trade — unabhängig vom Ausgang.
+        </p>
+      </div>
     </div>
   )
 }
 
+/**
+ * Die Nebenkennzahlen als ein zusammenhängendes Ableseband statt vier
+ * konkurrierender Karten — dadurch bleibt die Hierarchie eindeutig.
+ *
+ * Die Linie unter jeder Zahl läuft beim Mount voll ein. Sie ist bewusst
+ * **nicht** proportional: eine anteilig gefüllte Spur würde bei Kennzahlen wie
+ * dem Erwartungswert eine Skala behaupten, die es nicht gibt.
+ */
 export function CockpitStats({ stats }: { stats: DisciplineStats }) {
-  const cards = [
+  // Formatierung über serialisierbare Props statt einer format-Funktion: diese
+  // Komponente rendert auf dem Server, CountUp ist ein Client-Teil — Funktionen
+  // lassen sich über diese Grenze nicht reichen.
+  const readouts: {
+    label: string
+    num: number
+    decimals?: number
+    prefix?: string
+    suffix?: string
+    signed?: boolean
+    sub?: string
+    tone: string
+  }[] = [
     {
       label: 'Gewinnquote',
-      value: `${Math.round(stats.winRate)}%`,
-      icon: Target,
+      num: stats.winRate,
+      suffix: '%',
       tone: winRateColor(stats.winRate),
     },
     {
       label: 'Erwartungswert',
-      value: `${stats.expectancy >= 0 ? '+' : ''}${stats.expectancy.toFixed(2)}R`,
-      icon: TrendingUp,
+      num: stats.expectancy,
+      decimals: 2,
+      suffix: 'R',
+      signed: true,
       tone: stats.expectancy >= 0 ? 'text-positive' : 'text-destructive',
     },
     {
       label: 'Plan-Streak',
-      value: `×${stats.streak}`,
-      icon: Flame,
+      num: stats.streak,
+      prefix: '×',
       tone: 'text-primary',
     },
     {
       label: 'Bilanz',
-      value: `${stats.totalPnL >= 0 ? '+' : ''}${stats.totalPnL.toFixed(0)}`,
+      num: stats.totalPnL,
+      signed: true,
       sub: `${stats.returnPct >= 0 ? '+' : ''}${stats.returnPct.toFixed(1)}%`,
-      icon: TrendingUp,
       tone: stats.totalPnL >= 0 ? 'text-positive' : 'text-destructive',
     },
   ]
   return (
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-      {cards.map((c) => (
-        <div key={c.label} className="glass-card p-4">
-          <div className="flex items-center justify-between">
-            <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-              {c.label}
-            </p>
-            <c.icon className={cn('size-4', c.tone)} />
-          </div>
-          <p className={cn('mt-2 font-heading text-2xl font-bold', c.tone)}>{c.value}</p>
-          {c.sub && <p className="font-mono text-[11px] text-muted-foreground">{c.sub}</p>}
+    <div className="panel sheen rise-in rise-in-2 grid grid-cols-2 overflow-hidden sm:grid-cols-4">
+      {readouts.map((r, i) => (
+        <div
+          key={r.label}
+          className={cn(
+            'px-5 py-4',
+            i >= 2 && 'border-t border-border sm:border-t-0',
+            i % 2 === 1 && 'border-l border-border',
+            i % 2 === 0 && i > 0 && 'sm:border-l sm:border-border',
+          )}
+        >
+          <p className="eyebrow">{r.label}</p>
+          <p className={cn('metric metric-lg mt-2', r.tone)}>
+            <CountUp
+              value={r.num}
+              decimals={r.decimals ?? 0}
+              prefix={r.prefix ?? ''}
+              suffix={r.suffix ?? ''}
+              signed={r.signed ?? false}
+            />
+          </p>
+          {r.sub && <p className="note mt-1">{r.sub}</p>}
+          <span
+            className={cn('bar-fill mt-3 block h-0.5 rounded-full bg-current opacity-45', r.tone)}
+          />
         </div>
       ))}
     </div>
   )
 }
 
+/**
+ * Die fünf Sätze bauen sich nacheinander auf, begleitet von einer Linie, die
+ * an der Nummernspalte entlangläuft — der Kern der App soll sich lesen wie
+ * etwas, das man durchgeht, nicht wie eine Aufzählung.
+ */
 export function FiveBeliefs() {
   const beliefs = [
     'Jeder Trade ist einzigartig.',
@@ -103,14 +161,20 @@ export function FiveBeliefs() {
     'Langfristig zählt nur der Erwartungswert.',
   ]
   return (
-    <div className="glass-card p-4">
-      <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-primary/70">
-        Die 5 Grundüberzeugungen
-      </p>
-      <ol className="mt-3 space-y-1.5">
+    <div className="panel sheen h-full p-4 sm:p-5">
+      <p className="eyebrow text-primary/70">Die 5 Grundüberzeugungen</p>
+      <ol className="relative mt-3.5 space-y-2">
+        <span
+          className="line-draw-y absolute bottom-1 left-0 top-1 w-px bg-primary/25"
+          aria-hidden="true"
+        />
         {beliefs.map((b, i) => (
-          <li key={b} className="flex gap-2 font-mono text-xs text-muted-foreground">
-            <span className="text-primary">{i + 1}.</span> {b}
+          <li
+            key={b}
+            className="rise-in flex gap-2 pl-3 font-mono text-xs leading-relaxed text-muted-foreground"
+            style={{ animationDelay: `${120 + i * 90}ms` }}
+          >
+            <span className="text-primary tabular">{i + 1}.</span> {b}
           </li>
         ))}
       </ol>

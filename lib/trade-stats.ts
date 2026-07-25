@@ -193,13 +193,85 @@ function netOrZero(t: TradeRow, events: TradeEventRow[]): number {
   return tradeNetPnl(t, events) ?? 0
 }
 
-/** R-Vielfaches eines Trades — event-aware, konsistent zu `tradeNetPnl`. */
+/**
+ * R-Vielfaches eines Trades — event-aware, konsistent zu `tradeNetPnl`.
+ *
+ * Exportiert, weil der Bot-Zwilling (Etappe 5) die echte Seite des Vergleichs
+ * exakt so rechnen muss wie Erwartungswert und Monte-Carlo. Zwei Wege zum
+ * R-Vielfachen wären zwei Wahrheiten.
+ */
+export function tradeRMultiple(t: TradeRow, events: TradeEventRow[] = []): number {
+  return rMultiple(t, events)
+}
+
+/** Das geplante 1 R in Kontowährung — event-aware, der Nenner von `tradeRMultiple`. */
+export function tradePlannedRisk(t: TradeRow, events: TradeEventRow[] = []): number {
+  if (events.length > 0) {
+    const risk = settlePosition(t, events).plannedRiskMoney
+    if (risk > 0) return risk
+  }
+  return tradeRisk(t)
+}
+
 function rMultiple(t: TradeRow, events: TradeEventRow[]): number {
   if (events.length > 0) {
     const s = settlePosition(t, events)
     return s.plannedRiskMoney > 0 ? s.totalNet / s.plannedRiskMoney : 0
   }
   return (tradePnl(t) ?? 0) / tradeRisk(t)
+}
+
+/**
+ * R-Vielfache der entschiedenen, abgerechneten Trades — die Eingangsverteilung
+ * der Monte-Carlo-Simulation (Etappe 7a).
+ *
+ * Bewusst exakt dieselbe Auswahl und dieselbe Rechnung wie beim Erwartungswert
+ * in `computeDisciplineStats`: entschieden (Gewinn|Verlust), P&L bekannt,
+ * event-aware. Dadurch kann die Simulation nie auf einer anderen Grundlage
+ * stehen als die Kennzahl daneben. Echtgeld und Demo zählen gemeinsam — R ist
+ * größen- und währungsunabhängig.
+ */
+export function ratedRMultiples(
+  rows: TradeRow[],
+  eventsByTrade?: TradeEventsByTrade,
+): number[] {
+  return rows
+    .filter((t) => t.result === 'gewinn' || t.result === 'verlust')
+    .filter((t) => hasNetPnl(t, eventsOf(eventsByTrade, t.id)))
+    .map((t) => rMultiple(t, eventsOf(eventsByTrade, t.id)))
+}
+
+/**
+ * Typisches Risiko je Trade als Anteil des eingesetzten Kapitals (0–1) — der
+ * Umrechnungsschlüssel von „Rückgang in R" zu „Rückgang in Prozent des Kontos".
+ *
+ * Bewusst der **Median** und nicht der Durchschnitt: ein einzelner überdimensionierter
+ * Trade darf nicht den ganzen Maßstab verschieben. Gezählt werden nur
+ * **Echtgeld**-Trades mit echter Risikodistanz (|Einstieg − Stop| > 0) — Demotrades
+ * haben keinen Kontobezug, und die Ersatzannahme in `tradeRisk` (Stop = Einstieg)
+ * wäre hier eine erfundene Zahl. `null`, wenn sich nichts Belastbares ergibt;
+ * dann zeigt die UI keine Prozentangabe statt einer geschätzten.
+ */
+export function medianRiskFraction(
+  rows: TradeRow[],
+  investedCapital: number,
+  eventsByTrade?: TradeEventsByTrade,
+): number | null {
+  if (!Number.isFinite(investedCapital) || investedCapital <= 0) return null
+
+  const fractions = rows
+    .filter((t) => t.tradedWithMoney && Math.abs(t.entryPrice - t.stopLoss) > 0)
+    .map((t) => {
+      const events = eventsOf(eventsByTrade, t.id)
+      const risk = events.length > 0 ? settlePosition(t, events).plannedRiskMoney : tradeRisk(t)
+      return risk / investedCapital
+    })
+    .filter((f) => Number.isFinite(f) && f > 0)
+    .sort((a, b) => a - b)
+
+  if (fractions.length === 0) return null
+  const mid = Math.floor(fractions.length / 2)
+  return fractions.length % 2 === 1 ? fractions[mid] : (fractions[mid - 1] + fractions[mid]) / 2
 }
 
 /**

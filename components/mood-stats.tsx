@@ -29,7 +29,7 @@ export function MoodStatsPanel({ stats }: { stats: MoodStats }) {
   const { coverage, minGroupSize } = stats
 
   return (
-    <div className="glass-card p-4">
+    <div className="panel sheen p-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="flex items-center gap-2">
           <Activity className="size-4 text-primary" />

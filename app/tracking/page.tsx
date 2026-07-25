@@ -5,6 +5,7 @@ import {
   getDisciplineStats,
   getEquityStats,
   getMoneyVsPaperStats,
+  getMonteCarloStats,
   getMoodStats,
   getZoneStats,
   listTrades,
@@ -17,6 +18,9 @@ import { MoneyProfitChart } from '@/components/money-profit-chart'
 import { EquityChart } from '@/components/equity-chart'
 import { ExportTradesButton } from '@/components/export-trades-button'
 import { MoodStatsPanel } from '@/components/mood-stats'
+import { MonteCarloPanel } from '@/components/monte-carlo-panel'
+import { BotTwinPanel } from '@/components/bot-twin-panel'
+import { getBotTwinStats } from '@/app/actions/bot-twin'
 import { getSettings } from '@/app/actions/settings'
 import { formatMoney } from '@/lib/format'
 
@@ -29,15 +33,20 @@ export default async function TrackingPage() {
   const session = await auth.api.getSession({ headers: await headers() })
   if (!session?.user) redirect('/sign-in')
 
-  const [stats, trades, moneyStats, zoneStats, equity, moodStats, settings] = await Promise.all([
-    getDisciplineStats(),
-    listTrades(),
-    getMoneyVsPaperStats(),
-    getZoneStats(),
-    getEquityStats(),
-    getMoodStats(),
-    getSettings(),
-  ])
+  const [stats, trades, moneyStats, zoneStats, equity, moodStats, monteCarlo, botTwin, settings] =
+    await Promise.all([
+      getDisciplineStats(),
+      listTrades(),
+      getMoneyVsPaperStats(),
+      getZoneStats(),
+      getEquityStats(),
+      getMoodStats(),
+      getMonteCarloStats(),
+      // Holt Kerzen — der einzige Block hier, der ans Netz geht. Er bricht nie
+      // ab: fehlende Reihen werden als Lücke ausgewiesen, nicht geworfen.
+      getBotTwinStats(),
+      getSettings(),
+    ])
   const completed = trades.filter((t) => t.status === 'abgeschlossen')
 
   // Ergebnis-Aufschlüsselung: 4 Buckets (Plan × Ergebnis)
@@ -68,7 +77,7 @@ export default async function TrackingPage() {
   const maxMonth = Math.max(1, ...months.map(([, v]) => v.followed + v.deviated))
 
   return (
-    <div className="min-h-svh bg-background">
+    <div className="min-h-svh">
       <CockpitHeader userLabel={session.user.name || session.user.email} />
       <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
         <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
@@ -87,7 +96,7 @@ export default async function TrackingPage() {
           <div className="lg:col-span-2">
             <DisciplineBar stats={stats} />
           </div>
-          <div className="glass-card p-4 lg:col-span-1">
+          <div className="panel sheen p-4 lg:col-span-1">
             <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
               Erwartungswert
             </p>
@@ -114,7 +123,7 @@ export default async function TrackingPage() {
             <EquityChart stats={equity} currency={settings.currency} />
           </div>
           <div className="grid grid-cols-2 gap-4 lg:col-span-1 lg:grid-cols-1">
-            <div className="glass-card p-4">
+            <div className="panel sheen p-4">
               <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
                 Max. Drawdown
               </p>
@@ -127,7 +136,7 @@ export default async function TrackingPage() {
                 −{equity.maxDrawdownPct.toFixed(1)} % vom Hoch (nur Echtgeld)
               </p>
             </div>
-            <div className="glass-card p-4">
+            <div className="panel sheen p-4">
               <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
                 Verlust-Serie
               </p>
@@ -143,6 +152,16 @@ export default async function TrackingPage() {
           </div>
         </div>
 
+        {/* Bot-Zwilling — was kostet mich mein eigenes Eingreifen? */}
+        <div className="mt-4">
+          <BotTwinPanel stats={botTwin} />
+        </div>
+
+        {/* Wahrscheinlichkeits-Simulation — gehört die Verlustserie zur Verteilung? */}
+        <div className="mt-4">
+          <MonteCarloPanel stats={monteCarlo} />
+        </div>
+
         {/* Echtgeld vs. Demo — Trefferquote & Ø Gewinn */}
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
           <MoneyHitRateChart stats={moneyStats} />
@@ -150,7 +169,7 @@ export default async function TrackingPage() {
         </div>
 
         {/* Zonen-Trefferquote — laufen die geplanten Zonen überhaupt an? */}
-        <div className="mt-4 glass-card p-4">
+        <div className="mt-4 panel sheen p-4">
           <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
             Zonen-Trefferquote
           </p>
@@ -198,7 +217,7 @@ export default async function TrackingPage() {
 
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
           {/* Ergebnis-Aufschlüsselung */}
-          <div className="glass-card p-4">
+          <div className="panel sheen p-4">
             <p className="mb-3 font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
               Ergebnis-Aufschlüsselung
             </p>
@@ -221,7 +240,7 @@ export default async function TrackingPage() {
           </div>
 
           {/* Monatsverlauf */}
-          <div className="glass-card p-4">
+          <div className="panel sheen p-4">
             <p className="mb-3 font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
               Monatsverlauf · Plan befolgt vs. abgewichen
             </p>

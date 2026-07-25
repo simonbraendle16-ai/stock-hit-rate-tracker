@@ -19,7 +19,10 @@ import {
   computeDisciplineStats,
   computeEquityStats,
   computeMoodStats,
+  medianRiskFraction,
+  netCashflow,
   parseViolations,
+  ratedRMultiples,
   tradeNetPnl,
   type DisciplineStats,
   type EquityPoint,
@@ -29,6 +32,7 @@ import {
   type TradeRow,
   type TradeEventsByTrade,
 } from '@/lib/trade-stats'
+import { simulateFuture, type MonteCarloStats } from '@/lib/monte-carlo'
 import {
   settlePosition,
   hasPartialSale,
@@ -1025,6 +1029,39 @@ export async function getMoodStats(): Promise<MoodStats> {
     .orderBy(asc(trade.closedAt), asc(trade.id))
 
   return computeMoodStats(rows, await loadEventsByTrade(userId))
+}
+
+/**
+ * Monte-Carlo-Simulation der nächsten Trades (Etappe 7a).
+ *
+ * Grundlage ist ausschließlich die **eigene** R-Verteilung der abgeschlossenen
+ * Trades — dieselbe Auswahl, aus der auch der Erwartungswert entsteht. Die
+ * Rechnung selbst liegt in `lib/monte-carlo.ts` (rein, seed-fest, getestet);
+ * hier werden nur die Zeilen geladen und die drei Eingangsgrößen bestimmt:
+ * R-Verteilung, typisches Risiko je Trade (für die Prozentangabe) und die
+ * längste tatsächlich erlebte Verlust-Serie (für die Einordnung).
+ */
+export async function getMonteCarloStats(): Promise<MonteCarloStats> {
+  const userId = await getUserId()
+  const startCapital = (await getSettings()).startCapital
+
+  const rows = await db
+    .select()
+    .from(trade)
+    .where(and(eq(trade.userId, userId), eq(trade.status, 'abgeschlossen')))
+    .orderBy(asc(trade.closedAt), asc(trade.id))
+
+  const eventsByTrade = await loadEventsByTrade(userId)
+  const cashflows = await listCashflows()
+  const invested = startCapital + netCashflow(cashflows)
+
+  return simulateFuture({
+    rMultiples: ratedRMultiples(rows, eventsByTrade),
+    riskFraction: medianRiskFraction(rows, invested, eventsByTrade),
+    // Die erlebte Serie kommt aus derselben Quelle wie die Anzeige daneben.
+    observedLossStreak: computeEquityStats(rows, startCapital, cashflows, eventsByTrade)
+      .worstLossStreak,
+  })
 }
 
 // ---------------------------------------------------------------------------

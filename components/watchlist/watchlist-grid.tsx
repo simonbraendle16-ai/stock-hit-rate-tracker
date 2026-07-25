@@ -312,7 +312,7 @@ export function WatchlistGrid({ stocks }: { stocks: StockWithStats[] }) {
           Keine Instrumente gefunden.
         </p>
       ) : (
-        <div className="glass-card overflow-hidden">
+        <div className="panel sheen overflow-hidden">
           {grouped.map(([name, list]) => {
             const isCollapsed = !!collapsed[name]
             return (

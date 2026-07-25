@@ -32,7 +32,7 @@ export function RiskCalculator({ currency = 'EUR' }: { currency?: string } = {})
     'w-full border-0 border-b border-border bg-transparent py-1.5 font-mono text-sm text-foreground outline-none focus:border-primary/50'
 
   return (
-    <div className="glass-card h-full overflow-hidden">
+    <div className="panel sheen h-full overflow-hidden">
       <div className="flex items-center gap-2.5 border-b border-border px-5 py-4">
         <div className="flex size-8 items-center justify-center rounded-lg bg-primary/10">
           <Calculator className="size-4 text-primary" />

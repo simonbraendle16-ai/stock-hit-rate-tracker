@@ -1,63 +1,63 @@
-import { Card } from '@/components/ui/card'
 import type { OverallStats } from '@/app/actions/stocks'
-import { Target, CheckCircle2, XCircle, Layers } from 'lucide-react'
+import { CountUp } from '@/components/count-up'
+import { cn } from '@/lib/utils'
 
+/**
+ * Die Kennzahlen der Analyse-Seite — dasselbe Ableseband wie im Cockpit
+ * (`CockpitStats`), damit beide Seiten dieselbe Sprache sprechen. Vorher waren
+ * es vier einzelne Karten mit Icon-Kacheln, die optisch aus der App fielen.
+ *
+ * Formatierung über serialisierbare Props: Diese Komponente rendert auf dem
+ * Server, `CountUp` ist ein Client-Teil.
+ */
 export function StatCards({ stats }: { stats: OverallStats }) {
-  const hitRate = stats.total > 0 ? stats.hitRate.toFixed(1) : '–'
+  const hasData = stats.total > 0
 
-  const items = [
+  const readouts: {
+    label: string
+    num: number
+    decimals?: number
+    suffix?: string
+    tone: string
+  }[] = [
     {
       label: 'Trefferquote gesamt',
-      value: stats.total > 0 ? `${hitRate}%` : '–',
-      icon: Target,
-      accent: 'text-primary',
-      bg: 'bg-primary/10',
+      num: stats.hitRate,
+      decimals: 1,
+      suffix: '%',
+      tone: 'text-primary',
     },
-    {
-      label: 'Richtig',
-      value: stats.correct.toString(),
-      icon: CheckCircle2,
-      accent: 'text-positive',
-      bg: 'bg-positive/10',
-    },
-    {
-      label: 'Falsch',
-      value: stats.wrong.toString(),
-      icon: XCircle,
-      accent: 'text-negative',
-      bg: 'bg-negative/10',
-    },
-    {
-      label: 'Aktien getrackt',
-      value: stats.stockCount.toString(),
-      icon: Layers,
-      accent: 'text-foreground',
-      bg: 'bg-muted',
-    },
+    { label: 'Richtig', num: stats.correct, tone: 'text-positive' },
+    { label: 'Falsch', num: stats.wrong, tone: 'text-negative' },
+    { label: 'Aktien getrackt', num: stats.stockCount, tone: 'text-foreground' },
   ]
 
   return (
-    <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-      {items.map((item) => (
-        <Card key={item.label} className="p-4 sm:p-5">
-          <div className="flex items-center gap-3">
-            <div
-              className={`flex size-9 shrink-0 items-center justify-center rounded-lg ${item.bg}`}
-            >
-              <item.icon className={`size-5 ${item.accent}`} />
-            </div>
-            <div className="min-w-0">
-              <p className="truncate text-xs text-muted-foreground">
-                {item.label}
-              </p>
-              <p
-                className={`text-xl font-semibold tracking-tight sm:text-2xl ${item.accent}`}
-              >
-                {item.value}
-              </p>
-            </div>
-          </div>
-        </Card>
+    <div className="panel sheen rise-in grid grid-cols-2 overflow-hidden sm:grid-cols-4">
+      {readouts.map((r, i) => (
+        <div
+          key={r.label}
+          className={cn(
+            'px-5 py-4',
+            i >= 2 && 'border-t border-border sm:border-t-0',
+            i % 2 === 1 && 'border-l border-border',
+            i % 2 === 0 && i > 0 && 'sm:border-l sm:border-border',
+          )}
+        >
+          <p className="eyebrow">{r.label}</p>
+          <p className={cn('metric metric-lg mt-2', r.tone)}>
+            {/* Ohne eine einzige Einschätzung gibt es keine Quote — dann ein
+                Strich statt einer 0,0 %, die eine Messung behaupten würde. */}
+            {i === 0 && !hasData ? (
+              <span className="text-muted-foreground">—</span>
+            ) : (
+              <CountUp value={r.num} decimals={r.decimals ?? 0} suffix={r.suffix ?? ''} />
+            )}
+          </p>
+          <span
+            className={cn('bar-fill mt-3 block h-0.5 rounded-full bg-current opacity-45', r.tone)}
+          />
+        </div>
       ))}
     </div>
   )

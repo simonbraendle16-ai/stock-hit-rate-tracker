@@ -70,7 +70,7 @@ export function CashflowList({
   }
 
   return (
-    <div className="glass-card space-y-4 p-5">
+    <div className="panel sheen space-y-4 p-5">
       <div className="flex items-center gap-2">
         <ArrowDownToLine className="size-4 text-primary" />
         <p className="font-mono text-[10px] font-bold tracking-widest text-primary">

@@ -12,6 +12,7 @@ import {
   FiveBeliefs,
 } from '@/components/discipline-overview'
 import { DouglasQuote } from '@/components/douglas-quote'
+import { SectionLabel } from '@/components/section-label'
 import { RiskCalculator } from '@/components/risk-calculator'
 import { HitRateTimeline } from '@/components/hitrate-timeline'
 import { LivePosition } from '@/components/live-position'
@@ -35,17 +36,15 @@ export default async function CockpitPage() {
   const openPositions = trades.filter((t) => t.status === 'aktiv')
 
   return (
-    <div className="min-h-svh bg-background">
+    <div className="min-h-svh">
       <CockpitHeader userLabel={session.user.name || session.user.email} />
       <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
-        <div className="mb-6 flex items-end justify-between gap-3">
+        <div className="mb-7 flex items-end justify-between gap-3">
           <div>
-            <h2 className="font-heading text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-              Cockpit
-            </h2>
-            <p className="mt-1 font-mono text-xs text-muted-foreground">
+            <p className="eyebrow">Cockpit</p>
+            <h2 className="mt-1.5 font-heading text-xl font-semibold tracking-tight text-foreground">
               Handle deinen Plan, nicht deine Emotion.
-            </p>
+            </h2>
           </div>
           <Link href="/trades/new">
             <Button className="btn-teal-glow font-mono text-xs">
@@ -54,6 +53,7 @@ export default async function CockpitPage() {
           </Link>
         </div>
 
+        <SectionLabel>Stand</SectionLabel>
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           <div className="lg:col-span-2">
             <DisciplineBar stats={stats} />
@@ -70,16 +70,17 @@ export default async function CockpitPage() {
         {/* Offene Positionen mit Live-Stand + Kurs-Alerts (Etappe 3). Der
             AlertWatcher rendert nichts, prüft aber im Hintergrund. */}
         <AlertWatcher />
-        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <SectionLabel className="mt-10">Im Markt</SectionLabel>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           <div className="lg:col-span-2">
             {openPositions.length > 0 ? (
-              <div className="glass-card p-4">
-                <p className="mb-3 font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+              <div className="panel sheen rise-in p-4 sm:p-5">
+                <p className="eyebrow mb-3.5">
                   Offene Positionen · {openPositions.length}
                 </p>
                 <div className="space-y-3">
                   {openPositions.map((t) => (
-                    <div key={t.id} className="rounded-lg border border-border bg-background/40 p-3">
+                    <div key={t.id} className="panel-sunken p-3">
                       <div className="flex items-center justify-between gap-2">
                         <Link
                           href={`/trades/${t.id}`}
@@ -102,8 +103,8 @@ export default async function CockpitPage() {
                 </div>
               </div>
             ) : (
-              <div className="glass-card flex h-full flex-col justify-center p-6 text-center">
-                <p className="font-mono text-xs text-muted-foreground">
+              <div className="panel sheen rise-in flex h-full flex-col justify-center p-6 text-center">
+                <p className="note">
                   Keine offenen Positionen. Aktivierte Trades erscheinen hier mit Live-Stand,
                   Abstand zu Stop und Ziel und unrealisiertem P&L.
                 </p>
@@ -115,7 +116,8 @@ export default async function CockpitPage() {
           </div>
         </div>
 
-        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <SectionLabel className="mt-10">Prozess</SectionLabel>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           <div className="space-y-4 lg:col-span-2">
             <HitRateTimeline data={timeline} />
             <RiskCalculator currency={settings.currency} />
@@ -126,19 +128,15 @@ export default async function CockpitPage() {
         </div>
 
         {/* Letzte Trades */}
-        <div className="mt-4 glass-card p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-              Letzte Trades
-            </p>
+        <div className="panel sheen rise-in mt-4 p-4 sm:p-5">
+          <div className="mb-3.5 flex items-center justify-between">
+            <p className="eyebrow">Letzte Trades</p>
             <Link href="/trades" className="font-mono text-[11px] text-primary hover:underline">
               Alle ansehen
             </Link>
           </div>
           {recent.length === 0 ? (
-            <p className="font-mono text-xs text-muted-foreground">
-              Noch keine Trades — plane deinen ersten.
-            </p>
+            <p className="note">Noch keine Trades — plane deinen ersten.</p>
           ) : (
             <div className="divide-y divide-border">
               {recent.map((t) => (

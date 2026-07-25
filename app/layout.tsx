@@ -2,6 +2,7 @@ import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
 import { IBM_Plex_Serif, IBM_Plex_Sans, IBM_Plex_Mono } from 'next/font/google'
 import { Toaster } from '@/components/ui/sonner'
+import { AppBackdrop } from '@/components/app-backdrop'
 import './globals.css'
 
 // Institutionelles Terminal: IBM-Plex-Superfamilie — eine Vision, drei Rollen.
@@ -65,6 +66,7 @@ export default function RootLayout({
       className={`dark ${plexSerif.variable} ${plexSans.variable} ${plexMono.variable} bg-background`}
     >
       <body className="font-sans antialiased">
+        <AppBackdrop />
         {children}
         <Toaster richColors position="top-center" />
         {process.env.NODE_ENV === 'production' && <Analytics />}

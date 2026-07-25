@@ -1,7 +1,8 @@
 'use client'
 
-import { Card } from '@/components/ui/card'
 import { ChartContainer } from '@/components/ui/chart'
+import { ChartEmpty, ChartHeader } from '@/components/chart-frame'
+import { CHART_AXIS, CHART_MOTION } from '@/lib/chart-theme'
 import { Bar, BarChart, Cell, LabelList, XAxis, YAxis } from 'recharts'
 import { Target } from 'lucide-react'
 import type { MoneyVsPaper } from '@/app/actions/trades'
@@ -18,23 +19,20 @@ export function MoneyHitRateChart({ stats }: { stats: MoneyVsPaper }) {
   ]
 
   return (
-    <Card className="flex h-full flex-col p-4 sm:p-6">
-      <div className="mb-4 flex items-center gap-2">
-        <Target className="size-4 text-primary" />
-        <div>
-          <h3 className="text-sm font-semibold text-foreground">Trefferquote</h3>
-          <p className="text-xs text-muted-foreground">Mit echtem Geld vs. Demo</p>
-        </div>
-      </div>
+    <div className="panel sheen flex h-full flex-col p-4 sm:p-6">
+      <ChartHeader
+        icon={Target}
+        title="Trefferquote"
+        subtitle="Mit echtem Geld vs. Demo"
+      />
 
       {total === 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center rounded-lg border border-dashed border-border py-10 text-center">
-          <Target className="size-8 text-muted-foreground/40" />
-          <p className="mt-3 text-sm font-medium text-foreground">Noch keine Daten</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Schließe Trades ab, um die Trefferquote zu sehen.
-          </p>
-        </div>
+        <ChartEmpty
+          icon={Target}
+          className="flex-1 py-10"
+          title="Noch keine Daten"
+          hint="Schließe Trades ab, um die Trefferquote zu sehen."
+        />
       ) : (
         <ChartContainer
           config={{
@@ -43,14 +41,9 @@ export function MoneyHitRateChart({ stats }: { stats: MoneyVsPaper }) {
           className="aspect-auto h-[200px] w-full"
         >
           <BarChart data={data} margin={{ top: 20, right: 8, left: 8, bottom: 0 }}>
-            <XAxis
-              dataKey="name"
-              tickLine={false}
-              axisLine={false}
-              className="font-mono text-[10px]"
-            />
+            <XAxis dataKey="name" {...CHART_AXIS} />
             <YAxis domain={[0, 100]} hide />
-            <Bar dataKey="value" radius={[6, 6, 0, 0]} maxBarSize={90}>
+            <Bar dataKey="value" radius={[6, 6, 0, 0]} maxBarSize={90} {...CHART_MOTION}>
               {data.map((d) => (
                 <Cell key={d.name} fill={d.fill} />
               ))}
@@ -69,7 +62,7 @@ export function MoneyHitRateChart({ stats }: { stats: MoneyVsPaper }) {
         <Legend color="var(--positive)" label="Mit Geld" detail={`${decisiveMoney} Trades`} />
         <Legend color="var(--primary)" label="Demo" detail={`${decisivePaper} Trades`} />
       </div>
-    </Card>
+    </div>
   )
 }
 

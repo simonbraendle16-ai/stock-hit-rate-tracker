@@ -1,7 +1,8 @@
 'use client'
 
-import { Card } from '@/components/ui/card'
 import { ChartContainer } from '@/components/ui/chart'
+import { ChartEmpty, ChartHeader } from '@/components/chart-frame'
+import { CHART_AXIS, CHART_MOTION } from '@/lib/chart-theme'
 import { Bar, BarChart, Cell, LabelList, ReferenceLine, XAxis, YAxis } from 'recharts'
 import { TrendingUp } from 'lucide-react'
 import type { MoneyVsPaper } from '@/app/actions/trades'
@@ -22,38 +23,30 @@ export function MoneyProfitChart({ stats }: { stats: MoneyVsPaper }) {
   const color = (v: number) => (v >= 0 ? 'var(--positive)' : 'var(--destructive)')
 
   return (
-    <Card className="flex h-full flex-col p-4 sm:p-6">
-      <div className="mb-4 flex items-center gap-2">
-        <TrendingUp className="size-4 text-primary" />
-        <div>
-          <h3 className="text-sm font-semibold text-foreground">Ø Gewinn pro Trade</h3>
-          <p className="text-xs text-muted-foreground">Mit echtem Geld vs. Demo</p>
-        </div>
-      </div>
+    <div className="panel sheen flex h-full flex-col p-4 sm:p-6">
+      <ChartHeader
+        icon={TrendingUp}
+        title="Ø Gewinn pro Trade"
+        subtitle="Mit echtem Geld vs. Demo"
+      />
 
       {total === 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center rounded-lg border border-dashed border-border py-10 text-center">
-          <TrendingUp className="size-8 text-muted-foreground/40" />
-          <p className="mt-3 text-sm font-medium text-foreground">Noch keine Daten</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Schließe Trades ab, um den Ø Gewinn zu sehen.
-          </p>
-        </div>
+        <ChartEmpty
+          icon={TrendingUp}
+          className="flex-1 py-10"
+          title="Noch keine Daten"
+          hint="Schließe Trades ab, um den Ø Gewinn zu sehen."
+        />
       ) : (
         <ChartContainer
           config={{ value: { label: 'Ø Gewinn' } }}
           className="aspect-auto h-[200px] w-full"
         >
           <BarChart data={data} margin={{ top: 20, right: 8, left: 8, bottom: 0 }}>
-            <XAxis
-              dataKey="name"
-              tickLine={false}
-              axisLine={false}
-              className="font-mono text-[10px]"
-            />
+            <XAxis dataKey="name" {...CHART_AXIS} />
             <YAxis hide />
             <ReferenceLine y={0} stroke="var(--border)" />
-            <Bar dataKey="value" radius={[6, 6, 0, 0]} maxBarSize={90}>
+            <Bar dataKey="value" radius={[6, 6, 0, 0]} maxBarSize={90} {...CHART_MOTION}>
               {data.map((d) => (
                 <Cell key={d.name} fill={color(d.value)} />
               ))}
@@ -78,6 +71,6 @@ export function MoneyProfitChart({ stats }: { stats: MoneyVsPaper }) {
           {fmt(paper.totalPnL)}
         </span>
       </p>
-    </Card>
+    </div>
   )
 }

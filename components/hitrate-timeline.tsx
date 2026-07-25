@@ -1,6 +1,5 @@
 'use client'
 
-import { Card } from '@/components/ui/card'
 import {
   ChartContainer,
   ChartTooltip,
@@ -10,11 +9,21 @@ import {
   Area,
   AreaChart,
   CartesianGrid,
+  ReferenceDot,
   ReferenceLine,
   XAxis,
   YAxis,
 } from 'recharts'
 import type { TimelinePoint } from '@/app/actions/stocks'
+import { ChartEmpty, ChartHeader } from '@/components/chart-frame'
+import { CountUp } from '@/components/count-up'
+import {
+  AREA_FILL,
+  CHART_AXIS,
+  CHART_GRID,
+  CHART_MOTION,
+  CHART_REFERENCE,
+} from '@/lib/chart-theme'
 import { LineChart } from 'lucide-react'
 
 export function HitRateTimeline({ data }: { data: TimelinePoint[] }) {
@@ -24,22 +33,32 @@ export function HitRateTimeline({ data }: { data: TimelinePoint[] }) {
     hitRate: Number(p.hitRate.toFixed(1)),
   }))
 
+  // Der aktuelle Stand gehört in den Kopf: die Kurve zeigt die Entwicklung,
+  // die Zahl den Punkt, an dem man heute steht.
+  const current = chartData.length > 0 ? chartData[chartData.length - 1].hitRate : null
+
   return (
-    <Card className="p-4 sm:p-6">
-      <div className="mb-4 flex items-center gap-2">
-        <LineChart className="size-4 text-primary" />
-        <div>
-          <h3 className="text-sm font-semibold text-foreground">
-            Trefferquote im Verlauf
-          </h3>
-          <p className="text-xs text-muted-foreground">
-            Kumulierte Quote über alle Einschätzungen
-          </p>
-        </div>
-      </div>
+    <div className="panel sheen p-4 sm:p-6">
+      <ChartHeader
+        icon={LineChart}
+        title="Trefferquote im Verlauf"
+        subtitle="Kumulierte Quote über alle Einschätzungen"
+        right={
+          current != null ? (
+            <p className="metric metric-lg text-primary">
+              <CountUp value={current} format={(v) => v.toFixed(0)} />
+              <span className="note ml-0.5">%</span>
+            </p>
+          ) : undefined
+        }
+      />
 
       {chartData.length === 0 ? (
-        <EmptyState />
+        <ChartEmpty
+          icon={LineChart}
+          title="Noch keine Daten"
+          hint="Sobald du Einschätzungen erfasst, erscheint hier der Verlauf deiner Trefferquote."
+        />
       ) : (
         <ChartContainer
           config={{
@@ -56,40 +75,25 @@ export function HitRateTimeline({ data }: { data: TimelinePoint[] }) {
                 <stop
                   offset="5%"
                   stopColor="var(--color-hitRate)"
-                  stopOpacity={0.25}
+                  stopOpacity={AREA_FILL.top}
                 />
                 <stop
                   offset="95%"
                   stopColor="var(--color-hitRate)"
-                  stopOpacity={0.02}
+                  stopOpacity={AREA_FILL.bottom}
                 />
               </linearGradient>
             </defs>
-            <CartesianGrid vertical={false} stroke="var(--border)" />
-            <XAxis
-              dataKey="label"
-              tickLine={false}
-              axisLine={false}
-              tickMargin={8}
-              minTickGap={24}
-              tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }}
-            />
+            <CartesianGrid {...CHART_GRID} />
+            <XAxis dataKey="label" minTickGap={24} {...CHART_AXIS} />
             <YAxis
               domain={[0, 100]}
               ticks={[0, 25, 50, 75, 100]}
-              tickLine={false}
-              axisLine={false}
-              tickMargin={8}
               width={40}
               tickFormatter={(v) => `${v}%`}
-              tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }}
+              {...CHART_AXIS}
             />
-            <ReferenceLine
-              y={50}
-              stroke="var(--muted-foreground)"
-              strokeDasharray="4 4"
-              strokeOpacity={0.5}
-            />
+            <ReferenceLine y={50} {...CHART_REFERENCE} />
             <ChartTooltip
               content={
                 <ChartTooltipContent
@@ -106,25 +110,24 @@ export function HitRateTimeline({ data }: { data: TimelinePoint[] }) {
               fill="url(#fillHitRate)"
               dot={chartData.length <= 30}
               activeDot={{ r: 4 }}
+              {...CHART_MOTION}
             />
+            {/* „Hier stehst du heute." Bewusst ohne Puls: pulsen darf nur, was
+                auf etwas wartet (offene Alerts) — eine Kennzahl tut das nicht. */}
+            {current != null && (
+              <ReferenceDot
+                x={chartData.length}
+                y={current}
+                r={4}
+                className="svg-glow text-primary"
+                fill="var(--color-hitRate)"
+                stroke="var(--card)"
+                strokeWidth={2}
+              />
+            )}
           </AreaChart>
         </ChartContainer>
       )}
-    </Card>
-  )
-}
-
-function EmptyState() {
-  return (
-    <div className="flex h-[280px] flex-col items-center justify-center rounded-lg border border-dashed border-border text-center">
-      <LineChart className="size-8 text-muted-foreground/40" />
-      <p className="mt-3 text-sm font-medium text-foreground">
-        Noch keine Daten
-      </p>
-      <p className="mt-1 max-w-xs text-xs text-muted-foreground">
-        Sobald du Einschätzungen erfasst, erscheint hier der Verlauf deiner
-        Trefferquote.
-      </p>
     </div>
   )
 }

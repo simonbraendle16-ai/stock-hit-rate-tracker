@@ -29,7 +29,7 @@ export default async function FriendJournalPage({
   }
 
   return (
-    <div className="min-h-svh bg-background">
+    <div className="min-h-svh">
       <CockpitHeader userLabel={session.user.name || session.user.email} />
       <main className="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-8">
         <Link
@@ -40,7 +40,7 @@ export default async function FriendJournalPage({
         </Link>
 
         {denied || !journal ? (
-          <div className="glass-card flex flex-col items-center gap-2 p-10 text-center">
+          <div className="panel sheen flex flex-col items-center gap-2 p-10 text-center">
             <Lock className="size-8 text-muted-foreground/50" />
             <p className="font-mono text-sm text-muted-foreground">
               Kein Zugriff auf dieses Journal.
@@ -104,7 +104,7 @@ function TradeSection({
         <p className="mt-0.5 font-mono text-[10px] text-muted-foreground/70">{hint}</p>
       </div>
       {trades.length === 0 ? (
-        <p className="glass-card p-4 font-mono text-xs text-muted-foreground">{emptyLabel}</p>
+        <p className="panel sheen p-4 font-mono text-xs text-muted-foreground">{emptyLabel}</p>
       ) : (
         <ul className="flex flex-col gap-2">
           {trades.map((t) => (
@@ -124,7 +124,7 @@ function TradeRow({ trade: t }: { trade: FriendTrade }) {
   const when = t.status === 'abgeschlossen' ? t.closedAt : t.createdAt
 
   return (
-    <div className="glass-card flex items-center justify-between gap-3 px-4 py-3">
+    <div className="panel sheen flex items-center justify-between gap-3 px-4 py-3">
       <div className="flex min-w-0 items-center gap-3">
         <div
           className={cn(

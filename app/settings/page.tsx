@@ -14,7 +14,7 @@ export default async function SettingsPage() {
   const [settings, cashflows] = await Promise.all([getSettings(), listCashflows()])
 
   return (
-    <div className="min-h-svh bg-background">
+    <div className="min-h-svh">
       <CockpitHeader userLabel={session.user.name || session.user.email} />
       <main className="mx-auto max-w-2xl px-4 py-6 sm:px-6 sm:py-8">
         <div className="mb-6">

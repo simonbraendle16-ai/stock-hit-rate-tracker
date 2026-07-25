@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Card } from '@/components/ui/card'
+import { ChartEmpty, ChartHeader } from '@/components/chart-frame'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { AddAssessmentDialog } from '@/components/add-assessment-dialog'
@@ -47,35 +47,26 @@ export function AssessmentList({
   }
 
   return (
-    <Card className="p-4 sm:p-6">
-      <div className="mb-4 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <ListChecks className="size-4 text-primary" />
-          <div>
-            <h3 className="text-sm font-semibold text-foreground">
-              Erfasste Einträge
-            </h3>
-            <p className="text-xs text-muted-foreground">
-              Alle Einschätzungen zu dieser Aktie
-            </p>
-          </div>
-        </div>
-        <Button size="sm" variant="outline" onClick={() => setDialogOpen(true)}>
-          <Plus className="size-3.5" />
-          <span className="hidden sm:inline">Einschätzung</span>
-        </Button>
-      </div>
+    <div className="panel sheen p-4 sm:p-6">
+      <ChartHeader
+        icon={ListChecks}
+        title="Erfasste Einträge"
+        subtitle="Alle Einschätzungen zu dieser Aktie"
+        right={
+          <Button size="sm" variant="outline" onClick={() => setDialogOpen(true)}>
+            <Plus className="size-3.5" />
+            <span className="hidden sm:inline">Einschätzung</span>
+          </Button>
+        }
+      />
 
       {assessments.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-12 text-center">
-          <ListChecks className="size-8 text-muted-foreground/40" />
-          <p className="mt-3 text-sm font-medium text-foreground">
-            Noch keine Einträge
-          </p>
-          <p className="mt-1 max-w-xs text-xs text-muted-foreground">
-            Erfasse oben deine erste Einschätzung zu dieser Aktie.
-          </p>
-        </div>
+        <ChartEmpty
+          icon={ListChecks}
+          title="Noch keine Einträge"
+          hint="Erfasse oben deine erste Einschätzung zu dieser Aktie."
+          className="py-10"
+        />
       ) : (
         <ul className="flex flex-col gap-2">
           {assessments.map((entry) => (
@@ -151,6 +142,6 @@ export function AssessmentList({
         open={dialogOpen}
         onOpenChange={setDialogOpen}
       />
-    </Card>
+    </div>
   )
 }

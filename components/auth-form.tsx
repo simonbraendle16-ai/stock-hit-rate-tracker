@@ -8,8 +8,8 @@ import { authClient } from '@/lib/auth-client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Card } from '@/components/ui/card'
-import { TrendingUp } from 'lucide-react'
+import { AuthBackdrop } from '@/components/auth-backdrop'
+import { Activity } from 'lucide-react'
 
 export function AuthForm({ mode }: { mode: 'sign-in' | 'sign-up' }) {
   const router = useRouter()
@@ -44,21 +44,22 @@ export function AuthForm({ mode }: { mode: 'sign-in' | 'sign-up' }) {
   }
 
   return (
-    <main className="min-h-svh bg-background flex items-center justify-center px-4">
-      <div className="w-full max-w-sm">
-        <div className="mb-8 flex flex-col items-center text-center">
+    <main className="relative flex min-h-svh items-center justify-center bg-background px-4">
+      <AuthBackdrop />
+      <div className="auth-shell w-full max-w-sm">
+        <div className="rise-in mb-8 flex flex-col items-center text-center">
           <div className="flex size-12 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-            <TrendingUp className="size-6" />
+            <Activity className="size-6" />
           </div>
-          <h1 className="mt-4 text-xl font-semibold tracking-tight text-foreground font-heading">
-            Trefferquote
+          <h1 className="mt-4 font-heading text-2xl font-semibold tracking-tight text-foreground">
+            Trading Cockpit
           </h1>
-          <p className="text-sm text-muted-foreground">
-            Deine persönliche Aktienanalyse-Bilanz
+          <p className="note mt-1.5">
+            Handle deinen Plan, nicht deine Emotion.
           </p>
         </div>
 
-        <Card className="p-6">
+        <div className="rise-in rise-in-2 panel-raised p-6">
           <div className="mb-6">
             <h2 className="text-lg font-semibold tracking-tight text-foreground">
               {isSignUp ? 'Konto erstellen' : 'Willkommen zurück'}
@@ -131,7 +132,7 @@ export function AuthForm({ mode }: { mode: 'sign-in' | 'sign-up' }) {
               {isSignUp ? 'Anmelden' : 'Registrieren'}
             </Link>
           </p>
-        </Card>
+        </div>
       </div>
     </main>
   )

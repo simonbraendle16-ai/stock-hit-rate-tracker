@@ -1,6 +1,5 @@
 'use client'
 
-import { Card } from '@/components/ui/card'
 import {
   ChartContainer,
   ChartTooltip,
@@ -8,6 +7,14 @@ import {
 } from '@/components/ui/chart'
 import { Area, AreaChart, CartesianGrid, ReferenceLine, XAxis, YAxis } from 'recharts'
 import type { EquityStats } from '@/lib/trade-stats'
+import { ChartEmpty, ChartHeader } from '@/components/chart-frame'
+import {
+  AREA_FILL,
+  CHART_AXIS,
+  CHART_GRID,
+  CHART_MOTION,
+  CHART_REFERENCE,
+} from '@/lib/chart-theme'
 import { Wallet } from 'lucide-react'
 import { formatMoney } from '@/lib/format'
 
@@ -30,25 +37,20 @@ export function EquityChart({
   const hasData = stats.points.length > 0
 
   return (
-    <Card className="p-4 sm:p-6">
-      <div className="mb-4 flex items-center gap-2">
-        <Wallet className="size-4 text-primary" />
-        <div>
-          <h3 className="text-sm font-semibold text-foreground">Equity-Kurve</h3>
-          <p className="text-xs text-muted-foreground">
-            Kontostand über Zeit — nur Echtgeld, nach Gebühren
-          </p>
-        </div>
-      </div>
+    <div className="panel sheen p-4 sm:p-6">
+      <ChartHeader
+        icon={Wallet}
+        title="Equity-Kurve"
+        subtitle="Kontostand über Zeit — nur Echtgeld, nach Gebühren"
+      />
 
       {!hasData ? (
-        <div className="flex h-[240px] flex-col items-center justify-center rounded-lg border border-dashed border-border text-center">
-          <Wallet className="size-8 text-muted-foreground/40" />
-          <p className="mt-3 text-sm font-medium text-foreground">Noch keine Echtgeld-Trades</p>
-          <p className="mt-1 max-w-xs text-xs text-muted-foreground">
-            Sobald du Echtgeld-Trades abschließt, wächst hier deine Equity-Kurve.
-          </p>
-        </div>
+        <ChartEmpty
+          icon={Wallet}
+          className="h-[240px]"
+          title="Noch keine Echtgeld-Trades"
+          hint="Sobald du Echtgeld-Trades abschließt, wächst hier deine Equity-Kurve."
+        />
       ) : (
         <ChartContainer
           config={{ balance: { label: 'Kontostand', color: 'var(--chart-1)' } }}
@@ -57,34 +59,19 @@ export function EquityChart({
           <AreaChart data={chartData} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
             <defs>
               <linearGradient id="fillEquity" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="var(--color-balance)" stopOpacity={0.25} />
-                <stop offset="95%" stopColor="var(--color-balance)" stopOpacity={0.02} />
+                <stop offset="5%" stopColor="var(--color-balance)" stopOpacity={AREA_FILL.top} />
+                <stop offset="95%" stopColor="var(--color-balance)" stopOpacity={AREA_FILL.bottom} />
               </linearGradient>
             </defs>
-            <CartesianGrid vertical={false} stroke="var(--border)" />
-            <XAxis
-              dataKey="label"
-              tickLine={false}
-              axisLine={false}
-              tickMargin={8}
-              minTickGap={24}
-              tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }}
-            />
+            <CartesianGrid {...CHART_GRID} />
+            <XAxis dataKey="label" minTickGap={24} {...CHART_AXIS} />
             <YAxis
-              tickLine={false}
-              axisLine={false}
-              tickMargin={8}
               width={64}
               tickFormatter={(v) => eur0(Number(v))}
-              tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }}
               domain={['auto', 'auto']}
+              {...CHART_AXIS}
             />
-            <ReferenceLine
-              y={stats.startCapital}
-              stroke="var(--muted-foreground)"
-              strokeDasharray="4 4"
-              strokeOpacity={0.5}
-            />
+            <ReferenceLine y={stats.startCapital} {...CHART_REFERENCE} />
             <ChartTooltip
               content={
                 <ChartTooltipContent
@@ -101,10 +88,11 @@ export function EquityChart({
               fill="url(#fillEquity)"
               dot={chartData.length <= 30}
               activeDot={{ r: 4 }}
+              {...CHART_MOTION}
             />
           </AreaChart>
         </ChartContainer>
       )}
-    </Card>
+    </div>
   )
 }
