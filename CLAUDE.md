@@ -73,6 +73,20 @@ Candlesticks) · pnpm via corepack.
   mit echter Stopdistanz — nur damit wird ein Rückgang in R zu Kontoprozent). Unter
   `MIN_TRADES` = 20 abgerechneten Trades erscheint **keine** Wahrscheinlichkeit, sondern
   „x von 20". Panel: `components/monte-carlo-panel.tsx` auf `/tracking`.
+- **Setup-Tags / Setup-Vergleich** (Etappe 7b) = kurze, **frei benannte** Schubladen am Trade
+  (`setupTags`, JSON-Array, Migration `0016`) neben dem `strategy`-Freitext, der die
+  **Begründung** bleibt. Kein fester Katalog (Setups sind persönlich, anders als die
+  Emotions-Tags); vergleichbar werden sie über den normalisierten Schlüssel in `lib/setups.ts`
+  (klein, Umlaute deutsch gefaltet ä→ae, nur Buchstaben/Ziffern) — „Breakout"/„break-out" sind
+  ein Setup. Höchstens `MAX_SETUP_TAGS` = 3 je Trade, ein Trade zählt in jede seiner Zeilen
+  (Mehrfachzählung). Auswertung `computeSetupStats` (event-aware, nur **entschiedene** Trades):
+  Anzahl, Trefferquote, Erwartungswert, Ø Haltedauer, bestes/schlechtestes R; unter
+  `MIN_SETUP_TRADES` = 10 keine Quote. **Kein Backfill** — Altbestand ist „ohne Angabe";
+  `suggestSetupTags` schlägt aus einem *aufzählungsartigen* Freitext Tags vor (aus einem Satz
+  bewusst keine). Tags dürfen auch bei **abgeschlossenen** Trades noch gesetzt werden
+  (`updateTradeSetupTags`, nicht `updateTradePlan`) — ein Tag ist Einordnung, kein Plan.
+  Panel: `components/setup-comparison-panel.tsx` auf `/tracking`, Eingabe
+  `components/setup-tags-input.tsx`.
 - **Bot-Zwilling** (Etappe 5) = derselbe Plan mechanisch nachgerechnet: Kerze für Kerze ab
   `openedAt`, **über den echten Ausstieg hinaus**, bis Stop oder Ziel berührt ist (beides in
   derselben Kerze → konservativ der Stop). Antwortet auf „was kostet mich mein eigenes
@@ -144,8 +158,10 @@ Candlesticks) · pnpm via corepack.
   Etappe 7a „Monte-Carlo-Simulator" (**ohne Migration**, rechnet nur über vorhandene Trades;
   `lib/monte-carlo.ts` + Panel auf `/tracking`) · Etappe 5 „Bot-Zwilling" (Migration `0015`,
   Tabelle `bot_manual_outcome` **nur** für Nachträge; die Simulation selbst schreibt nichts —
-  `lib/bot-twin.ts` + Panel auf `/tracking`). Offen aus Etappe 7: 7b Setup-Vergleich,
-  7c MAE/MFE, 7d Zeit-Heatmap. Offen aus dem Design: Etappe E (Formulare + Chart-Cockpit).
+  `lib/bot-twin.ts` + Panel auf `/tracking`) · Etappe 7b „Setup-Vergleich" (Migration `0016`,
+  Spalte `setupTags` am `trade`, **ohne Backfill**; `lib/setups.ts` + `computeSetupStats` +
+  Panel auf `/tracking`). Offen aus Etappe 7: 7c MAE/MFE, 7d Zeit-Heatmap.
+  Offen aus dem Design: Etappe E (Formulare + Chart-Cockpit).
 
 ## Code-Exploration: codegraph zuerst (überschreibt die globale Read-Effizienz-Regel)
 Dieses Projekt hat einen lokalen `codegraph`-Index (`.codegraph/`, via MCP-Server `codegraph`).

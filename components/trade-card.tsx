@@ -33,6 +33,7 @@ import {
   Play,
   Plus,
   Scissors,
+  Tag,
   Target,
   Trash2,
   Waves,
@@ -54,6 +55,7 @@ import {
   projectTakeProfit,
 } from '@/lib/trade-math'
 import { tradePnl } from '@/lib/trade-stats'
+import { parseSetupTags } from '@/lib/setups'
 import type { TradeEventRow } from '@/lib/trade-events'
 import { formatMoney } from '@/lib/format'
 import { LivePosition } from '@/components/live-position'
@@ -204,6 +206,22 @@ export function TradeCard({
         <div className="mt-2 flex items-center gap-1.5 font-mono text-[11px] text-primary/80">
           <Waves className="size-3" />
           {[t.waveDegree, t.elliottWaveCount].filter(Boolean).join(' · ')}
+        </div>
+      )}
+
+      {/* Setup-Tags (Etappe 7b) — die Zeile, in der dieser Trade im Vergleich
+          landet. Nur wenn vergeben; Alt-Trades bleiben leer. */}
+      {parseSetupTags(t.setupTags).length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {parseSetupTags(t.setupTags).map((tag) => (
+            <span
+              key={tag}
+              className="flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 font-mono text-[10px] text-primary/90"
+            >
+              <Tag className="size-2.5" aria-hidden />
+              {tag}
+            </span>
+          ))}
         </div>
       )}
 

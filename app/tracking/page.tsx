@@ -7,6 +7,7 @@ import {
   getMoneyVsPaperStats,
   getMonteCarloStats,
   getMoodStats,
+  getSetupStats,
   getZoneStats,
   listTrades,
 } from '@/app/actions/trades'
@@ -19,6 +20,7 @@ import { EquityChart } from '@/components/equity-chart'
 import { ExportTradesButton } from '@/components/export-trades-button'
 import { MoodStatsPanel } from '@/components/mood-stats'
 import { MonteCarloPanel } from '@/components/monte-carlo-panel'
+import { SetupComparisonPanel } from '@/components/setup-comparison-panel'
 import { BotTwinPanel } from '@/components/bot-twin-panel'
 import { getBotTwinStats } from '@/app/actions/bot-twin'
 import { getSettings } from '@/app/actions/settings'
@@ -33,7 +35,18 @@ export default async function TrackingPage() {
   const session = await auth.api.getSession({ headers: await headers() })
   if (!session?.user) redirect('/sign-in')
 
-  const [stats, trades, moneyStats, zoneStats, equity, moodStats, monteCarlo, botTwin, settings] =
+  const [
+    stats,
+    trades,
+    moneyStats,
+    zoneStats,
+    equity,
+    moodStats,
+    monteCarlo,
+    setupStats,
+    botTwin,
+    settings,
+  ] =
     await Promise.all([
       getDisciplineStats(),
       listTrades(),
@@ -42,6 +55,7 @@ export default async function TrackingPage() {
       getEquityStats(),
       getMoodStats(),
       getMonteCarloStats(),
+      getSetupStats(),
       // Holt Kerzen — der einzige Block hier, der ans Netz geht. Er bricht nie
       // ab: fehlende Reihen werden als Lücke ausgewiesen, nicht geworfen.
       getBotTwinStats(),
@@ -160,6 +174,11 @@ export default async function TrackingPage() {
         {/* Wahrscheinlichkeits-Simulation — gehört die Verlustserie zur Verteilung? */}
         <div className="mt-4">
           <MonteCarloPanel stats={monteCarlo} />
+        </div>
+
+        {/* Setup-Vergleich — welches Setup verdient das Geld? */}
+        <div className="mt-4">
+          <SetupComparisonPanel stats={setupStats} />
         </div>
 
         {/* Echtgeld vs. Demo — Trefferquote & Ø Gewinn */}

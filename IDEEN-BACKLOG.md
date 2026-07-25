@@ -44,7 +44,8 @@ Kontowährung, Hebel je Trade, Cashflows, Tests. Migration `0010` ist angewendet
 ## C · Auswertung & Statistik
 - **Monte-Carlo-Simulator** aus eigener Trefferquote und R-Verteilung → „Eine Verlustserie von 6 ist bei dir in 34 % der Fälle normal"
 - **Was-wäre-wenn**: „Alle Trades ohne Regelbruch" vs. real → eine Zahl: was Undiszipliniertheit gekostet hat
-- Setup-Vergleich: `strategy` von Freitext zu Tags, dann Erwartungswert je Setup
+- ~~Setup-Vergleich: `strategy` von Freitext zu Tags, dann Erwartungswert je Setup~~ ✅ erledigt
+  als Etappe 7b (Tags **neben** dem Freitext, siehe `ROADMAP.md`)
 - MAE/MFE: sind die Stops zu eng oder die Ziele zu nah?
 - Zeit-Heatmap: Wochentag × Tageszeit
 - Haltedauer vs. Ergebnis

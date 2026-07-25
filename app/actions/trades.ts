@@ -19,6 +19,7 @@ import {
   computeDisciplineStats,
   computeEquityStats,
   computeMoodStats,
+  computeSetupStats,
   medianRiskFraction,
   netCashflow,
   parseViolations,
@@ -29,9 +30,11 @@ import {
   type EquityStats,
   type MoodStats,
   type RuleViolation,
+  type SetupStats,
   type TradeRow,
   type TradeEventsByTrade,
 } from '@/lib/trade-stats'
+import { parseSetupTags, rankSetupTags, serializeSetupTags } from '@/lib/setups'
 import { simulateFuture, type MonteCarloStats } from '@/lib/monte-carlo'
 import {
   settlePosition,
@@ -77,6 +80,9 @@ export type TradeInput = {
   // Verkaufsanteil beim Take-Profit in Prozent (Teilverkauf-Projektion).
   takeProfitPct?: number | null
   strategy?: string | null
+  // Setup-Tags (Etappe 7b): die auswertbare Schublade neben dem Freitext.
+  // Gesäubert wird in `lib/setups.ts` — der Client darf hier alles schicken.
+  setupTags?: string[] | null
   broker?: string | null
   notes?: string | null
   // Elliott (voll integriert)
@@ -218,6 +224,7 @@ export async function createTrade(input: TradeInput): Promise<{ id: number }> {
       feeExit,
       takeProfitPct,
       strategy: input.strategy?.trim() || null,
+      setupTags: serializeSetupTags(input.setupTags),
       broker: input.broker?.trim() || null,
       riskRewardRatio,
       notes: input.notes?.trim() || null,
@@ -487,6 +494,9 @@ export async function updateTradePlan(
             ? { positionSize: patch.positionSize }
             : {}),
         ...(patch.strategy !== undefined ? { strategy: patch.strategy?.trim() || null } : {}),
+        ...(patch.setupTags !== undefined
+          ? { setupTags: serializeSetupTags(patch.setupTags) }
+          : {}),
         ...(patch.notes !== undefined ? { notes: patch.notes?.trim() || null } : {}),
         ...(patch.elliottWaveCount !== undefined
           ? { elliottWaveCount: patch.elliottWaveCount?.trim() || null }
@@ -1064,6 +1074,70 @@ export async function getMonteCarloStats(): Promise<MonteCarloStats> {
   })
 }
 
+/**
+ * Setup-Vergleich (Etappe 7b) — über alle abgeschlossenen Trades.
+ *
+ * Die Rechnung liegt in `computeSetupStats` (rein, getestet); hier werden nur
+ * die Zeilen geladen. Trades ohne Tags bleiben enthalten: sie bilden die Zeile
+ * „ohne Angabe" und die Abdeckungsangabe — ein fehlendes Tag darf nicht stumm
+ * verschwinden, sonst sähe die Auswertung vollständiger aus, als sie ist.
+ */
+export async function getSetupStats(): Promise<SetupStats> {
+  const userId = await getUserId()
+  const rows = await db
+    .select()
+    .from(trade)
+    .where(and(eq(trade.userId, userId), eq(trade.status, 'abgeschlossen')))
+    .orderBy(asc(trade.closedAt), asc(trade.id))
+
+  return computeSetupStats(rows, await loadEventsByTrade(userId))
+}
+
+/**
+ * Die bereits vergebenen Setup-Tags des Nutzers, häufigste zuerst — die
+ * Vorschlagsliste der Eingabe-Maske.
+ *
+ * Absichtlich über **alle** Trades (nicht nur abgeschlossene): der persönliche
+ * Katalog soll ab dem ersten geplanten Trade vollständig sein. Nur so klickt
+ * man beim zweiten Mal dasselbe Tag an, statt einen Tippfehler-Zwilling
+ * anzulegen — das ist der eigentliche Grund, warum aus Freitext Tags wurden.
+ */
+export async function listSetupTagOptions(): Promise<string[]> {
+  const userId = await getUserId()
+  const rows = await db
+    .select({ setupTags: trade.setupTags })
+    .from(trade)
+    .where(eq(trade.userId, userId))
+
+  return rankSetupTags(rows.map((r) => r.setupTags)).map((t) => t.label)
+}
+
+/**
+ * Setup-Tags eines Trades setzen — auch bei bereits abgeschlossenen Trades.
+ *
+ * Bewusst NICHT über `updateTradePlan`: der lehnt abgeschlossene Trades ab, und
+ * das zu Recht — am Plan eines gelaufenen Trades wird nichts mehr gedreht. Ein
+ * Tag ist aber kein Planbestandteil, sondern eine Einordnung: es verändert
+ * weder Risiko noch Ergebnis noch eine Geldkennzahl, sondern nur die Zeile, in
+ * der der Trade in der Auswertung erscheint. Ohne diesen Weg bliebe die
+ * gesamte Historie unauswertbar und der Setup-Vergleich müsste bei null
+ * anfangen — genau deshalb ist der alte Freitext als Vorlage erhalten
+ * geblieben.
+ */
+export async function updateTradeSetupTags(id: number, tags: string[]): Promise<void> {
+  const userId = await getUserId()
+  await loadOwnedTrade(userId, id) // wirft, wenn der Trade nicht dem Nutzer gehört
+
+  await db
+    .update(trade)
+    .set({ setupTags: serializeSetupTags(tags) })
+    .where(and(eq(trade.id, id), eq(trade.userId, userId)))
+
+  revalidatePath('/trades')
+  revalidatePath(`/trades/${id}`)
+  revalidatePath('/tracking')
+}
+
 // ---------------------------------------------------------------------------
 // CSV-Export
 // ---------------------------------------------------------------------------
@@ -1084,6 +1158,9 @@ export async function exportTradesCsv(): Promise<string> {
     'hebel', 'gebuehr_kauf', 'gebuehr_verkauf',
     'ergebnis', 'ausstieg', 'netto_pnl', 'plan_befolgt', 'regelbrueche',
     'wellengrad', 'wellenzaehlung',
+    // Setup-Tags (Etappe 7b) — die Gruppierung des Setup-Vergleichs; mit '|'
+    // verkettet wie die Emotions-Tags, damit beide Spalten gleich zu lesen sind.
+    'setups',
     // Emotions-Check-in (Etappe 4) — damit die Auswertung auch außerhalb der
     // App nachvollziehbar ist und nicht nur als fertige Quote erscheint.
     'zustand_einstieg', 'tags_einstieg', 'notiz_einstieg',
@@ -1125,6 +1202,7 @@ export async function exportTradesCsv(): Promise<string> {
         parseViolations(t.ruleViolations).join('|'),
         t.waveDegree ?? '',
         t.elliottWaveCount ?? '',
+        parseSetupTags(t.setupTags).join('|'),
         moodScoreLabel(t.moodEntry) ?? '',
         parseMoodTags(t.moodEntryTags).join('|'),
         t.moodEntryNote ?? '',

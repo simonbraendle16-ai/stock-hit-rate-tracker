@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { MIN_GROUP_SIZE } from './emotions'
+import { MIN_SETUP_TRADES } from './setups'
 import {
   computeDisciplineStats,
   computeEquityStats,
   computeMoodStats,
+  computeSetupStats,
   medianRiskFraction,
   netCashflow,
   ratedRMultiples,
@@ -40,6 +42,7 @@ function makeTrade(over: Partial<TradeRow> = {}): TradeRow {
     feeExit: 9,
     takeProfitPct: 100,
     strategy: null,
+    setupTags: null,
     broker: null,
     riskRewardRatio: 2,
     notes: null,
@@ -660,5 +663,230 @@ describe('medianRiskFraction', () => {
     expect(medianRiskFraction(rows, 0)).toBeNull()
     expect(medianRiskFraction(rows, -100)).toBeNull()
     expect(medianRiskFraction([], 10_000)).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Setup-Vergleich (Etappe 7b)
+// ---------------------------------------------------------------------------
+
+/**
+ * Trade mit vorgegebenem R-Vielfachen: Risiko ist |100−90| × 10 = 100, also
+ * ergibt ein Ausstieg bei 100 + r × 10 exakt r R. Gebühren aus, damit in den
+ * Erwartungen keine Rundungsreste stehen.
+ */
+function setupTrade(
+  id: number,
+  tags: string[],
+  r: number,
+  over: Partial<TradeRow> = {},
+): TradeRow {
+  return makeTrade({
+    id,
+    setupTags: tags.length ? JSON.stringify(tags) : null,
+    feeEntry: 0,
+    feeExit: 0,
+    entryPrice: 100,
+    stopLoss: 90,
+    positionSize: 10,
+    actualExitPrice: 100 + r * 10,
+    result: r >= 0 ? 'gewinn' : 'verlust',
+    ...over,
+  })
+}
+
+/** n Trades mit demselben Setup und demselben R — für die Mindestgröße. */
+function setupSeries(startId: number, tag: string, r: number, n: number): TradeRow[] {
+  return Array.from({ length: n }, (_, i) => setupTrade(startId + i, [tag], r))
+}
+
+describe('computeSetupStats', () => {
+  it('fasst Schreibweisen desselben Setups zu einer Zeile zusammen', () => {
+    const rows = [
+      setupTrade(1, ['Breakout'], 1),
+      setupTrade(2, ['breakout'], 1),
+      setupTrade(3, ['Break-Out'], 1),
+    ]
+    const s = computeSetupStats(rows)
+    expect(s.setups).toHaveLength(1)
+    expect(s.setups[0].trades).toBe(3)
+    // Angezeigt wird die häufigste Schreibweise, hier die zuerst gesehene.
+    expect(s.setups[0].label).toBe('Breakout')
+  })
+
+  it('zählt einen Trade mit zwei Tags in beiden Zeilen', () => {
+    const s = computeSetupStats([setupTrade(1, ['Breakout', 'Trendfolge'], 2)])
+    expect(s.setups.map((b) => b.label).sort()).toEqual(['Breakout', 'Trendfolge'])
+    expect(s.setups.every((b) => b.trades === 1)).toBe(true)
+    // Die Zeilen summieren sich bewusst NICHT auf die Gesamtzahl.
+    expect(s.overall.trades).toBe(1)
+  })
+
+  it('rechnet Trefferquote und Erwartungswert wie computeDisciplineStats', () => {
+    const rows = [
+      setupTrade(1, ['Breakout'], 2),
+      setupTrade(2, ['Breakout'], -1),
+      setupTrade(3, ['Pullback'], 0.5),
+    ]
+    const s = computeSetupStats(rows)
+    const d = computeDisciplineStats(rows, 10_000)
+    expect(s.overall.expectancy).toBeCloseTo(d.expectancy, 10)
+    expect(s.overall.winRate).toBeCloseTo(d.winRate, 10)
+
+    const breakout = s.setups.find((b) => b.label === 'Breakout')!
+    expect(breakout.trades).toBe(2)
+    expect(breakout.winRate).toBeCloseTo(50)
+    expect(breakout.expectancy).toBeCloseTo(0.5)
+  })
+
+  it('lässt Breakeven, Abbrüche und offene Trades außen vor', () => {
+    const rows = [
+      setupTrade(1, ['Breakout'], 1),
+      setupTrade(2, ['Breakout'], 0, { result: 'breakeven', actualExitPrice: 100 }),
+      setupTrade(3, ['Breakout'], 0, { result: null, status: 'aktiv' }),
+    ]
+    const s = computeSetupStats(rows)
+    expect(s.setups[0].trades).toBe(1)
+    expect(s.coverage.decided).toBe(1)
+  })
+
+  it('weist bestes und schlechtestes R aus', () => {
+    const rows = [
+      setupTrade(1, ['Breakout'], 3),
+      setupTrade(2, ['Breakout'], -1),
+      setupTrade(3, ['Breakout'], 0.5),
+    ]
+    const b = computeSetupStats(rows).setups[0]
+    expect(b.bestR).toBeCloseTo(3)
+    expect(b.worstR).toBeCloseTo(-1)
+  })
+
+  it('lässt bestes/schlechtestes R offen, wenn kein Trade abgerechnet ist', () => {
+    // Ergebnis steht, aber ohne Ausstiegskurs ist kein P&L berechenbar.
+    const rows = [setupTrade(1, ['Breakout'], 1, { actualExitPrice: null })]
+    const b = computeSetupStats(rows).setups[0]
+    expect(b.trades).toBe(1)
+    expect(b.rated).toBe(0)
+    expect(b.bestR).toBeNull()
+    expect(b.worstR).toBeNull()
+    expect(b.expectancy).toBe(0)
+  })
+
+  it('mittelt die Haltedauer nur über Trades mit beiden Zeitstempeln', () => {
+    const rows = [
+      setupTrade(1, ['Breakout'], 1, {
+        openedAt: new Date('2026-01-01T00:00:00Z'),
+        closedAt: new Date('2026-01-03T00:00:00Z'), // 2 Tage
+      }),
+      setupTrade(2, ['Breakout'], 1, {
+        openedAt: new Date('2026-01-01T00:00:00Z'),
+        closedAt: new Date('2026-01-05T00:00:00Z'), // 4 Tage
+      }),
+      // Alt-Trade ohne Zeitstempel — darf den Schnitt nicht nach unten ziehen.
+      setupTrade(3, ['Breakout'], 1, { openedAt: null, closedAt: null }),
+    ]
+    const b = computeSetupStats(rows).setups[0]
+    expect(b.trades).toBe(3)
+    expect(b.holdingSample).toBe(2)
+    expect(b.avgHoldingDays).toBeCloseTo(3)
+  })
+
+  it('lässt die Haltedauer offen, wenn kein Trade Zeitstempel trägt', () => {
+    const rows = [setupTrade(1, ['Breakout'], 1, { openedAt: null, closedAt: null })]
+    const b = computeSetupStats(rows).setups[0]
+    expect(b.avgHoldingDays).toBeNull()
+    expect(b.holdingSample).toBe(0)
+  })
+
+  it('ignoriert eine negative Haltedauer statt sie mitzumitteln', () => {
+    const rows = [
+      setupTrade(1, ['Breakout'], 1, {
+        openedAt: new Date('2026-01-05T00:00:00Z'),
+        closedAt: new Date('2026-01-01T00:00:00Z'),
+      }),
+    ]
+    const b = computeSetupStats(rows).setups[0]
+    expect(b.avgHoldingDays).toBeNull()
+  })
+
+  it('zeigt Zahlen erst ab der Mindestgröße', () => {
+    const knapp = setupSeries(1, 'Breakout', 1, MIN_SETUP_TRADES - 1)
+    expect(computeSetupStats(knapp).setups[0].enough).toBe(false)
+
+    const genug = setupSeries(1, 'Breakout', 1, MIN_SETUP_TRADES)
+    expect(computeSetupStats(genug).setups[0].enough).toBe(true)
+  })
+
+  it('stellt belastbare Setups nach Erwartungswert vor die übrigen', () => {
+    const rows = [
+      ...setupSeries(1, 'Schwach', 0.2, MIN_SETUP_TRADES),
+      ...setupSeries(100, 'Stark', 1.5, MIN_SETUP_TRADES),
+      // Zwei Glückstreffer — dürfen NICHT oben stehen.
+      ...setupSeries(200, 'Zufall', 9, 2),
+    ]
+    const s = computeSetupStats(rows)
+    expect(s.setups.map((b) => b.label)).toEqual(['Stark', 'Schwach', 'Zufall'])
+  })
+
+  it('sortiert die noch zu dünnen Setups nach Anzahl', () => {
+    const rows = [
+      ...setupSeries(1, 'Selten', 1, 1),
+      ...setupSeries(100, 'Oefter', 1, 3),
+    ]
+    expect(computeSetupStats(rows).setups.map((b) => b.label)).toEqual(['Oefter', 'Selten'])
+  })
+
+  it('führt Trades ohne Tags sichtbar als eigene Zeile', () => {
+    const rows = [
+      setupTrade(1, ['Breakout'], 1),
+      setupTrade(2, [], -1),
+      setupTrade(3, [], 1, { strategy: 'Long, weil der Markt stark aussah' }),
+    ]
+    const s = computeSetupStats(rows)
+    expect(s.untagged.trades).toBe(2)
+    expect(s.coverage.decided).toBe(3)
+    expect(s.coverage.withTags).toBe(1)
+    // Nur der Trade mit Freitext ist ein Kandidat fürs Nachtragen.
+    expect(s.coverage.freetextOnly).toBe(1)
+    expect(s.coverage.distinct).toBe(1)
+  })
+
+  it('verträgt defekte Tag-Spalten wie fehlende', () => {
+    const rows = [
+      setupTrade(1, [], 1, { setupTags: 'kein json' }),
+      setupTrade(2, [], 1, { setupTags: '[]' }),
+    ]
+    const s = computeSetupStats(rows)
+    expect(s.setups).toEqual([])
+    expect(s.untagged.trades).toBe(2)
+  })
+
+  it('ist auf leerem Bestand leer statt undefiniert', () => {
+    const s = computeSetupStats([])
+    expect(s.setups).toEqual([])
+    expect(s.coverage).toEqual({ decided: 0, withTags: 0, freetextOnly: 0, distinct: 0 })
+    expect(s.overall.trades).toBe(0)
+    expect(s.overall.expectancy).toBe(0)
+    expect(s.overall.bestR).toBeNull()
+    expect(s.untagged.avgHoldingDays).toBeNull()
+    expect(s.minGroupSize).toBe(MIN_SETUP_TRADES)
+  })
+
+  it('rechnet Teilverkäufe aus dem Settlement (event-aware)', () => {
+    // Dasselbe Szenario wie oben: 10 @100, 5 @110 teilverkauft, 5 @120 zu.
+    // totalNet 150, geplantes Risiko 100 → 1,5 R.
+    const events = [
+      evt({ type: 'eroeffnet', quantity: 10, price: 100, fee: 0 }),
+      evt({ type: 'teilverkauf', quantity: 5, price: 110, fee: 0 }),
+      evt({ type: 'geschlossen', quantity: 5, price: 120, fee: 0 }),
+    ]
+    const rows = [setupTrade(1, ['Breakout'], 99, { actualExitPrice: 120 })]
+    const map: TradeEventsByTrade = new Map([[1, events]])
+
+    const b = computeSetupStats(rows, map).setups[0]
+    expect(b.expectancy).toBeCloseTo(1.5)
+    expect(b.bestR).toBeCloseTo(1.5)
+    // Ohne Event-Map bleibt es beim Zeilen-Pfad.
+    expect(computeSetupStats(rows).setups[0].expectancy).toBeCloseTo(2)
   })
 })

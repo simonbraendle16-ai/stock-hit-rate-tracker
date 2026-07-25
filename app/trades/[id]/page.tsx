@@ -9,6 +9,7 @@ import { CockpitHeader } from '@/components/cockpit-header'
 import { TradeCard } from '@/components/trade-card'
 import { TradeTimeline } from '@/components/trade-timeline'
 import { TradeReplay } from '@/components/trade-replay'
+import { SetupTagsCard } from '@/components/setup-tags-card'
 import { ArrowLeft, LineChart, Lock } from 'lucide-react'
 
 export default async function TradeDetailPage({
@@ -92,9 +93,11 @@ export default async function TradeDetailPage({
             </div>
           )}
 
-          {t.strategy && (
-            <Panel title="Strategie / Setup">{t.strategy}</Panel>
-          )}
+          {/* Setup (Etappe 7b): die auswertbare Schublade — auch bei
+              abgeschlossenen Trades noch nachtragbar, siehe SetupTagsCard. */}
+          <SetupTagsCard trade={t} />
+
+          {t.strategy && <Panel title="Begründung / Strategie">{t.strategy}</Panel>}
           {t.notes && <Panel title="Notizen">{t.notes}</Panel>}
           {/* Die Skala und die Tags stehen schon auf der Karte — hier steht der
               Freitext, für den dort kein Platz ist. */}

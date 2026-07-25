@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { createTrade, type TradeInput } from '@/app/actions/trades'
+import { SetupTagsInput } from '@/components/setup-tags-input'
 import {
   PreTradeQuestionsDialog,
   PRE_TRADE_QUESTIONS,
@@ -78,6 +79,7 @@ export function TradeForm({
 }) {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
+  const [setupTags, setSetupTags] = useState<string[]>([])
   const [questionsOpen, setQuestionsOpen] = useState(false)
   const [tradedWithMoney, setTradedWithMoney] = useState(true)
   const money$ = (n: number | null | undefined) => formatMoney(n, currency)
@@ -200,6 +202,7 @@ export function TradeForm({
         takeProfitPct: form.takeProfitPct ? parseFloat(form.takeProfitPct) : 100,
         broker: form.broker || null,
         strategy: form.strategy || null,
+        setupTags,
         notes: form.notes || null,
         elliottWaveCount: form.elliottWaveCount || null,
         waveDegree: form.waveDegree || null,
@@ -645,9 +648,15 @@ export function TradeForm({
         </div>
       </div>
 
-      {/* Strategie / Notizen */}
+      {/* Setup (auswertbar) / Begründung (Freitext) / Notizen */}
+      <SetupTagsInput
+        value={setupTags}
+        onChange={setSetupTags}
+        freetext={form.strategy}
+        disabled={loading}
+      />
       <div className="space-y-2">
-        <Label className={labelCls}>Strategie / Setup</Label>
+        <Label className={labelCls}>Begründung / Strategie</Label>
         <Textarea
           value={form.strategy}
           onChange={(e) => set('strategy', e.target.value)}

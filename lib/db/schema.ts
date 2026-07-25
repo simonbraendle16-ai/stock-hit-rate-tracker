@@ -157,6 +157,11 @@ export const trade = pgTable('trade', {
   // Verkaufsanteil beim Take-Profit in Prozent (Teilverkauf-Projektion), Standard 100.
   takeProfitPct: doublePrecision('takeProfitPct').default(100),
   strategy: text('strategy'),
+  // Setup-Tags (Etappe 7b): kurze, vergleichbare Schubladen als JSON-Array —
+  // die auswertbare Ergänzung zum Freitext daneben, der die Begründung bleibt.
+  // Null = Alt-Trade ohne Tags; die Auswertung zählt ihn als „ohne Angabe".
+  // Normalisierung und Grenzen in `lib/setups.ts`.
+  setupTags: text('setupTags'),
   broker: text('broker'),
   riskRewardRatio: doublePrecision('riskRewardRatio'),
   notes: text('notes'),

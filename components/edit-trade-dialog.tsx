@@ -4,6 +4,8 @@ import { useMemo, useState } from 'react'
 import type { TradeRow } from '@/lib/trade-stats'
 import { currencySymbol } from '@/lib/format'
 import { updateTradePlan } from '@/app/actions/trades'
+import { parseSetupTags } from '@/lib/setups'
+import { SetupTagsInput } from '@/components/setup-tags-input'
 import {
   Dialog,
   DialogContent,
@@ -54,6 +56,7 @@ export function EditTradeDialog({
   )
   const [elliottWaveCount, setElliottWaveCount] = useState(trade.elliottWaveCount ?? '')
   const [strategy, setStrategy] = useState(trade.strategy ?? '')
+  const [setupTags, setSetupTags] = useState<string[]>(parseSetupTags(trade.setupTags))
   const [notes, setNotes] = useState(trade.notes ?? '')
   const [ackViolation, setAckViolation] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -87,6 +90,7 @@ export function EditTradeDialog({
             elliottInvalidation === '' ? null : numOrNull(elliottInvalidation),
           elliottWaveCount: elliottWaveCount,
           strategy,
+          setupTags,
           notes,
         },
         movesLocked, // force = Regelbruch bewusst protokollieren
@@ -153,7 +157,13 @@ export function EditTradeDialog({
             <Input value={elliottWaveCount}
               onChange={(e) => setElliottWaveCount(e.target.value)} className="input-ocean font-mono" />
           </Field>
-          <Field label="Strategie / Setup">
+          <SetupTagsInput
+            value={setupTags}
+            onChange={setSetupTags}
+            freetext={strategy}
+            disabled={busy}
+          />
+          <Field label="Begründung / Strategie">
             <Textarea value={strategy} onChange={(e) => setStrategy(e.target.value)}
               className="input-ocean min-h-16 font-mono text-sm" />
           </Field>

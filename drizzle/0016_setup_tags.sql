@@ -1,0 +1,32 @@
+-- Setup-Vergleich (Etappe 7b): auswertbare Setup-Tags am Trade.
+--
+-- Ausgangslage: "strategy" ist ein Freitextfeld. Dasselbe Setup steht dort in
+-- beliebig vielen Schreibweisen, dadurch lässt sich die Frage „welches Setup
+-- verdient das Geld" nicht beantworten. Neu ist eine zweite Spalte mit einer
+-- kurzen, vergleichbaren Tag-Liste (JSON-Array, wie "moodEntryTags" aus 0011).
+--
+-- Warum eine NEUE Spalte statt eines Typwechsels auf "strategy":
+--   * Ein Typwechsel wäre destruktiv — die Regel dieses Projekts ist additiv.
+--   * Der Freitext behält eine eigene Aufgabe: er begründet den Trade
+--     („warum genau jetzt"), die Tags sortieren ihn ein („welches Setup").
+--   * Er bleibt Migrationshilfe: die Eingabemaske schlägt aus dem vorhandenen
+--     Text Tags vor (lib/setups.ts → suggestSetupTags). Vorschlag, kein Zwang.
+--
+-- KEIN Backfill: aus einem Satz automatisch ein Tag zu machen hieße, sich die
+-- Kategorien auszudenken, auf denen anschließend die Auswertung steht. Der
+-- Altbestand bleibt leer und zählt in der Auswertung sichtbar als „ohne
+-- Angabe" — dieselbe Haltung wie beim Emotions-Check-in (0011).
+--
+-- Additiv only (safe für bestehende Daten), idempotent — mehrfach ausführbar.
+-- Kein DROP, kein RENAME, keine geänderte Zeile: der Trade-Bestand ist nach
+-- dieser Migration unverändert, nur um eine leere Spalte breiter.
+
+ALTER TABLE "trade" ADD COLUMN IF NOT EXISTS "setupTags" text;
+
+-- Hinweis zum Wertebereich: eine CHECK-Bedingung wie bei 0011/0012/0014 gibt es
+-- hier bewusst nicht. Die Setup-Namen sind frei vom Nutzer vergeben (es gibt
+-- keinen festen Katalog, den die Datenbank kennen könnte), und der einzige
+-- Formzwang — gültiges JSON-Array, höchstens MAX_SETUP_TAGS kurze Einträge —
+-- wird beim Schreiben in lib/setups.ts (sanitizeSetupTags) durchgesetzt und
+-- beim Lesen noch einmal (parseSetupTags verwirft defekte Werte, statt zu
+-- werfen). Eine SQL-Bedingung könnte das nicht schärfer prüfen als der Code.

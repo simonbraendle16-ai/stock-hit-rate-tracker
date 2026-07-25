@@ -40,8 +40,13 @@ Details unten bei Etappe 7.
 vorher/nachher byte-identisch (16/16). Die Simulation selbst schreibt nichts: sie rechnet live
 über den Kerzen-Cache. Neu sind `lib/bot-twin.ts` (rein, 49 Tests) und der Vergleichsblock auf
 `/tracking`. Details unten bei der Etappe.
+**Etappe 7b (Setup-Vergleich) ist erledigt** — Migration `drizzle/0016_setup_tags.sql` (eine
+additive Spalte `setupTags` am `trade`, **ohne Backfill**) ist angewendet, Trade-Dump
+vorher/nachher byte-identisch (16/16). Der Strategie-Freitext bleibt als Begründung und als
+Vorlage für Tags erhalten. Neu sind `lib/setups.ts` (rein, 28 Tests), `computeSetupStats` und
+das Vergleichs-Panel auf `/tracking`. Details unten bei Etappe 7.
 
-**Damit sind alle nummerierten Etappen bis auf 7b–7d abgearbeitet.**
+**Damit sind alle nummerierten Etappen bis auf 7c–7d abgearbeitet.**
 
 ---
 
@@ -684,8 +689,8 @@ Detailseite steht die vollständige Geschichte des Trades mit Zeitstempeln.
 
 # Etappe 7 — Statistik-Ausbau
 
-**Aufwand:** groß, aber gut teilbar · **Migration:** keine ·
-**7a ist erledigt, 7b–7d sind offen**
+**Aufwand:** groß, aber gut teilbar · **Migration:** nur 7b (`0016`, eine Spalte) ·
+**7a und 7b sind erledigt, 7c–7d sind offen**
 
 ## Warum
 
@@ -792,14 +797,126 @@ Neu: `lib/monte-carlo.ts` (rein, testbar mit festem Zufalls-Seed) + Panel auf `/
   von der anderen Seite an.
 - **Zinseszins ist nicht abgebildet** (gleichbleibendes Risiko je Trade). Steht so in der UI.
 
-## 7b · Setup-Vergleich
+## 7b · Setup-Vergleich ✅ ERLEDIGT (25.07.2026)
 
-`strategy` ist heute ein Freitextfeld und dadurch nicht auswertbar. Umbau auf Tags (bestehende
-Freitexte bleiben als Migrationshilfe erhalten), dann je Setup: Anzahl, Trefferquote,
-Erwartungswert, Ø Haltedauer, bestes/schlechtestes R.
+`strategy` war ein Freitextfeld und dadurch nicht auswertbar. Neu ist eine zweite Spalte mit
+kurzen, vergleichbaren Setup-Tags; je Setup zeigt `/tracking` Anzahl, Trefferquote,
+Erwartungswert, Ø Haltedauer und bestes/schlechtestes R.
 
 Die Frage, die es beantwortet: *Welches meiner Setups verdient das Geld — und welches halte ich
 nur aus Gewohnheit?*
+
+```
+Setup          Trades  Treffer     Ø R   best/schlecht.  Ø Dauer  Plan
+Breakout           13     62 %  +0,92 R  +3,00 / −1,00     2,2 T   92 %
+Rücksetzer         11     36 %  −0,09 R  +1,50 / −1,00    11,7 T   82 %
+Range               4     noch zu wenige Daten (ab 10)
+ohne Angabe         3     noch zu wenige Daten (ab 10)
+```
+(Zahlen aus dem Sandbox-Durchlauf der Sichtprüfung, keine echten Werte.)
+
+### Wie es gebaut wurde — die Entscheidungen
+
+- **Freie Tags statt festem Katalog.** Bei den Emotionen ist eine feste Liste richtig — FOMO
+  heißt bei jedem dasselbe. Setups sind das persönliche Handwerk des Traders: ein vorgegebener
+  Katalog würde entweder nicht passen oder in fremde Schubladen zwingen und damit genau die
+  Auswertung verfälschen, um die es geht. Die Vergleichbarkeit kommt deshalb nicht aus einer
+  Liste, sondern aus der **Normalisierung**: „Breakout", „breakout", „Break-Out" haben denselben
+  Schlüssel (klein, Umlaute deutsch gefaltet ä→ae, alles außer Buchstaben/Ziffern raus).
+  Angezeigt wird die geschriebene Form, verglichen wird der Schlüssel.
+- **Neue Spalte, kein Typwechsel.** `setupTags` (JSON-Array, wie `moodEntryTags`) steht neben
+  `strategy`. Der Freitext behält eine eigene Aufgabe — er ist ab jetzt die **Begründung**
+  („warum genau jetzt"), das Tag die **Schublade** („welches Setup"). Beide Felder stehen im
+  Formular untereinander, das Textfeld heißt jetzt „Begründung / Strategie".
+- **Kein Backfill.** Aus „Long, weil der Markt stark aussah" automatisch ein Tag zu machen hieße,
+  sich die Kategorien auszudenken, auf denen anschließend die ganze Auswertung steht.
+  Stattdessen ist der Freitext **Migrationshilfe**: `suggestSetupTags` schlägt daraus Tags vor,
+  übernommen wird nur, was der Mensch anklickt. Der Vorschlag kommt bewusst nur, wenn der Text
+  **als Ganzes** eine Aufzählung ist (jeder Teil ≤ 3 Wörter). Sobald ein Teil Prosa ist, kommt
+  gar kein Vorschlag — sonst würde aus dem Satz oben „Long" vorgeschlagen, also eine
+  Handelsrichtung, die anschließend als Setup gezählt würde. Ein falscher Vorschlag ist hier
+  teurer als keiner: er landet mit einem Klick in der Auswertung.
+- **Höchstens 3 Tags je Trade.** Ein Trade hat in aller Regel *ein* Setup. Bei zehn erlaubten
+  Tags stünde jeder Trade in jeder Zeile und die Frage „welches Setup trägt mich" verlöre ihre
+  Schärfe; Kombinationen wie „Breakout + Trendfolge" bleiben mit drei Plätzen möglich.
+- **Mindestens 10 entschiedene Trades je Setup** (die offene Frage der Etappe, so entschieden —
+  wie in der Roadmap vorgeschlagen). Darunter steht „noch zu wenige Daten (ab 10)" statt einer
+  Quote. Hier ist die Scheinpräzision besonders teuer: man sortiert sonst ein funktionierendes
+  Setup aus, das nur eine schlechte Woche hatte.
+- **Dieselbe Grundlage wie Erwartungswert und Emotions-Auswertung.** Gezählt werden nur
+  **entschiedene** Trades (Gewinn/Verlust), der Erwartungswert nur über die mit berechenbarem
+  P&L, event-aware. Eine Kennzahl darf nicht je nach Block auf einer anderen Auswahl stehen.
+- **Sortierung: belastbare Setups zuerst, nach Erwartungswert.** Sonst stünde ein Setup mit zwei
+  Glückstreffern ganz oben — und genau daraus würde man die falsche Entscheidung ableiten.
+- **Tags sind auch bei abgeschlossenen Trades nachtragbar** (`updateTradeSetupTags`, eigener
+  Weg neben `updateTradePlan`, der abgeschlossene Trades zu Recht ablehnt). Ein Tag ist kein
+  Planbestandteil: es verändert weder Risiko noch Ergebnis noch eine Geldkennzahl, nur die
+  Zeile, in der der Trade erscheint. Ohne diesen Weg bliebe die gesamte Historie unauswertbar.
+- **Douglas-Filter bestanden:** Der Block sagt nichts über den nächsten Trade voraus. Er zeigt,
+  welcher Teil des eigenen Prozesses trägt — und macht damit das Aussortieren eines Setups zu
+  einer Entscheidung auf Zahlen statt auf Gefühl. Die Zeile „ohne Angabe" bleibt sichtbar, damit
+  die Auswertung nicht vollständiger aussieht, als sie ist.
+
+### Dateien
+
+| Datei | Änderung |
+|---|---|
+| `lib/setups.ts` | **neu** — Schlüsselbildung, Normalisierung, Grenzen, Vorschläge, Rangliste |
+| `lib/setups.test.ts` | **neu** — 28 Tests |
+| `lib/trade-stats.ts` | `computeSetupStats` + Typen (`SetupBucket`, `SetupStats`), event-aware |
+| `lib/trade-stats.test.ts` | 15 Tests für den Setup-Vergleich |
+| `lib/db/schema.ts` | Spalte `setupTags` am `trade` |
+| `drizzle/0016_setup_tags.sql` | **neu** — additiv, idempotent, ohne Backfill |
+| `app/actions/trades.ts` | `getSetupStats`, `listSetupTagOptions`, `updateTradeSetupTags`; `setupTags` in `createTrade`/`updateTradePlan`; CSV-Spalte `setups` |
+| `components/setup-tags-input.tsx` | **neu** — Chips, Katalog, Freitext-Vorschlag (kontrolliert) |
+| `components/setup-comparison-panel.tsx` | **neu** — Tabelle inkl. Leerzustand und Ehrlichkeitsgrenzen |
+| `components/setup-tags-card.tsx` | **neu** — Setup auf `/trades/[id]`, auch nachträglich |
+| `components/{trade-form,edit-trade-dialog,trade-card}.tsx` | Eingabe eingehängt, Tags auf der Karte |
+| `app/tracking/page.tsx`, `app/trades/[id]/page.tsx` | Panel bzw. Karte eingehängt |
+
+### Nachweis
+
+- **Migration nachgewiesen:** `.baseline-etappe7b-vorher` gegen `.baseline-etappe7b-final`
+  verglichen — 16 Trades vorher wie nachher, **0 Abweichungen** in allen bestehenden Feldern,
+  einzige Änderung ist die neue, überall leere Spalte. Gegen `information_schema` geprüft:
+  `setupTags text, nullable`, 0 gefüllte Zeilen.
+- **Prüfläufe grün:** `tsc --noEmit`, `vitest run` (270 Tests, 9 Dateien), `next build`.
+- **Sichtprüfung mit einem Wegwerf-Account** (angelegt, befüllt, danach samt Trades und Konto
+  gelöscht — die echten Trades wurden nie angefasst): 31 abgeschlossene Sandbox-Trades zeigten
+  die gefüllte Tabelle (Zahlen oben, gegen die Erwartung nachgerechnet), die Zeilen „zu wenige
+  Daten" ab 4 Trades, den Mehrfach-Tag-Trade in zwei Zeilen, den Hinweis auf 2 Trades mit
+  Freitext ohne Setup — und nach dem Entfernen aller Tags den Leerzustand.
+- **Der Schreibweg ist end-to-end geprüft:** auf einem **abgeschlossenen** Trade zwei Tags über
+  die Karte gesetzt und gespeichert; die Spalte stand danach als `["Vortageshoch","Breakout"]`
+  in der Datenbank. Ebenso geprüft: Tippen + Enter erzeugt einen Chip und zählt 1/3, der
+  Katalog bietet nur noch die nicht gewählten Tags an, und aus „Breakout, Vortageshoch" wird
+  ein Vorschlag, aus einem ganzen Satz keiner.
+- **Die Gruppierung ist gegen Schreibweisen getestet:** „Breakout", „breakout" und „Break-Out"
+  landen in einer Zeile; „Rücksetzer" und „Ruecksetzer" ebenso; „Welle 3" und „Welle 5" bleiben
+  getrennt.
+
+### Abweichungen von der ursprünglichen Beschreibung
+
+| Ursprünglich | Jetzt | Warum |
+|---|---|---|
+| „Umbau auf Tags" (statt Freitext) | Tags **neben** dem Freitext, beide bleiben | Ein Typwechsel wäre destruktiv; und der Freitext hat eine eigene Aufgabe (Begründung), die ein Tag nicht übernehmen kann. |
+| „Etappe 7: Migration keine" | Migration `0016` (eine Spalte) | Ohne eigene Spalte gäbe es keinen Ort für die Tags. Additiv, ohne Backfill, Bestand unverändert. |
+| — | Ø Haltedauer weist ihre Stichprobe aus | Alt-Trades ohne `openedAt`/`closedAt` würden den Schnitt sonst stumm verzerren. |
+| — | Zeile „ohne Angabe" + Zähler „x von y mit Setup" | Ein Block, der nur die getaggten Trades zeigt, sieht vollständiger aus, als er ist. |
+| — | Nachtragen auch bei abgeschlossenen Trades | Sonst wäre der Vergleich erst in Monaten aussagefähig und die „Migrationshilfe" wirkungslos. |
+
+### Offen
+
+- **Der Block ist bis auf Weiteres leer:** der echte Bestand hat 0 abgeschlossene Trades, also
+  auch keine Setup-Zeile. Gebaut und geprüft ist er über den Sandbox-Durchlauf; am eigenen
+  Journal wird er ab dem ersten abgeschlossenen, getaggten Trade sichtbar.
+- **Die 13 geplanten Trades tragen noch keine Tags.** Sie lassen sich im Bearbeiten-Dialog
+  vergeben; ein Vorschlag aus dem Freitext erscheint nur bei aufzählungsartigen Texten.
+- **Keine Zusammenführung zweier Setups im Nachhinein.** Wer „Breakout" und „Ausbruch" parallel
+  benutzt, hat zwei Zeilen und muss sie von Hand angleichen. Ein Umbenennen über alle Trades
+  hinweg wäre der nächste Schritt, wenn der Fall auftritt.
+- **Ø Haltedauer ist ein arithmetisches Mittel.** Ein einzelner Monate-Trade verschiebt sie;
+  ein Median wäre robuster, braucht aber mehr Daten, um sich zu lohnen.
 
 ## 7c · MAE / MFE
 
@@ -824,9 +941,10 @@ zwei Wochen hältst, sind im Schnitt negativ".
 | Datei | Änderung |
 |---|---|
 | `lib/monte-carlo.ts` (+ Test) | **neu** — 7a |
-| `lib/trade-stats.ts` | `computeSetupStats`, `computeTimeStats` — 7b, 7d |
+| `lib/trade-stats.ts` | `computeSetupStats` ✅ (7b), `computeTimeStats` — 7d |
+| `lib/setups.ts` (+ Test) | **neu** ✅ — 7b |
 | `lib/excursion.ts` (+ Test) | **neu** — 7c |
-| `app/actions/trades.ts` | `strategy` → Tags — 7b |
+| `app/actions/trades.ts` | Setup-Tags neben `strategy` ✅ — 7b |
 | `components/{monte-carlo,setup-comparison,excursion,time-heatmap}-panel.tsx` | **neu** |
 | `app/tracking/page.tsx` | Panels einhängen |
 
@@ -840,11 +958,12 @@ schlecht?
 
 - Ab wie vielen Trades wird eine Auswertung überhaupt angezeigt? (Vorschlag: 20 für
   Monte-Carlo, 10 je Setup — darunter „noch zu wenige Daten".)
-  → **Für 7a entschieden: 20** (`MIN_TRADES` in `lib/monte-carlo.ts`). Für 7b/7c/7d weiterhin
-  offen; 10 je Setup ist der Vorschlag.
+  → **Für 7a entschieden: 20** (`MIN_TRADES` in `lib/monte-carlo.ts`).
+  → **Für 7b entschieden: 10** je Setup (`MIN_SETUP_TRADES` in `lib/setups.ts`), wie
+  vorgeschlagen. Für 7c/7d weiterhin offen.
 - Sollen alle vier Teile zusammen kommen oder einzeln als eigene Prompts?
-  → **Einzeln**, wie es die Reihenfolge-Empfehlung unten vorsieht: 7a ist als eigener Schritt
-  gebaut und abgeschlossen, 7b–7d bleiben je ein eigener Arbeitsschritt.
+  → **Einzeln**, wie es die Reihenfolge-Empfehlung unten vorsieht: 7a und 7b sind je als
+  eigener Schritt gebaut und abgeschlossen, 7c und 7d bleiben je ein eigener Arbeitsschritt.
 
 ---
 
@@ -861,9 +980,11 @@ Etappe 7a (Monte-Carlo)─┤  ✅ erledigt — bester Erkenntnisgewinn ohne neu
                        │
 Etappe 5 (Bot-Zwilling)─┤  ✅ erledigt — das stärkste Feature und der größte Brocken
                        │
-Etappe 6 (Teilverkäufe)─┘  ✅ erledigt — nach Etappe 3
+Etappe 6 (Teilverkäufe)─┤  ✅ erledigt — nach Etappe 3
+                       │
+Etappe 7b (Setups)     ─┘  ✅ erledigt — erste Etappe, die eine neue Eingabe verlangt
 
-offen: 7b Setup-Vergleich · 7c MAE/MFE · 7d Zeit-Heatmap · Design E (Formulare/Chart)
+offen: 7c MAE/MFE · 7d Zeit-Heatmap · Design E (Formulare/Chart)
 ```
 
 **Warum Etappe 4 zuerst:** Emotionsdaten sind nur rückwirkend nutzlos. Jeder Trade, der ohne

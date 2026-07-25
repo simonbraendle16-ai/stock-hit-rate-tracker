@@ -14,6 +14,13 @@ import {
   parseMoodTags,
   type MoodTone,
 } from '@/lib/emotions'
+import {
+  MIN_SETUP_TRADES,
+  MAX_SETUP_TAGS,
+  parseSetupTags,
+  rankSetupTags,
+  setupTagKeys,
+} from '@/lib/setups'
 // Hinweis: zyklischer Import mit lib/trade-events.ts. Beide nutzen die Funktionen
 // der jeweils anderen Seite ausschließlich zur Laufzeit (nie beim Modul-Laden),
 // und Funktionsdeklarationen sind gehoistet — dadurch ist der Zyklus unkritisch.
@@ -574,5 +581,161 @@ export function computeMoodStats(rows: TradeRow[], eventsByTrade?: TradeEventsBy
     byEntryTag,
     byExitGroup,
     overall: moodBucket('gesamt', 'alle Trades', 'neutral', decided, eventsByTrade),
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Setup-Vergleich (Etappe 7b)
+// ---------------------------------------------------------------------------
+
+/** Eine Zeile des Setup-Vergleichs — ein Tag, „ohne Angabe" oder die Gesamtzeile. */
+export type SetupBucket = {
+  key: string
+  label: string
+  /** Entschiedene Trades (Gewinn|Verlust) mit diesem Setup — der Nenner der Quote. */
+  trades: number
+  /** Davon mit berechenbarem P&L — die Basis von Erwartungswert und bestem/schlechtestem R. */
+  rated: number
+  winRate: number // 0-100
+  expectancy: number // Ø R-Vielfaches
+  planFollowedRate: number // 0-100
+  /** Bestes und schlechtestes R-Vielfaches; `null`, wenn kein Trade abgerechnet ist. */
+  bestR: number | null
+  worstR: number | null
+  /** Ø Haltedauer in Tagen; `null`, wenn kein Trade Ein- und Ausstiegszeit trägt. */
+  avgHoldingDays: number | null
+  /** Wie viele Trades die Haltedauer trägt — Alt-Trades ohne Zeitstempel fehlen. */
+  holdingSample: number
+  /** Erst ab `MIN_SETUP_TRADES` zeigt die UI Zahlen statt „zu wenige Daten". */
+  enough: boolean
+}
+
+export type SetupCoverage = {
+  /** Entschiedene Trades insgesamt — die Obergrenze für alles Weitere. */
+  decided: number
+  withTags: number
+  /**
+   * Entschiedene Trades ohne Tags, die aber einen Strategie-Freitext tragen —
+   * genau die Zeilen, die eine Runde „Tags nachtragen" auswertbar machen würde.
+   */
+  freetextOnly: number
+  /** Verschiedene Setups im Bestand. */
+  distinct: number
+}
+
+export type SetupStats = {
+  minGroupSize: number
+  maxTags: number
+  coverage: SetupCoverage
+  /** Ein Eintrag je Setup, sortiert (siehe `computeSetupStats`). */
+  setups: SetupBucket[]
+  /** Die entschiedenen Trades ohne Tags — sichtbar, damit nichts stumm verschwindet. */
+  untagged: SetupBucket
+  /** Alle entschiedenen Trades — der Bezugspunkt, gegen den man die Setups liest. */
+  overall: SetupBucket
+}
+
+/** Haltedauer in Tagen; `null`, wenn ein Zeitstempel fehlt oder unplausibel ist. */
+function holdingDays(t: TradeRow): number | null {
+  if (!t.openedAt || !t.closedAt) return null
+  const ms = new Date(t.closedAt).getTime() - new Date(t.openedAt).getTime()
+  if (!Number.isFinite(ms) || ms < 0) return null
+  return ms / 86_400_000
+}
+
+/**
+ * Kennzahlen einer Teilmenge — dieselben Definitionen wie in
+ * `computeDisciplineStats` und `moodBucket`: Trefferquote über entschiedene
+ * Trades, Erwartungswert nur über die mit berechenbarem P&L. Neu sind bestes/
+ * schlechtestes R und die Ø Haltedauer.
+ */
+function setupBucket(
+  key: string,
+  label: string,
+  rows: TradeRow[],
+  eventsByTrade?: TradeEventsByTrade,
+): SetupBucket {
+  const trades = rows.length
+  const wins = rows.filter((t) => t.result === 'gewinn').length
+  const followed = rows.filter((t) => t.followedPlan).length
+  const rated = rows.filter((t) => hasNetPnl(t, eventsOf(eventsByTrade, t.id)))
+  const rs = rated.map((t) => rMultiple(t, eventsOf(eventsByTrade, t.id)))
+  const holds = rows.map(holdingDays).filter((d): d is number => d !== null)
+
+  return {
+    key,
+    label,
+    trades,
+    rated: rated.length,
+    winRate: trades ? (wins / trades) * 100 : 0,
+    expectancy: rs.length ? rs.reduce((a, b) => a + b, 0) / rs.length : 0,
+    planFollowedRate: trades ? (followed / trades) * 100 : 0,
+    bestR: rs.length ? Math.max(...rs) : null,
+    worstR: rs.length ? Math.min(...rs) : null,
+    avgHoldingDays: holds.length ? holds.reduce((a, b) => a + b, 0) / holds.length : null,
+    holdingSample: holds.length,
+    enough: trades >= MIN_SETUP_TRADES,
+  }
+}
+
+/**
+ * Setup-Vergleich — welches Setup verdient das Geld, welches halte ich nur aus
+ * Gewohnheit?
+ *
+ * Ausgewertet werden ausschließlich **entschiedene** Trades (Gewinn|Verlust),
+ * exakt wie bei Erwartungswert und Emotions-Auswertung — eine Kennzahl darf
+ * nicht je nach Block auf einer anderen Auswahl stehen.
+ *
+ * Die Zuordnung ist **mehrfachzählend**: ein Trade mit „Breakout" und
+ * „Trendfolge" erscheint in beiden Zeilen. Die Zeilen summieren sich deshalb
+ * nicht auf die Gesamtzahl — sie beantworten je Setup „was bringt mir dieses
+ * Setup", nicht „wie teilt sich mein Handel auf".
+ *
+ * Reihenfolge: erst die belastbaren Setups (ab `MIN_SETUP_TRADES`) nach
+ * Erwartungswert absteigend, danach die übrigen nach Anzahl. Sonst stünde ein
+ * Setup mit zwei Glückstreffern ganz oben — und genau daraus würde man die
+ * falsche Entscheidung ableiten.
+ */
+export function computeSetupStats(
+  rows: TradeRow[],
+  eventsByTrade?: TradeEventsByTrade,
+): SetupStats {
+  const decided = decisiveRows(rows)
+
+  // Anzeige-Namen aus dem gesamten Bestand, nicht nur aus den entschiedenen
+  // Trades: ein Setup, das bisher nur in offenen Trades steckt, soll dieselbe
+  // Schreibweise tragen wie später in der Tabelle.
+  const known = rankSetupTags(rows.map((t) => t.setupTags))
+
+  const setups = known
+    .map(({ key, label }) =>
+      setupBucket(
+        key,
+        label,
+        decided.filter((t) => setupTagKeys(t.setupTags).includes(key)),
+        eventsByTrade,
+      ),
+    )
+    .filter((b) => b.trades > 0)
+    .sort((a, b) => {
+      if (a.enough !== b.enough) return a.enough ? -1 : 1
+      if (a.enough && b.enough) return b.expectancy - a.expectancy
+      return b.trades - a.trades || a.label.localeCompare(b.label, 'de')
+    })
+
+  const untagged = decided.filter((t) => parseSetupTags(t.setupTags).length === 0)
+
+  return {
+    minGroupSize: MIN_SETUP_TRADES,
+    maxTags: MAX_SETUP_TAGS,
+    coverage: {
+      decided: decided.length,
+      withTags: decided.length - untagged.length,
+      freetextOnly: untagged.filter((t) => (t.strategy ?? '').trim().length > 0).length,
+      distinct: setups.length,
+    },
+    setups,
+    untagged: setupBucket('ohne', 'ohne Angabe', untagged, eventsByTrade),
+    overall: setupBucket('gesamt', 'alle Trades', decided, eventsByTrade),
   }
 }
