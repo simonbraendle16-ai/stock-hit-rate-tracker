@@ -13,17 +13,24 @@
 
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
-import { botManualOutcome, trade, tradeEvent } from '@/lib/db/schema'
+import { botManualOutcome, trade, tradeEvent, tradeExcursion } from '@/lib/db/schema'
 import { and, asc, eq } from 'drizzle-orm'
 import { headers } from 'next/headers'
 import { revalidatePath } from 'next/cache'
-import { getCachedCandles } from '@/lib/market-data/cached'
 import {
-  MarketDataError,
-  type Candle,
-  type Interval,
-  type Market,
-} from '@/lib/market-data/types'
+  createCandleLoader,
+  resolveExcursion,
+  type CandleLoader,
+} from '@/lib/market-data/candle-loader'
+import { type Candle, type Interval, type Market } from '@/lib/market-data/types'
+import {
+  aggregateExcursion,
+  resolveRun,
+  type ExcursionEntry,
+  type ExcursionInput,
+  type ExcursionStats,
+  type ManualExcursion,
+} from '@/lib/excursion'
 import {
   parseViolations,
   tradeFees,
@@ -35,6 +42,7 @@ import type { TradeEventRow } from '@/lib/trade-events'
 import {
   BOT_INTERVALS,
   compareBotAndTrader,
+  intervalLabel,
   manualOutcomeRun,
   preferredInterval,
   simulateMissedTrade,
@@ -65,14 +73,14 @@ async function getUserId() {
   return session.user.id
 }
 
-/** Postgres „undefined table" (42P01) — Migration 0015 noch nicht angewendet. */
+/** Postgres „undefined table" (42P01) — Migration 0015/0017 noch nicht angewendet. */
 function isMissingTable(err: unknown): boolean {
   if (typeof err !== 'object' || err === null) return false
   const e = err as { code?: string; cause?: { code?: string }; message?: string }
   return (
     e.code === '42P01' ||
     e.cause?.code === '42P01' ||
-    /bot_manual_outcome/.test(e.message ?? '')
+    /bot_manual_outcome|trade_excursion/.test(e.message ?? '')
   )
 }
 
@@ -102,6 +110,26 @@ async function loadManualOutcomes(userId: string): Promise<Map<number, ManualRow
   return map
 }
 
+/**
+ * Nachgetragene MAE/MFE-Extremkurse (Etappe 7c), nach Trade-Id. Ebenso tolerant
+ * gegenüber einer noch nicht angewendeten Migration 0017.
+ */
+async function loadManualExcursions(userId: string): Promise<Map<number, ManualExcursion>> {
+  const map = new Map<number, ManualExcursion>()
+  try {
+    const rows = await db
+      .select()
+      .from(tradeExcursion)
+      .where(eq(tradeExcursion.userId, userId))
+    for (const r of rows) {
+      map.set(r.tradeId, { worstPrice: r.worstPrice, bestPrice: r.bestPrice })
+    }
+  } catch (err) {
+    if (!isMissingTable(err)) throw err
+  }
+  return map
+}
+
 /** Events aller Trades des Nutzers, nach tradeId gruppiert (für event-aware R). */
 async function loadEventsByTrade(userId: string): Promise<Map<number, TradeEventRow[]>> {
   const rows = await db.select().from(tradeEvent).where(eq(tradeEvent.userId, userId))
@@ -116,6 +144,22 @@ async function loadEventsByTrade(userId: string): Promise<Map<number, TradeEvent
 
 const dateLabel = (d: Date | null): string =>
   d ? d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: '2-digit' }) : '—'
+
+/**
+ * Trade-Zeile → Eingabe der MAE/MFE-Messung. Das Fenster endet mit dem
+ * **letzten** Abschluss (`closedAt`): bis dahin war die Position im Markt, auch
+ * wenn zwischendurch teilverkauft wurde. `null`, wenn ein Zeitstempel fehlt.
+ */
+function toExcursionInput(t: TradeRow): ExcursionInput | null {
+  if (!t.openedAt || !t.closedAt) return null
+  return {
+    direction: t.direction === 'short' ? 'short' : 'long',
+    entryPrice: t.entryPrice,
+    riskDistance: Math.abs(t.entryPrice - t.stopLoss),
+    fromSec: Math.floor(new Date(t.openedAt).getTime() / 1000),
+    toSec: Math.floor(new Date(t.closedAt).getTime() / 1000),
+  }
+}
 
 /** Trade-Zeile → schmale Eingabe der Simulation. `null`, wenn Kerndaten fehlen. */
 function toBotTrade(t: TradeRow, events: TradeEventRow[], from: Date | null): BotTrade | null {
@@ -138,67 +182,6 @@ function toBotTrade(t: TradeRow, events: TradeEventRow[], from: Date | null): Bo
 // Kerzen: ein Abruf je Symbol und Auflösung, mit Rücksicht auf das Gratis-Limit
 // ---------------------------------------------------------------------------
 
-type Loaded = Candle[] | { error: BotSkipReason }
-
-/**
- * Welcher Anbieter hinter einem Markt steht (siehe `lib/market-data/index.ts`).
- *
- * Wichtig für das Minutenlimit: Binance und Twelve Data haben nichts
- * miteinander zu tun. Ein erschöpftes Twelve-Data-Kontingent darf die
- * Krypto-Trades nicht mit blockieren.
- */
-function providerKey(market: Market): string {
-  return market === 'krypto' ? 'binance' : 'twelvedata'
-}
-
-/**
- * Lädt Kerzen genau einmal je (Symbol, Markt, Auflösung) und merkt sich das
- * Ergebnis für diesen Aufruf.
- *
- * Twelve Data Free erlaubt ~8 Anfragen pro Minute. Statt blind zu deckeln wird
- * bis zum ersten echten Limit-Fehler geladen; danach gelten die noch nicht
- * geladenen Symbole **dieses Anbieters** als „diesmal nicht abgerufen". Beim
- * nächsten Aufruf sind die bereits geholten Reihen im Kerzen-Cache und die
- * übrigen kommen dran — die Auswertung füllt sich von selbst auf, ohne je zu
- * crashen.
- */
-function createCandleLoader() {
-  const cache = new Map<string, Loaded>()
-  const limited = new Set<string>()
-
-  return async function load(symbol: string, market: Market, interval: Interval): Promise<Loaded> {
-    const key = `${symbol}|${market}|${interval}`
-    const hit = cache.get(key)
-    if (hit) return hit
-    const provider = providerKey(market)
-    if (limited.has(provider)) return { error: 'nicht_abgerufen' }
-
-    try {
-      const candles = await getCachedCandles(symbol, market, interval)
-      cache.set(key, candles)
-      return candles
-    } catch (err) {
-      const code = err instanceof MarketDataError ? err.code : 'upstream'
-      if (code === 'rate_limit') {
-        // Nicht merken: beim nächsten Aufruf soll es dasselbe Symbol erneut
-        // versuchen dürfen, sobald das Minutenfenster weiter ist.
-        limited.add(provider)
-        return { error: 'nicht_abgerufen' }
-      }
-      const failed: Loaded = {
-        error:
-          code === 'unknown_symbol'
-            ? 'unbekanntes_symbol'
-            : code === 'unsupported'
-              ? 'nicht_unterstuetzt'
-              : 'kursdaten_fehler',
-      }
-      cache.set(key, failed)
-      return failed
-    }
-  }
-}
-
 type Simulator = (t: BotTrade, candles: readonly Candle[]) => BotRun
 
 /**
@@ -211,7 +194,7 @@ async function runWithFallback(
   market: Market,
   preferred: Interval,
   simulate: Simulator,
-  load: ReturnType<typeof createCandleLoader>,
+  load: CandleLoader,
   nowSec: number,
 ): Promise<{ run: BotRun; resolution: Interval | null }> {
   const start = Math.max(0, BOT_INTERVALS.indexOf(preferred))
@@ -267,7 +250,7 @@ async function runWithFallback(
  * „was hätte ich verpasst", gehören aber nicht in dieselbe Zahl: das sind zwei
  * verschiedene Fehlerarten.
  */
-export async function getBotTwinStats(): Promise<BotTwinStats> {
+export async function getBotTwinStats(): Promise<BotTwinStats & { excursion: ExcursionStats }> {
   const userId = await getUserId()
 
   const rows = await db
@@ -279,9 +262,10 @@ export async function getBotTwinStats(): Promise<BotTwinStats> {
   const closed = rows.filter((t) => t.status === 'abgeschlossen')
   const missed = rows.filter((t) => t.status === 'kein_handel')
 
-  const [eventsByTrade, manual] = await Promise.all([
+  const [eventsByTrade, manual, manualExcursions] = await Promise.all([
     loadEventsByTrade(userId),
     loadManualOutcomes(userId),
+    loadManualExcursions(userId),
   ])
 
   const load = createCandleLoader()
@@ -290,12 +274,28 @@ export async function getBotTwinStats(): Promise<BotTwinStats> {
 
   // --- abgeschlossene Trades -------------------------------------------------
   const entries: BotTwinEntry[] = []
+  const excursions: ExcursionEntry[] = []
   for (const t of closed) {
     const events = eventsByTrade.get(t.id) ?? []
     const bot = toBotTrade(t, events, t.openedAt)
     const label = dateLabel(t.closedAt ?? t.createdAt)
     const realR = tradeRMultiple(t, events)
     const editable = { hasTarget: t.takeProfit != null, manual: manual.get(t.id) ?? null }
+
+    // MAE/MFE (Etappe 7c) aus DENSELBEN Kerzen. Bewusst unabhängig vom
+    // Bot-Ergebnis: die Messung braucht kein Ziel im Plan und ist deshalb auch
+    // für Trades möglich, die der Bot mit „kein Ziel" überspringt. Nur
+    // entschiedene Trades zählen — wie in jeder anderen Auswertung.
+    if (t.result === 'gewinn' || t.result === 'verlust') {
+      excursions.push(
+        await measureExcursion(t, {
+          label,
+          realR,
+          load,
+          manual: manualExcursions.get(t.id) ?? null,
+        }),
+      )
+    }
 
     if (!bot) {
       entries.push({
@@ -389,7 +389,72 @@ export async function getBotTwinStats(): Promise<BotTwinStats> {
     })
   }
 
-  return compareBotAndTrader(entries, missedEntries, closed.length)
+  return {
+    ...compareBotAndTrader(entries, missedEntries, closed.length),
+    excursion: aggregateExcursion(excursions),
+  }
+}
+
+/**
+ * Ein Trade, gemessen — inklusive Nachtrag-Vorrangregel.
+ *
+ * Ausgelagert, weil dieselbe Messung auch die Trade-Detailseite braucht
+ * (`app/actions/excursion.ts`); dort mit einem eigenen Loader für genau ein
+ * Symbol, hier mit dem geteilten des Bot-Zwilling-Durchlaufs.
+ */
+export async function measureExcursion(
+  t: TradeRow,
+  ctx: {
+    label: string
+    realR: number
+    load: CandleLoader
+    manual: ManualExcursion | null
+  },
+): Promise<ExcursionEntry> {
+  const base = {
+    tradeId: t.id,
+    ticker: t.ticker,
+    label: ctx.label,
+    realR: ctx.realR,
+    won: t.result === 'gewinn',
+    manual: ctx.manual,
+  }
+
+  const input = toExcursionInput(t)
+  if (!input) {
+    // Ohne Zeitstempel gibt es kein Fenster — ein Nachtrag rettet den Trade
+    // trotzdem, denn dafür braucht es nur Einstieg und Stopdistanz.
+    const ohneFenster: ExcursionInput = {
+      direction: t.direction === 'short' ? 'short' : 'long',
+      entryPrice: t.entryPrice,
+      riskDistance: Math.abs(t.entryPrice - t.stopLoss),
+      fromSec: 0,
+      toSec: 0,
+    }
+    const { run, source } = resolveRun(
+      ohneFenster,
+      { measured: false, reason: 'kein_zeitpunkt' },
+      ctx.manual,
+    )
+    return { ...base, run, source, resolution: null }
+  }
+
+  const spanHours = (input.toSec - input.fromSec) / 3600
+  const { run: measured, resolution } = await resolveExcursion(
+    input,
+    t.ticker,
+    (t.market as Market) ?? 'aktien',
+    preferredInterval(spanHours),
+    ctx.load,
+  )
+  const { run, source } = resolveRun(input, measured, ctx.manual)
+
+  return {
+    ...base,
+    run,
+    source,
+    resolution: source === 'nachgetragen' || !resolution ? null : intervalLabel(resolution),
+  }
 }
 
 // ---------------------------------------------------------------------------

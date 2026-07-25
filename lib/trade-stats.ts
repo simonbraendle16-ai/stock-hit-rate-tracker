@@ -493,10 +493,60 @@ function decisiveRows(rows: TradeRow[]): TradeRow[] {
 }
 
 /**
+ * Die R-Vielfachen der abgerechneten Trades einer Teilmenge — die Basis des
+ * Erwartungswerts und von bestem/schlechtestem R. Event-aware: ein Trade mit
+ * Teilverkäufen kommt aus dem Settlement, ein Trade ohne Events aus der Zeile.
+ */
+function bucketRs(rows: TradeRow[], eventsByTrade?: TradeEventsByTrade): number[] {
+  return rows
+    .filter((t) => hasNetPnl(t, eventsOf(eventsByTrade, t.id)))
+    .map((t) => rMultiple(t, eventsOf(eventsByTrade, t.id)))
+}
+
+/**
+ * Die Kennzahlen, die JEDE Auswertungszeile dieser Datei teilt — Zustand
+ * (Etappe 4), Setup (7b) und Zeit (7d) rechnen sie identisch. Genau das ist der
+ * Punkt: dieselbe Kennzahl darf nicht je nach Block auf einer anderen Auswahl
+ * stehen. Trefferquote über alle Trades der Zeile, Erwartungswert nur über die
+ * mit berechenbarem P&L.
+ */
+export type BucketCore = {
+  /** Entschiedene Trades in dieser Zeile — der Nenner der Quote. */
+  trades: number
+  /** Davon mit berechenbarem P&L — die Basis des Erwartungswerts. */
+  rated: number
+  winRate: number // 0-100
+  expectancy: number // Ø R-Vielfaches
+  planFollowedRate: number // 0-100
+  /** Erst ab der jeweiligen Mindestgröße zeigt die UI Zahlen statt „zu wenige Daten". */
+  enough: boolean
+}
+
+/**
  * Kennzahlen einer beliebigen Teilmenge — dieselben Definitionen wie in
  * `computeDisciplineStats`: Trefferquote über entschiedene Trades,
  * Erwartungswert nur über die mit berechenbarem P&L.
  */
+function baseBucket(
+  rows: TradeRow[],
+  minGroupSize: number,
+  eventsByTrade?: TradeEventsByTrade,
+): BucketCore {
+  const trades = rows.length
+  const wins = rows.filter((t) => t.result === 'gewinn').length
+  const followed = rows.filter((t) => t.followedPlan).length
+  const rs = bucketRs(rows, eventsByTrade)
+
+  return {
+    trades,
+    rated: rs.length,
+    winRate: trades ? (wins / trades) * 100 : 0,
+    expectancy: rs.length ? rs.reduce((a, b) => a + b, 0) / rs.length : 0,
+    planFollowedRate: trades ? (followed / trades) * 100 : 0,
+    enough: trades >= minGroupSize,
+  }
+}
+
 function moodBucket(
   key: string,
   label: string,
@@ -504,22 +554,11 @@ function moodBucket(
   rows: TradeRow[],
   eventsByTrade?: TradeEventsByTrade,
 ): MoodBucket {
-  const trades = rows.length
-  const wins = rows.filter((t) => t.result === 'gewinn').length
-  const rated = rows.filter((t) => hasNetPnl(t, eventsOf(eventsByTrade, t.id)))
-  const rSum = rated.reduce((acc, t) => acc + rMultiple(t, eventsOf(eventsByTrade, t.id)), 0)
-  const followed = rows.filter((t) => t.followedPlan).length
-
   return {
     key,
     label,
     tone,
-    trades,
-    rated: rated.length,
-    winRate: trades ? (wins / trades) * 100 : 0,
-    expectancy: rated.length ? rSum / rated.length : 0,
-    planFollowedRate: trades ? (followed / trades) * 100 : 0,
-    enough: trades >= MIN_GROUP_SIZE,
+    ...baseBucket(rows, MIN_GROUP_SIZE, eventsByTrade),
   }
 }
 
@@ -636,7 +675,7 @@ export type SetupStats = {
 }
 
 /** Haltedauer in Tagen; `null`, wenn ein Zeitstempel fehlt oder unplausibel ist. */
-function holdingDays(t: TradeRow): number | null {
+export function holdingDays(t: TradeRow): number | null {
   if (!t.openedAt || !t.closedAt) return null
   const ms = new Date(t.closedAt).getTime() - new Date(t.openedAt).getTime()
   if (!Number.isFinite(ms) || ms < 0) return null
@@ -655,26 +694,17 @@ function setupBucket(
   rows: TradeRow[],
   eventsByTrade?: TradeEventsByTrade,
 ): SetupBucket {
-  const trades = rows.length
-  const wins = rows.filter((t) => t.result === 'gewinn').length
-  const followed = rows.filter((t) => t.followedPlan).length
-  const rated = rows.filter((t) => hasNetPnl(t, eventsOf(eventsByTrade, t.id)))
-  const rs = rated.map((t) => rMultiple(t, eventsOf(eventsByTrade, t.id)))
+  const rs = bucketRs(rows, eventsByTrade)
   const holds = rows.map(holdingDays).filter((d): d is number => d !== null)
 
   return {
     key,
     label,
-    trades,
-    rated: rated.length,
-    winRate: trades ? (wins / trades) * 100 : 0,
-    expectancy: rs.length ? rs.reduce((a, b) => a + b, 0) / rs.length : 0,
-    planFollowedRate: trades ? (followed / trades) * 100 : 0,
+    ...baseBucket(rows, MIN_SETUP_TRADES, eventsByTrade),
     bestR: rs.length ? Math.max(...rs) : null,
     worstR: rs.length ? Math.min(...rs) : null,
     avgHoldingDays: holds.length ? holds.reduce((a, b) => a + b, 0) / holds.length : null,
     holdingSample: holds.length,
-    enough: trades >= MIN_SETUP_TRADES,
   }
 }
 
@@ -737,5 +767,198 @@ export function computeSetupStats(
     setups,
     untagged: setupBucket('ohne', 'ohne Angabe', untagged, eventsByTrade),
     overall: setupBucket('gesamt', 'alle Trades', decided, eventsByTrade),
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Zeit-Auswertung (Etappe 7d)
+// ---------------------------------------------------------------------------
+
+/**
+ * Ab wie vielen Trades eine Zelle eine Aussage trägt. Bewusst niedriger als
+ * `MIN_SETUP_TRADES` (10): das Gitter teilt denselben Bestand auf 20+ Felder auf
+ * — mit 10 wäre es auf Jahre hinaus vollständig grau und damit nutzlos. Drei
+ * Trades sind kein Beweis, aber ein Hinweis, dem man nachgehen kann; die UI
+ * kennzeichnet solche Zellen entsprechend.
+ */
+export const MIN_TIME_CELL_TRADES = 3
+
+export type DayBlockKey = 'vormittag' | 'mittag' | 'nachmittag' | 'abend'
+
+/**
+ * Vier Tagesblöcke statt 24 Stundenspalten — bei einem privaten Journal ist ein
+ * Stundenraster zu 90 % leer und zeigt Rauschen statt Muster. Grenzen in
+ * **lokaler Zeit**; der Abend-Block läuft über Mitternacht.
+ */
+export const DAY_BLOCKS: {
+  key: DayBlockKey
+  label: string
+  short: string
+  /** Von (einschließlich) bis (ausschließlich), in Stunden lokaler Zeit. */
+  fromHour: number
+  toHour: number
+}[] = [
+  { key: 'vormittag', label: 'Vormittag', short: 'Vorm.', fromHour: 6, toHour: 12 },
+  { key: 'mittag', label: 'Mittag', short: 'Mittag', fromHour: 12, toHour: 14 },
+  { key: 'nachmittag', label: 'Nachmittag', short: 'Nachm.', fromHour: 14, toHour: 18 },
+  { key: 'abend', label: 'Abend / Nacht', short: 'Abend', fromHour: 18, toHour: 6 },
+]
+
+export type TimeRowKey = 'mo' | 'di' | 'mi' | 'do' | 'fr' | 'we'
+
+/**
+ * Mo–Fr einzeln, Wochenende zusammengefasst. Sa/So gehört dazu, weil Krypto
+ * durchläuft — eine eigene Spalte je Wochenendtag wäre bei Aktien dagegen fast
+ * immer leer. Die UI blendet die Zeile aus, solange sie keinen Trade trägt.
+ */
+export const TIME_ROWS: { key: TimeRowKey; label: string }[] = [
+  { key: 'mo', label: 'Mo' },
+  { key: 'di', label: 'Di' },
+  { key: 'mi', label: 'Mi' },
+  { key: 'do', label: 'Do' },
+  { key: 'fr', label: 'Fr' },
+  { key: 'we', label: 'Sa/So' },
+]
+
+/** Tagesblock eines Zeitpunkts — lokale Zeit, Abend/Nacht läuft über Mitternacht. */
+export function dayBlockOf(d: Date): DayBlockKey {
+  const h = d.getHours()
+  if (h >= 6 && h < 12) return 'vormittag'
+  if (h >= 12 && h < 14) return 'mittag'
+  if (h >= 14 && h < 18) return 'nachmittag'
+  return 'abend'
+}
+
+/** Zeile eines Zeitpunkts — lokale Zeit, Sa und So fallen zusammen. */
+export function timeRowOf(d: Date): TimeRowKey {
+  const day = d.getDay() // 0 = Sonntag
+  if (day === 0 || day === 6) return 'we'
+  return (['mo', 'di', 'mi', 'do', 'fr'] as const)[day - 1]
+}
+
+export type HoldingClassKey = 'intraday' | 'kurz' | 'mittel' | 'lang'
+
+/** Haltedauer-Klassen; `maxDays` ist die obere Grenze (ausschließlich). */
+export const HOLDING_CLASSES: {
+  key: HoldingClassKey
+  label: string
+  maxDays: number
+}[] = [
+  { key: 'intraday', label: 'unter 1 Tag', maxDays: 1 },
+  { key: 'kurz', label: '1–3 Tage', maxDays: 3 },
+  { key: 'mittel', label: '3–14 Tage', maxDays: 14 },
+  { key: 'lang', label: 'über 14 Tage', maxDays: Infinity },
+]
+
+/** Haltedauer-Klasse eines Trades; `null` ohne verwertbare Zeitstempel. */
+export function holdingClassOf(t: TradeRow): HoldingClassKey | null {
+  const days = holdingDays(t)
+  if (days === null) return null
+  return (HOLDING_CLASSES.find((c) => days < c.maxDays) ?? HOLDING_CLASSES[HOLDING_CLASSES.length - 1])
+    .key
+}
+
+/** Eine Zelle des Gitters — Wochentag × Tagesblock. */
+export type TimeCell = BucketCore & {
+  row: TimeRowKey
+  block: DayBlockKey
+}
+
+/** Eine benannte Zeile der Zeit-Auswertung (Haltedauer-Klasse oder Gesamtvergleich). */
+export type TimeBucket = BucketCore & {
+  key: string
+  label: string
+}
+
+export type TimeCoverage = {
+  /** Entschiedene Trades insgesamt — die Obergrenze für alles Weitere. */
+  decided: number
+  /** Davon mit Einstiegszeit — nur diese landen im Gitter. */
+  withOpenedAt: number
+  /** Davon mit verwertbarer Haltedauer (Ein- UND Ausstiegszeit). */
+  withHolding: number
+  /** Wie viele davon am Wochenende eingestiegen sind. */
+  weekend: number
+}
+
+export type TimeStats = {
+  minCellTrades: number
+  /** Immer vollständig: jede Zeile × jeder Block, leere Zellen mit `trades: 0`. */
+  cells: TimeCell[]
+  /** Erst wenn wahr, zeigt die UI die Sa/So-Zeile. */
+  hasWeekend: boolean
+  /** Haltedauer gegen Ergebnis, eine Zeile je Klasse. */
+  holding: TimeBucket[]
+  coverage: TimeCoverage
+  /** Alle entschiedenen Trades — der Bezugspunkt, gegen den man die Zellen liest. */
+  overall: TimeBucket
+}
+
+/**
+ * Wann handle ich gut, wann schlecht — Wochentag × Tageszeit, dazu Haltedauer
+ * gegen Ergebnis.
+ *
+ * Maßgeblich ist die **Einstiegszeit** (`openedAt`): die Entscheidung fällt beim
+ * Einstieg, nicht beim Ausstieg. Ein Trade ohne Einstiegszeit (Altbestand) landet
+ * in keiner Zelle — er wird in `coverage` sichtbar gemacht, statt still als
+ * „Montag früh" durchzugehen.
+ *
+ * Ausgewertet werden ausschließlich **entschiedene** Trades (Gewinn|Verlust),
+ * exakt wie bei Erwartungswert, Emotions- und Setup-Auswertung.
+ *
+ * Zeitzone ist die **lokale Zeit der Anwendung**, nicht die Handelszeit der
+ * jeweiligen Börse. Für „wann sitze ich schlecht vor dem Bildschirm" ist genau
+ * das die richtige Achse; eine Börsenphasen-Zuordnung wäre etwas anderes.
+ */
+export function computeTimeStats(
+  rows: TradeRow[],
+  eventsByTrade?: TradeEventsByTrade,
+): TimeStats {
+  const decided = decisiveRows(rows)
+
+  // Einmal einsortieren, statt je Zelle erneut zu parsen.
+  const placed = decided
+    .map((t) => ({ t, at: t.openedAt ? new Date(t.openedAt) : null }))
+    .filter((p): p is { t: TradeRow; at: Date } => p.at !== null && !Number.isNaN(p.at.getTime()))
+    .map(({ t, at }) => ({ t, row: timeRowOf(at), block: dayBlockOf(at) }))
+
+  const cells: TimeCell[] = TIME_ROWS.flatMap((r) =>
+    DAY_BLOCKS.map((b) => ({
+      row: r.key,
+      block: b.key,
+      ...baseBucket(
+        placed.filter((p) => p.row === r.key && p.block === b.key).map((p) => p.t),
+        MIN_TIME_CELL_TRADES,
+        eventsByTrade,
+      ),
+    })),
+  )
+
+  const holding: TimeBucket[] = HOLDING_CLASSES.map((c) => ({
+    key: c.key,
+    label: c.label,
+    ...baseBucket(
+      decided.filter((t) => holdingClassOf(t) === c.key),
+      MIN_TIME_CELL_TRADES,
+      eventsByTrade,
+    ),
+  }))
+
+  return {
+    minCellTrades: MIN_TIME_CELL_TRADES,
+    cells,
+    hasWeekend: placed.some((p) => p.row === 'we'),
+    holding,
+    coverage: {
+      decided: decided.length,
+      withOpenedAt: placed.length,
+      withHolding: decided.filter((t) => holdingDays(t) !== null).length,
+      weekend: placed.filter((p) => p.row === 'we').length,
+    },
+    overall: {
+      key: 'gesamt',
+      label: 'alle Trades',
+      ...baseBucket(decided, MIN_TIME_CELL_TRADES, eventsByTrade),
+    },
   }
 }

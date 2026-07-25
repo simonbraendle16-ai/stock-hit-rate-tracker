@@ -8,6 +8,7 @@ import {
   getMonteCarloStats,
   getMoodStats,
   getSetupStats,
+  getTimeStats,
   getZoneStats,
   listTrades,
 } from '@/app/actions/trades'
@@ -21,7 +22,9 @@ import { ExportTradesButton } from '@/components/export-trades-button'
 import { MoodStatsPanel } from '@/components/mood-stats'
 import { MonteCarloPanel } from '@/components/monte-carlo-panel'
 import { SetupComparisonPanel } from '@/components/setup-comparison-panel'
+import { TimeHeatmapPanel } from '@/components/time-heatmap-panel'
 import { BotTwinPanel } from '@/components/bot-twin-panel'
+import { ExcursionPanel } from '@/components/excursion-panel'
 import { getBotTwinStats } from '@/app/actions/bot-twin'
 import { getSettings } from '@/app/actions/settings'
 import { formatMoney } from '@/lib/format'
@@ -44,6 +47,7 @@ export default async function TrackingPage() {
     moodStats,
     monteCarlo,
     setupStats,
+    timeStats,
     botTwin,
     settings,
   ] =
@@ -56,6 +60,7 @@ export default async function TrackingPage() {
       getMoodStats(),
       getMonteCarloStats(),
       getSetupStats(),
+      getTimeStats(),
       // Holt Kerzen — der einzige Block hier, der ans Netz geht. Er bricht nie
       // ab: fehlende Reihen werden als Lücke ausgewiesen, nicht geworfen.
       getBotTwinStats(),
@@ -171,6 +176,12 @@ export default async function TrackingPage() {
           <BotTwinPanel stats={botTwin} />
         </div>
 
+        {/* MAE/MFE — wie weit lief es gegen mich, wie weit für mich?
+            Lebt von denselben Kerzen wie der Bot-Zwilling darüber. */}
+        <div className="mt-4">
+          <ExcursionPanel stats={botTwin.excursion} />
+        </div>
+
         {/* Wahrscheinlichkeits-Simulation — gehört die Verlustserie zur Verteilung? */}
         <div className="mt-4">
           <MonteCarloPanel stats={monteCarlo} />
@@ -179,6 +190,11 @@ export default async function TrackingPage() {
         {/* Setup-Vergleich — welches Setup verdient das Geld? */}
         <div className="mt-4">
           <SetupComparisonPanel stats={setupStats} />
+        </div>
+
+        {/* Zeit & Haltedauer — wann handle ich gut, wann schlecht? */}
+        <div className="mt-4">
+          <TimeHeatmapPanel stats={timeStats} />
         </div>
 
         {/* Echtgeld vs. Demo — Trefferquote & Ø Gewinn */}

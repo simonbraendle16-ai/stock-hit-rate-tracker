@@ -87,6 +87,20 @@ Candlesticks) · pnpm via corepack.
   (`updateTradeSetupTags`, nicht `updateTradePlan`) — ein Tag ist Einordnung, kein Plan.
   Panel: `components/setup-comparison-panel.tsx` auf `/tracking`, Eingabe
   `components/setup-tags-input.tsx`.
+- **Zeit-Heatmap / Haltedauer** (Etappe 7d) = wann handle ich gut, wann schlecht. Gitter
+  **Wochentag × Tagesblock** nach der **Einstiegszeit** (`openedAt` — dort fällt die
+  Entscheidung), eingefärbt nach Erwartungswert. Vier Blöcke statt 24 Stunden (Vormittag 6–12 ·
+  Mittag 12–14 · Nachmittag 14–18 · Abend/Nacht 18–6, lokale Zeit, Abend läuft über
+  Mitternacht); Mo–Fr plus eine Zeile **Sa/So**, die nur erscheint, wenn sie Trades trägt
+  (Krypto läuft durch). Schwelle `MIN_TIME_CELL_TRADES` = **3** je Zelle — darunter nur die
+  Anzahl, keine Quote, keine Farbe. Zeitzone ist die **lokale Zeit der App**, nicht die
+  Handelszeit der Börse (steht so in der Fußnote des Panels). Trades ohne `openedAt` fallen aus
+  dem Gitter, aber nicht aus dem Blick (Abdeckungszeile) — **kein Backfill**. Dazu Haltedauer
+  gegen Ergebnis in vier Klassen (< 1 T · 1–3 T · 3–14 T · > 14 T). Logik `computeTimeStats` in
+  `lib/trade-stats.ts` (rein, getestet, event-aware), Panel
+  `components/time-heatmap-panel.tsx`. **Ohne Migration.** Der gemeinsame Kennzahlen-Kern von
+  Zustand, Setup und Zeit liegt in `baseBucket`/`bucketRs` — neue Auswertungszeilen dort
+  aufsetzen, nicht neu rechnen.
 - **Bot-Zwilling** (Etappe 5) = derselbe Plan mechanisch nachgerechnet: Kerze für Kerze ab
   `openedAt`, **über den echten Ausstieg hinaus**, bis Stop oder Ziel berührt ist (beides in
   derselben Kerze → konservativ der Stop). Antwortet auf „was kostet mich mein eigenes
@@ -102,6 +116,25 @@ Candlesticks) · pnpm via corepack.
   (`bot_manual_outcome`, Migration 0015) — Messung schlägt dabei immer Eingabe. Geplante, nie
   eingegangene Trades (`kein_handel`) laufen in einem **getrennten** Block, nie in der
   Hauptdifferenz.
+- **MAE / MFE** (Etappe 7c) = wie weit lief der Kurs **während der Haltedauer** gegen dich
+  (Maximum Adverse Excursion) und wie weit für dich (Favourable), je in R. Abgrenzung zum
+  Bot-Zwilling: der rechnet **über** den echten Ausstieg hinaus, MAE/MFE misst **nur** die Zeit
+  im Markt — deshalb auch für Trades ohne Ziel messbar. **Fenster:** ab der ersten Kerze *nach*
+  dem Einstieg (die angebrochene Einstiegskerze bleibt draußen) bis *einschließlich* der
+  Ausstiegskerze; bei Teilverkäufen bis zum letzten Abschluss. Gemessen wird aus Hoch/Tief, nie
+  aus Schlusskursen. **Kerzen kommen aus demselben Durchlauf wie der Bot-Zwilling** —
+  `createCandleLoader` + `resolveExcursion` in `lib/market-data/candle-loader.ts`, damit kein
+  Symbol zweimal angefragt wird; neue kerzenbasierte Auswertungen dort andocken, **nie** einen
+  zweiten Ladeweg aufmachen. Reine Logik in `lib/excursion.ts` (getestet):
+  `computeExcursion` · `manualExcursionRun` · `resolveRun` · `aggregateExcursion`; Auswertung
+  getrennt nach Gewinnern/Verlierern, `MIN_EXCURSION_TRADES` = 5. **Grob gemessen** = die Kerze
+  ist länger als die Haltedauer; solche Messungen zählen mit, werden gekennzeichnet und sind der
+  **einzige** Fall, in dem ein Nachtrag eine Messung überstimmt (sonst gilt weiter „Messung
+  schlägt Eingabe"). Nachgetragen werden **Kurse**, nie R-Werte (`trade_excursion`, Migration
+  `0017`, nur Nachträge). Ton: der Block **beobachtet** („deine Gewinner liefen im Schnitt 0,5 R
+  weiter, als du sie gehalten hast"), er ordnet nichts an. Panel
+  `components/excursion-panel.tsx` auf `/tracking`, Karte `components/excursion-card.tsx` auf
+  `/trades/[id]`.
 - **Emotions-Check-in** = zwei Momentaufnahmen je Trade (Aktivieren + Abschließen):
   Skala 1–5 (ruhig ↔ aufgewühlt) + Tags aus fester Liste. **Skala ist Pflicht**, Tags/Notiz
   freiwillig. Auswertung „Zustand & Ergebnis" auf `/tracking`; unter 10 Trades je Gruppe
@@ -160,8 +193,12 @@ Candlesticks) · pnpm via corepack.
   Tabelle `bot_manual_outcome` **nur** für Nachträge; die Simulation selbst schreibt nichts —
   `lib/bot-twin.ts` + Panel auf `/tracking`) · Etappe 7b „Setup-Vergleich" (Migration `0016`,
   Spalte `setupTags` am `trade`, **ohne Backfill**; `lib/setups.ts` + `computeSetupStats` +
-  Panel auf `/tracking`). Offen aus Etappe 7: 7c MAE/MFE, 7d Zeit-Heatmap.
-  Offen aus dem Design: Etappe E (Formulare + Chart-Cockpit).
+  Panel auf `/tracking`) · Etappe 7d „Zeit-Heatmap und Haltedauer" (**ohne Migration**,
+  `computeTimeStats` + Panel auf `/tracking`) · Etappe 7c „MAE/MFE" (Migration `0017`, Tabelle
+  `trade_excursion` **nur** für Nachträge; die Messung selbst schreibt nichts — `lib/excursion.ts`
+  + gemeinsamer Kerzen-Ladeweg mit dem Bot-Zwilling, Panel auf `/tracking` + Karte je Trade).
+  **Die Roadmap-Etappen 2–7 sind damit vollständig.** Offen ist nur noch die Design-Etappe E
+  (Formulare + Chart-Cockpit) und der Ideenvorrat in `IDEEN-BACKLOG.md`.
 
 ## Code-Exploration: codegraph zuerst (überschreibt die globale Read-Effizienz-Regel)
 Dieses Projekt hat einen lokalen `codegraph`-Index (`.codegraph/`, via MCP-Server `codegraph`).

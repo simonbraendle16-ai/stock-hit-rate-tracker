@@ -316,3 +316,22 @@ export const botManualOutcome = pgTable('bot_manual_outcome', {
   createdAt: timestamp('createdAt').notNull().defaultNow(),
   updatedAt: timestamp('updatedAt').notNull().defaultNow(),
 })
+
+// MAE/MFE (Etappe 7c): von Hand nachgetragene Extremkurse der Haltedauer.
+// Gemessen wird über die Kerzen (lib/excursion.ts, speichert nichts); diese
+// Tabelle füllt nur die Lücken — fehlende Kursdaten oder eine Kerze, die länger
+// ist als der ganze Trade und damit gar nicht das Haltefenster misst.
+// Gespeichert werden KURSE, nie R-Werte: das R ergibt sich aus Einstieg und
+// Stopdistanz. Vorrang hat die Messung, außer sie ist grob (siehe `resolveRun`).
+export const tradeExcursion = pgTable('trade_excursion', {
+  id: serial('id').primaryKey(),
+  tradeId: integer('tradeId').notNull(),
+  userId: text('userId').notNull(),
+  // Tiefster Punkt gegen die Position (MAE) …
+  worstPrice: doublePrecision('worstPrice'),
+  // … und höchster für sie (MFE). Eine fehlende Seite gilt als „nicht gelaufen".
+  bestPrice: doublePrecision('bestPrice'),
+  note: text('note'),
+  createdAt: timestamp('createdAt').notNull().defaultNow(),
+  updatedAt: timestamp('updatedAt').notNull().defaultNow(),
+})

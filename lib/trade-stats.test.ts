@@ -6,6 +6,11 @@ import {
   computeEquityStats,
   computeMoodStats,
   computeSetupStats,
+  computeTimeStats,
+  dayBlockOf,
+  timeRowOf,
+  holdingClassOf,
+  MIN_TIME_CELL_TRADES,
   medianRiskFraction,
   netCashflow,
   ratedRMultiples,
@@ -888,5 +893,172 @@ describe('computeSetupStats', () => {
     expect(b.bestR).toBeCloseTo(1.5)
     // Ohne Event-Map bleibt es beim Zeilen-Pfad.
     expect(computeSetupStats(rows).setups[0].expectancy).toBeCloseTo(2)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Zeit-Auswertung (Etappe 7d)
+// ---------------------------------------------------------------------------
+
+/**
+ * Ein entschiedener Trade mit gesetzter Einstiegszeit. Die Zeitpunkte werden
+ * bewusst über den lokalen `Date`-Konstruktor gebaut — `dayBlockOf`/`timeRowOf`
+ * lesen lokale Zeit, ein ISO-String mit „Z" würde den Test an die Zeitzone der
+ * Testmaschine hängen.
+ */
+function timeTrade(id: number, opened: Date, r: number, over: Partial<TradeRow> = {}): TradeRow {
+  return setupTrade(id, [], r, { openedAt: opened, closedAt: opened, ...over })
+}
+
+const cellOf = (s: ReturnType<typeof computeTimeStats>, row: string, block: string) =>
+  s.cells.find((c) => c.row === row && c.block === block)!
+
+describe('dayBlockOf', () => {
+  it('trennt die vier Blöcke an ihren Grenzen', () => {
+    expect(dayBlockOf(new Date(2026, 0, 5, 5, 59))).toBe('abend')
+    expect(dayBlockOf(new Date(2026, 0, 5, 6, 0))).toBe('vormittag')
+    expect(dayBlockOf(new Date(2026, 0, 5, 11, 59))).toBe('vormittag')
+    expect(dayBlockOf(new Date(2026, 0, 5, 12, 0))).toBe('mittag')
+    expect(dayBlockOf(new Date(2026, 0, 5, 13, 59))).toBe('mittag')
+    expect(dayBlockOf(new Date(2026, 0, 5, 14, 0))).toBe('nachmittag')
+    expect(dayBlockOf(new Date(2026, 0, 5, 17, 59))).toBe('nachmittag')
+    expect(dayBlockOf(new Date(2026, 0, 5, 18, 0))).toBe('abend')
+  })
+
+  it('führt den Abend-Block über Mitternacht hinweg', () => {
+    expect(dayBlockOf(new Date(2026, 0, 5, 23, 30))).toBe('abend')
+    expect(dayBlockOf(new Date(2026, 0, 6, 0, 0))).toBe('abend')
+    expect(dayBlockOf(new Date(2026, 0, 6, 3, 15))).toBe('abend')
+  })
+})
+
+describe('timeRowOf', () => {
+  it('ordnet Mo–Fr einzeln und Sa/So gemeinsam zu', () => {
+    // 5.1.2026 ist ein Montag.
+    expect(timeRowOf(new Date(2026, 0, 5))).toBe('mo')
+    expect(timeRowOf(new Date(2026, 0, 9))).toBe('fr')
+    expect(timeRowOf(new Date(2026, 0, 10))).toBe('we') // Samstag
+    expect(timeRowOf(new Date(2026, 0, 11))).toBe('we') // Sonntag
+  })
+})
+
+describe('holdingClassOf', () => {
+  const held = (hours: number) =>
+    makeTrade({
+      openedAt: new Date(2026, 0, 5, 0, 0),
+      closedAt: new Date(2026, 0, 5, 0, 0, 0, hours * 3_600_000),
+    })
+
+  it('teilt an den Klassengrenzen (obere Grenze gehört zur nächsten Klasse)', () => {
+    expect(holdingClassOf(held(6))).toBe('intraday')
+    expect(holdingClassOf(held(24))).toBe('kurz')
+    expect(holdingClassOf(held(24 * 3))).toBe('mittel')
+    expect(holdingClassOf(held(24 * 14))).toBe('lang')
+  })
+
+  it('liefert null ohne verwertbare Zeitstempel', () => {
+    expect(holdingClassOf(makeTrade({ openedAt: null }))).toBeNull()
+    expect(holdingClassOf(makeTrade({ closedAt: null }))).toBeNull()
+  })
+})
+
+describe('computeTimeStats', () => {
+  it('legt das Gitter immer vollständig an — auch ohne einen einzigen Trade', () => {
+    const s = computeTimeStats([])
+    expect(s.cells).toHaveLength(6 * 4)
+    expect(s.cells.every((c) => c.trades === 0 && !c.enough)).toBe(true)
+    expect(s.hasWeekend).toBe(false)
+    expect(s.minCellTrades).toBe(MIN_TIME_CELL_TRADES)
+  })
+
+  it('zeigt unter der Mindestgröße keine Aussage, ab der Mindestgröße schon', () => {
+    const zwei = [
+      timeTrade(1, new Date(2026, 0, 5, 9, 0), 1),
+      timeTrade(2, new Date(2026, 0, 12, 10, 0), 1),
+    ]
+    const knapp = cellOf(computeTimeStats(zwei), 'mo', 'vormittag')
+    expect(knapp.trades).toBe(2)
+    expect(knapp.enough).toBe(false)
+
+    const drei = [...zwei, timeTrade(3, new Date(2026, 0, 19, 11, 0), -1)]
+    const voll = cellOf(computeTimeStats(drei), 'mo', 'vormittag')
+    expect(voll.trades).toBe(3)
+    expect(voll.enough).toBe(true)
+    expect(voll.winRate).toBeCloseTo((2 / 3) * 100)
+    expect(voll.expectancy).toBeCloseTo((1 + 1 - 1) / 3)
+  })
+
+  it('sortiert nach Einstiegszeit, nicht nach Ausstiegszeit', () => {
+    // Montagvormittag eingestiegen, Freitagabend geschlossen.
+    const s = computeTimeStats([
+      timeTrade(1, new Date(2026, 0, 5, 9, 0), 1, { closedAt: new Date(2026, 0, 9, 20, 0) }),
+    ])
+    expect(cellOf(s, 'mo', 'vormittag').trades).toBe(1)
+    expect(cellOf(s, 'fr', 'abend').trades).toBe(0)
+  })
+
+  it('sammelt Wochenend-Trades in einer eigenen Zeile, statt sie zu verlieren', () => {
+    const s = computeTimeStats([
+      timeTrade(1, new Date(2026, 0, 10, 15, 0), 1), // Samstag
+      timeTrade(2, new Date(2026, 0, 11, 15, 0), -1), // Sonntag
+    ])
+    expect(s.hasWeekend).toBe(true)
+    expect(s.coverage.weekend).toBe(2)
+    expect(cellOf(s, 'we', 'nachmittag').trades).toBe(2)
+    expect(s.cells.filter((c) => c.row !== 'we').every((c) => c.trades === 0)).toBe(true)
+  })
+
+  it('lässt Trades ohne Einstiegszeit aus dem Gitter, weist sie aber aus', () => {
+    const s = computeTimeStats([
+      timeTrade(1, new Date(2026, 0, 5, 9, 0), 1),
+      setupTrade(2, [], -1, { openedAt: null, closedAt: null }),
+    ])
+    expect(s.coverage.decided).toBe(2)
+    expect(s.coverage.withOpenedAt).toBe(1)
+    expect(s.coverage.withHolding).toBe(1)
+    expect(s.cells.reduce((n, c) => n + c.trades, 0)).toBe(1)
+    // In der Gesamtzeile zählen beide — sie ist der Bezugspunkt, nicht das Gitter.
+    expect(s.overall.trades).toBe(2)
+  })
+
+  it('zählt nur entschiedene Trades — Breakeven und Abbruch bleiben draußen', () => {
+    const s = computeTimeStats([
+      timeTrade(1, new Date(2026, 0, 5, 9, 0), 1),
+      makeTrade({ id: 2, result: 'breakeven', openedAt: new Date(2026, 0, 5, 9, 30) }),
+      makeTrade({ id: 3, result: null, status: 'abgebrochen', openedAt: new Date(2026, 0, 5, 9, 45) }),
+    ])
+    expect(s.overall.trades).toBe(1)
+    expect(cellOf(s, 'mo', 'vormittag').trades).toBe(1)
+  })
+
+  it('ordnet die Haltedauer-Klassen zu und rechnet je Klasse', () => {
+    const opened = new Date(2026, 0, 5, 9, 0)
+    const s = computeTimeStats([
+      timeTrade(1, opened, 1, { closedAt: new Date(2026, 0, 5, 17, 0) }), // 8 h
+      timeTrade(2, opened, -1, { closedAt: new Date(2026, 0, 25, 9, 0) }), // 20 Tage
+    ])
+    const klasse = (key: string) => s.holding.find((h) => h.key === key)!
+    expect(klasse('intraday').trades).toBe(1)
+    expect(klasse('intraday').expectancy).toBeCloseTo(1)
+    expect(klasse('lang').trades).toBe(1)
+    expect(klasse('lang').expectancy).toBeCloseTo(-1)
+    expect(klasse('kurz').trades).toBe(0)
+  })
+
+  it('rechnet Teilverkäufe aus dem Settlement (event-aware)', () => {
+    // Dasselbe Szenario wie im Setup-Vergleich: totalNet 150, Risiko 100 → 1,5 R.
+    const events = [
+      evt({ type: 'eroeffnet', quantity: 10, price: 100, fee: 0 }),
+      evt({ type: 'teilverkauf', quantity: 5, price: 110, fee: 0 }),
+      evt({ type: 'geschlossen', quantity: 5, price: 120, fee: 0 }),
+    ]
+    const rows = [timeTrade(1, new Date(2026, 0, 5, 9, 0), 99, { actualExitPrice: 120 })]
+    const map: TradeEventsByTrade = new Map([[1, events]])
+
+    expect(computeTimeStats(rows, map).overall.expectancy).toBeCloseTo(1.5)
+    // Dieselbe Zahl wie im Setup-Vergleich — eine Kennzahl, eine Definition.
+    expect(computeSetupStats(rows, map).overall.expectancy).toBeCloseTo(1.5)
+    // Ohne Event-Map bleibt es beim Zeilen-Pfad.
+    expect(computeTimeStats(rows).overall.expectancy).toBeCloseTo(2)
   })
 })

@@ -20,6 +20,7 @@ import {
   computeEquityStats,
   computeMoodStats,
   computeSetupStats,
+  computeTimeStats,
   medianRiskFraction,
   netCashflow,
   parseViolations,
@@ -31,6 +32,7 @@ import {
   type MoodStats,
   type RuleViolation,
   type SetupStats,
+  type TimeStats,
   type TradeRow,
   type TradeEventsByTrade,
 } from '@/lib/trade-stats'
@@ -1091,6 +1093,25 @@ export async function getSetupStats(): Promise<SetupStats> {
     .orderBy(asc(trade.closedAt), asc(trade.id))
 
   return computeSetupStats(rows, await loadEventsByTrade(userId))
+}
+
+/**
+ * Zeit-Auswertung (Etappe 7d) — über alle abgeschlossenen Trades.
+ *
+ * Gerechnet wird in `computeTimeStats` (rein, getestet); hier werden nur die
+ * Zeilen geladen. Trades ohne Einstiegszeit bleiben enthalten: sie zählen in die
+ * Abdeckungsangabe, aber in keine Zelle — sonst sähe das Gitter dichter aus, als
+ * es belegt ist.
+ */
+export async function getTimeStats(): Promise<TimeStats> {
+  const userId = await getUserId()
+  const rows = await db
+    .select()
+    .from(trade)
+    .where(and(eq(trade.userId, userId), eq(trade.status, 'abgeschlossen')))
+    .orderBy(asc(trade.closedAt), asc(trade.id))
+
+  return computeTimeStats(rows, await loadEventsByTrade(userId))
 }
 
 /**

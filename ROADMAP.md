@@ -918,17 +918,98 @@ ohne Angabe         3     noch zu wenige Daten (ab 10)
 - **Ø Haltedauer ist ein arithmetisches Mittel.** Ein einzelner Monate-Trade verschiebt sie;
   ein Median wäre robuster, braucht aber mehr Daten, um sich zu lohnen.
 
-## 7c · MAE / MFE
+## 7c · MAE / MFE ✅ ERLEDIGT (25.07.2026)
 
 **M**aximum **A**dverse/**F**avourable **E**xcursion: Wie weit lief der Kurs gegen dich, bevor
 er drehte — und wie weit für dich, bevor du ausgestiegen bist? Berechnet aus den Kerzen der
-Haltedauer (dieselbe Mechanik wie der Bot-Zwilling, kann sich den Kerzen-Ladeweg teilen).
+Haltedauer (dieselbe Mechanik wie der Bot-Zwilling, teilt sich den Kerzen-Ladeweg).
 
 Beantwortet zwei sehr konkrete Fragen:
 - „Deine Stops werden im Schnitt bei 0,8 R getroffen, bevor der Kurs dreht" → **Stops zu eng**
 - „Deine Gewinner liefen im Schnitt bis 2,3 R, du bist bei 1,4 R ausgestiegen" → **Ziele zu nah**
 
-## 7d · Zeit-Heatmap und Haltedauer
+### Wie es gebaut wurde — die Entscheidungen
+
+- **Ein Kerzen-Durchlauf für beide Auswertungen.** MAE/MFE hängt sich an den Bot-Zwilling:
+  derselbe memoisierte Loader (jetzt in `lib/market-data/candle-loader.ts`), dieselbe
+  Auflösungs-Kette, dieselbe Rate-Limit-Buchführung. Ein eigener Ladeweg hätte jedes Symbol ein
+  zweites Mal angefragt — und genau daran scheitert das Trade-Replay heute schon.
+- **Zwei Fragen, ein Datensatz:** der Bot rechnet **über** den echten Ausstieg hinaus („was wäre
+  passiert"), MAE/MFE misst **nur** die Zeit im Markt („was ist passiert, während ich drin
+  war"). Deshalb ist MAE/MFE auch für Trades messbar, die der Bot mit „kein Ziel" überspringt.
+- **Messfenster:** ab der ersten Kerze **nach** dem Einstieg (die angebrochene Einstiegskerze
+  enthält Bewegung von davor — dieselbe Strenge wie `simulateTrade`) bis **einschließlich** der
+  Kerze, die den Ausstieg enthält. Ohne die letzte Kerze fiele das Fenster bei kurzen Trades
+  leer aus.
+- **„Grob gemessen" als eigener Zustand.** Ist die Kerze länger als die Haltedauer, kann das
+  Extrem aus Zeit stammen, in der gar keine Position offen war. Solche Messungen zählen mit,
+  werden aber gekennzeichnet (Karte + Fußnote) — und sie sind der **einzige** Fall, in dem eine
+  Handeingabe eine vorhandene Messung überstimmen darf. Die Regel aus Etappe 5 („Messung schlägt
+  Eingabe") bleibt damit unangetastet: was nicht das Haltefenster misst, ist keine Messung
+  dieses Trades.
+- **Nachgetragen werden Kurse, nie R-Werte.** „Wie tief lief es" liest man am Chart ab; das R
+  ergibt sich zwingend aus Einstieg und Stopdistanz — genau wie bei `bot_manual_outcome`. Ein
+  in die falsche Richtung getippter Kurs wird auf 0 gekappt statt still umgedeutet.
+- **Gewinner und Verlierer getrennt**, Schwelle **5** je Gruppe (`MIN_EXCURSION_TRADES`). Der
+  Gegenlauf der *Gewinner* ist das Maß für die Stopweite: diese Trades gingen am Ende auf, ein
+  engerer Stop hätte sie nur unnötig beendet.
+- **Der Block beobachtet, er ordnet nicht an.** „Deine Gewinner liefen im Schnitt 0,5 R weiter,
+  als du sie gehalten hast" — kein „zieh deine Ziele weiter". Der Plan entsteht vor dem Trade,
+  nicht aus einer Statistik über fünf Trades. Die Beobachtung erscheint erst ab 0,25 R Abstand
+  (darunter ist es Rauschen) bzw. ab −0,5 R Gegenlauf.
+- **Teilverkäufe:** das Fenster läuft bis zum **letzten** Abschluss — bis dahin war die Position
+  im Markt. Verglichen wird gegen den gewichteten Gesamt-R aus dem Settlement, wie überall sonst.
+
+### Dateien
+
+| Datei | Änderung |
+|---|---|
+| `lib/excursion.ts` (+ Test) | **neu** — `computeExcursion`, `manualExcursionRun`, `resolveRun`, `aggregateExcursion` |
+| `lib/market-data/candle-loader.ts` | **neu** — `createCandleLoader` (aus `bot-twin.ts` herausgezogen) + `resolveExcursion` |
+| `drizzle/0017_excursion_manual.sql`, `lib/db/schema.ts` | **neu** — Tabelle `trade_excursion` (nur Nachträge) |
+| `app/actions/bot-twin.ts` | misst im selben Durchlauf mit (`measureExcursion`), gibt `excursion` mit zurück |
+| `app/actions/excursion.ts` | **neu** — `getTradeExcursion`, `setTradeExcursion`, `clearTradeExcursion` |
+| `components/excursion-panel.tsx`, `components/excursion-card.tsx` | **neu** — `/tracking` und `/trades/[id]` |
+
+### Nachweis
+
+- **Migration nachgewiesen:** `.baseline-etappe7c-vorher` gegen `.baseline-etappe7c-nachher` —
+  16 Trades vorher wie nachher, inhaltlich **byte-identisch** (nur der Report-Zeitstempel
+  unterscheidet sich). Gegen `information_schema` geprüft: `trade_excursion` mit
+  `worstPrice`/`bestPrice` als `double precision, nullable`, 0 Zeilen; beide CHECK-Constraints
+  vorhanden, und ein Insert ohne jeden Kurs wird von `trade_excursion_price_check` abgewiesen.
+- **Prüfläufe grün:** `tsc --noEmit`, `vitest run` (301 Tests, 10 Dateien), `next build`.
+- **Sichtprüfung mit echten Kerzen** über einen Wegwerf-Account (danach restlos gelöscht,
+  Restzeilen 0): 10 Sandbox-Trades auf **BTCUSDT**, deren Fenster aus echten Binance-Stundenkerzen
+  konstruiert wurden — die erwarteten MAE/MFE wurden im Prüfskript **unabhängig nachgerechnet**
+  und stimmten mit der Anzeige überein (Gewinner Ø MAE −0,39 R / MFE +0,82 R / Ausstieg +0,58 R
+  → angezeigt −0,4 / +0,8 / +0,6; Einzeltrade erwartet −0,41 / +0,61 / +0,38 → angezeigt
+  −0,4 / +0,6 / +0,4). Ebenfalls geprüft: die Verlierer-Zeile mit 4 Trades zeigte „noch zu wenige
+  Daten (ab 5)", der 30-Minuten-Trade wurde als **grob** gekennzeichnet, der Trade auf einem
+  unbekannten Symbol erschien als Lücke mit Grund — und nach dem Nachtrag stand er als
+  „1 von Hand nachgetragen" in der Auswertung.
+
+### Abweichungen von der ursprünglichen Beschreibung
+
+| Ursprünglich | Jetzt | Warum |
+|---|---|---|
+| „Etappe 7: Migration keine" | Migration `0017` (eine Tabelle) | Ohne sie gäbe es keinen Ort für den Nachtrag. Additiv, ohne Backfill, Bestand unverändert. |
+| Nur ein Panel auf `/tracking` | Zusätzlich eine Karte je Trade | Beim Nachbesprechen eines Trades sucht man genau diese Zahl — und nur dort lässt sie sich auch nachtragen. |
+| — | Zustand „grob gemessen" | Ohne ihn läse man eine Tageskerze wie eine Messung des Haltefensters. |
+| — | `createCandleLoader` liegt jetzt in `lib/market-data/` | Zwei Auswertungen teilen ihn; im Action-Modul wäre er nicht wiederverwendbar gewesen. |
+
+### Offen
+
+- **Kein MAE/MFE je Setup.** Wäre der nächste sinnvolle Schnitt („bei Breakouts sind meine Stops
+  zu eng, bei Rücksetzern nicht"), braucht aber pro Setup denselben Bestand — dafür fehlen auf
+  Monate die Trades.
+- **Die Genauigkeit hängt an der Kerze.** Innerhalb einer Kerze ist nicht bekannt, wann Hoch und
+  Tief lagen; bewusst wird nicht interpoliert. Bei Trades, die kürzer sind als die feinste
+  verfügbare Auflösung, bleibt nur „grob" oder der Nachtrag.
+- **Der Nachtrag ist ungeprüft gegen den Chart.** Er ist eine Angabe des Nutzers und wird als
+  solche ausgewiesen — die App kann nicht erkennen, ob der eingetippte Kurs stimmt.
+
+## 7d · Zeit-Heatmap und Haltedauer ✅ ERLEDIGT (25.07.2026)
 
 Wochentag × Tageszeit als Gitter, eingefärbt nach Erwartungswert. Dazu Haltedauer gegen
 Ergebnis. Daten liegen in `openedAt` und `closedAt` bereits vollständig vor.
@@ -936,14 +1017,88 @@ Ergebnis. Daten liegen in `openedAt` und `closedAt` bereits vollständig vor.
 Findet Muster wie „montags vormittags verlierst du systematisch" oder „Trades, die du länger als
 zwei Wochen hältst, sind im Schnitt negativ".
 
+### Wie es gebaut wurde — die Entscheidungen
+
+- **Maßgeblich ist die Einstiegszeit (`openedAt`), nicht der Ausstieg.** Dort fällt die
+  Entscheidung. Die Frage lautet „wann setze ich schlecht auf" — nicht „wann löse ich auf".
+- **Vier Tagesblöcke statt 24 Stundenspalten:** Vormittag 6–12 · Mittag 12–14 · Nachmittag
+  14–18 · Abend/Nacht 18–6 (lokale Zeit, der Abend-Block läuft über Mitternacht). Ein
+  Stundenraster hätte 168 Felder — bei einem privaten Journal wären davon 90 % leer, und man
+  läse Rauschen als Muster.
+- **Schwelle 3 Trades je Zelle** (`MIN_TIME_CELL_TRADES`), bewusst niedriger als die 10 aus 7b:
+  das Gitter teilt denselben Bestand auf über 20 Felder auf. Unter der Schwelle zeigt eine
+  Zelle **nur ihre Anzahl** — keine Quote, kein Erwartungswert, keine Farbe.
+- **Wochenende bekommt eine eigene Zeile „Sa/So", die nur erscheint, wenn sie Trades trägt.**
+  Krypto läuft durch; ein Mo–Fr-Gitter hätte diese Trades stumm verschluckt. Zwei getrennte
+  Zeilen für Sa und So wären bei Aktien dagegen fast immer leer.
+- **Zeitzone ist die lokale Zeit der Anwendung, nicht die Handelszeit der Börse.** Für „wann
+  sitze ich schlecht vor dem Bildschirm" ist genau das die richtige Achse. Eine
+  Börsenphasen-Zuordnung (Eröffnung/US-Open) wäre eine andere Frage und bräuchte eine
+  Zuordnung Instrument→Börse, die es nicht gibt. Der Block sagt das in seiner Fußnote.
+- **Trades ohne Einstiegszeit fallen aus dem Gitter, aber nicht aus dem Blick:** die Kopfzeile
+  zählt „x von y entschiedenen Trades mit Einstiegszeit", die Fußnote benennt die Lücke. Kein
+  Backfill — eine geschätzte Uhrzeit wäre eine erfundene Zahl.
+- **Haltedauer in vier Klassen** (unter 1 Tag · 1–3 · 3–14 · über 14 Tage) gegen Trefferquote
+  und Erwartungswert, mit derselben Schwelle. Beantwortet „lohnt sich das lange Halten?".
+- **Eine Aufräumung nebenbei:** Zustand (4), Setup (7b) und Zeit (7d) rechneten denselben Kern.
+  Er liegt jetzt einmal in `baseBucket` (+ `bucketRs`); alle drei setzen darauf auf. Dadurch
+  kann dieselbe Kennzahl nicht mehr je Block auseinanderlaufen.
+
+### Dateien
+
+| Datei | Änderung |
+|---|---|
+| `lib/trade-stats.ts` | **neu**: `computeTimeStats`, `dayBlockOf`, `timeRowOf`, `holdingClassOf`, `DAY_BLOCKS`, `TIME_ROWS`, `HOLDING_CLASSES`, `MIN_TIME_CELL_TRADES`; `holdingDays` exportiert; `baseBucket`/`bucketRs` als gemeinsamer Kern |
+| `lib/trade-stats.test.ts` | 13 neue Tests (Blockgrenzen, Mitternacht, Schwelle, Wochenende, fehlende Zeitstempel, Haltedauer-Klassen, event-aware) |
+| `app/actions/trades.ts` | `getTimeStats()` |
+| `components/time-heatmap-panel.tsx` | **neu** — Gitter + Haltedauer + Fußnote |
+| `app/tracking/page.tsx` | Panel hinter dem Setup-Vergleich eingehängt |
+
+**Keine Migration** — 7d rechnet ausschließlich über vorhandene Spalten.
+
+### Nachweis
+
+- **Prüfläufe grün:** `tsc --noEmit`, `vitest run` (283 Tests, 9 Dateien), `next build`.
+- **Sichtprüfung mit einem Wegwerf-Account** (angelegt, befüllt, danach samt Trades und Konto
+  gelöscht — die echten Trades wurden nie angefasst; Restzeilen nach dem Aufräumen: 0):
+  17 abgeschlossene Sandbox-Trades zeigten das Gitter mit vier belegten Zellen, jede gegen die
+  Erwartung nachgerechnet — Mo Vormittag 4 Trades −0,5 R (rot), Di Nachmittag 3 Trades +2,0 R
+  (grün), Do Abend 3 Trades +0,3 R, Sa/So Nachmittag 3 Trades −0,8 R. Die Mittwochs-Zelle mit
+  2 Trades stand ohne Quote da („2 Trades"), die Sa/So-Zeile erschien nur wegen der
+  Wochenend-Trades, und der eine Trade ohne Zeitstempel tauchte als „16 von 17" plus Fußnote
+  auf. Nach dem Entfernen aller Zeitstempel stand der Leerzustand.
+- **Nebenbefund aus der Sichtprüfung (kein App-Fehler):** `openedAt` ist eine `timestamp`-Spalte
+  **ohne** Zeitzone, in die Drizzle die UTC-Wandzeit schreibt und beim Lesen wieder als UTC
+  deutet — der Weg der App ist also in sich stimmig. Wer für Testdaten am ORM vorbei per SQL
+  schreibt, muss `toISOString()` benutzen, sonst liegen die Zeiten um den Zonen-Versatz daneben
+  (im ersten Durchlauf genau so passiert und dort korrigiert).
+
+### Abweichungen von der ursprünglichen Beschreibung
+
+| Ursprünglich | Jetzt | Warum |
+|---|---|---|
+| „Wochentag × Tageszeit" | Mo–Fr **plus** eine Sa/So-Zeile, die nur bei Bedarf erscheint | Krypto läuft am Wochenende; diese Trades dürfen nicht stumm verschwinden. |
+| Schwelle offen („Vorschlag 20/10") | 3 je Zelle | Das Gitter teilt den Bestand auf 20+ Felder; mit 10 bliebe es auf Jahre grau. |
+| — | Fußnote zur Zeitzone und zu fehlenden Zeitstempeln | Ohne sie liest man lokale Uhrzeiten als Börsenzeiten und die Abdeckung als vollständig. |
+
+### Offen
+
+- **Das Gitter braucht Bestand.** Mit 0 abgeschlossenen echten Trades zeigt es bis auf Weiteres
+  den Leerzustand; belastbar wird eine Zelle ab 3, das Bild insgesamt ab etwa 30 Trades.
+- **Keine Börsenphasen.** „US-Open" ließe sich erst zuordnen, wenn am Instrument eine Börse
+  hinge. Bis dahin ist die Achse die eigene Uhr — was für die Frage nach dem eigenen Zustand
+  auch die richtige ist.
+- **Der Erwartungswert je Zelle ist ein Mittelwert über wenige Trades.** Er zeigt eine Richtung,
+  keine Signifikanz; die Zellfarbe ist bewusst dreistufig und nicht fein abgestuft.
+
 ## Dateien
 
 | Datei | Änderung |
 |---|---|
 | `lib/monte-carlo.ts` (+ Test) | **neu** — 7a |
-| `lib/trade-stats.ts` | `computeSetupStats` ✅ (7b), `computeTimeStats` — 7d |
+| `lib/trade-stats.ts` | `computeSetupStats` ✅ (7b), `computeTimeStats` ✅ (7d) |
 | `lib/setups.ts` (+ Test) | **neu** ✅ — 7b |
-| `lib/excursion.ts` (+ Test) | **neu** — 7c |
+| `lib/excursion.ts` (+ Test) | **neu** ✅ — 7c |
 | `app/actions/trades.ts` | Setup-Tags neben `strategy` ✅ — 7b |
 | `components/{monte-carlo,setup-comparison,excursion,time-heatmap}-panel.tsx` | **neu** |
 | `app/tracking/page.tsx` | Panels einhängen |
@@ -960,7 +1115,12 @@ schlecht?
   Monte-Carlo, 10 je Setup — darunter „noch zu wenige Daten".)
   → **Für 7a entschieden: 20** (`MIN_TRADES` in `lib/monte-carlo.ts`).
   → **Für 7b entschieden: 10** je Setup (`MIN_SETUP_TRADES` in `lib/setups.ts`), wie
-  vorgeschlagen. Für 7c/7d weiterhin offen.
+  vorgeschlagen.
+  → **Für 7d entschieden: 3** je Zelle (`MIN_TIME_CELL_TRADES` in `lib/trade-stats.ts`) —
+  bewusst niedriger, weil das Gitter denselben Bestand auf über 20 Felder verteilt.
+  → **Für 7c entschieden: 5** je Gruppe (`MIN_EXCURSION_TRADES` in `lib/excursion.ts`) —
+  zwischen beiden: eine Aussage über die eigene Stopweite sollte nicht auf drei Trades stehen,
+  zehn wären bei nur zwei Gruppen aber unnötig streng.
 - Sollen alle vier Teile zusammen kommen oder einzeln als eigene Prompts?
   → **Einzeln**, wie es die Reihenfolge-Empfehlung unten vorsieht: 7a und 7b sind je als
   eigener Schritt gebaut und abgeschlossen, 7c und 7d bleiben je ein eigener Arbeitsschritt.
@@ -982,9 +1142,13 @@ Etappe 5 (Bot-Zwilling)─┤  ✅ erledigt — das stärkste Feature und der gr
                        │
 Etappe 6 (Teilverkäufe)─┤  ✅ erledigt — nach Etappe 3
                        │
-Etappe 7b (Setups)     ─┘  ✅ erledigt — erste Etappe, die eine neue Eingabe verlangt
+Etappe 7b (Setups)     ─┤  ✅ erledigt — erste Etappe, die eine neue Eingabe verlangt
+                       │
+Etappe 7d (Zeit)       ─┤  ✅ erledigt — ohne Migration, rein aus vorhandenen Zeitstempeln
+                       │
+Etappe 7c (MAE/MFE)    ─┘  ✅ erledigt — teilt sich den Kerzen-Ladeweg mit dem Bot-Zwilling
 
-offen: 7c MAE/MFE · 7d Zeit-Heatmap · Design E (Formulare/Chart)
+offen: Design E (Formulare/Chart) — die Etappen 2–7 sind damit vollständig.
 ```
 
 **Warum Etappe 4 zuerst:** Emotionsdaten sind nur rückwirkend nutzlos. Jeder Trade, der ohne
