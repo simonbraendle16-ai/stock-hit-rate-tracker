@@ -62,7 +62,7 @@ export function TradingViewWidget({
   }, [ticker, market, chartUrl])
 
   return (
-    <div className="glass-card overflow-hidden p-0">
+    <div className="panel rise-in overflow-hidden p-0">
       <iframe
         key={src}
         src={src}
@@ -71,7 +71,7 @@ export function TradingViewWidget({
         allow="fullscreen"
         allowFullScreen
       />
-      <p className="border-t border-border px-3 py-1.5 font-mono text-[10px] text-muted-foreground">
+      <p className="note border-t border-border px-3 py-1.5">
         TradingView-Modus: alle TV-Tools &amp; Indikatoren — Zeichnungen werden hier
         nicht in der App gespeichert. Plan-Linien &amp; persistente Zeichnungen: Cockpit-Chart.
       </p>

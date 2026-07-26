@@ -151,8 +151,8 @@ Candlesticks) · pnpm via corepack.
   Geldfarben kräftig & strahlend — **kein Neon, kein Sci-Fi**. Farbvariablen in
   `app/globals.css` (Seite `#0f1124`, Panel `#191c3a`, Hell `#ecebfa`, Akzent
   `#7b6bf6`, Grün `#4fd6a0`, Rot `#f2607a`, Gold `#e0b455`). Karten-Optik:
-  `.panel` / `.panel-raised` / `.panel-sunken` (`.glass-card` ist ein Alias auf
-  `.panel`; noch in Formularen und `components/chart/*` in Gebrauch).
+  `.panel` / `.panel-raised` / `.panel-sunken` — app-weit die einzigen drei
+  Kartenebenen (der alte Alias `.glass-card` ist mit Design E entfallen).
 - **Tiefe kommt aus Ebenen, nicht aus Leuchten.** Die Stufen Seite → Panel →
   `.panel-raised` sind bewusst weit auseinandergezogen; eng beieinander liegende
   Töne lassen die Oberfläche flach wirken. Der Seitenhintergrund
@@ -175,7 +175,15 @@ Candlesticks) · pnpm via corepack.
 - **Nicht neu erfinden:** Geld-/R:R-/Positionsmathematik lebt in `lib/trade-math.ts`,
   die Pre-Trade-Fragen in `lib/pre-trade-questions.ts`, Skala und Emotions-Tags in
   `lib/emotions.ts` (je gemeinsame Quelle für Client + Server-Gate + Auswertung).
-  Wiederverwenden statt duplizieren.
+  Wiederverwenden statt duplizieren. Für die Oberfläche gilt dasselbe: Diagrammköpfe und
+  Leerzustände in `components/chart-frame.tsx` (`ChartHeader`/`ChartEmpty`), Formularteile in
+  `components/form-frame.tsx` (`FormSection` · `Field` · `ChoiceButton` · `ResultBlock` ·
+  `ResultRow` · `InlineNotice`), Sektionsbeschriftung in `components/section-label.tsx`.
+- **Chart-Farben kommen aus `components/chart/colors.ts`** (`CHART_COLORS`, `PLAN_COLORS`) —
+  Canvas und SVG können `var(--positive)` nicht lesen, deshalb steht die Hex-Entsprechung der
+  Tokens dort **einmal** und wird nirgends sonst wiederholt. Ausnahme mit Absicht: das
+  TradingView-Schema in `price-chart.tsx` trägt die Originalfarben von TradingView und darf
+  sich nicht mitbewegen.
 - Keine VS-Code-/IDE-Artefakte anlegen (kein `.vscode/`), außer ausdrücklich verlangt.
 
 ## Roadmap & Ideen
@@ -196,9 +204,12 @@ Candlesticks) · pnpm via corepack.
   Panel auf `/tracking`) · Etappe 7d „Zeit-Heatmap und Haltedauer" (**ohne Migration**,
   `computeTimeStats` + Panel auf `/tracking`) · Etappe 7c „MAE/MFE" (Migration `0017`, Tabelle
   `trade_excursion` **nur** für Nachträge; die Messung selbst schreibt nichts — `lib/excursion.ts`
-  + gemeinsamer Kerzen-Ladeweg mit dem Bot-Zwilling, Panel auf `/tracking` + Karte je Trade).
-  **Die Roadmap-Etappen 2–7 sind damit vollständig.** Offen ist nur noch die Design-Etappe E
-  (Formulare + Chart-Cockpit) und der Ideenvorrat in `IDEEN-BACKLOG.md`.
+  + gemeinsamer Kerzen-Ladeweg mit dem Bot-Zwilling, Panel auf `/tracking` + Karte je Trade) ·
+  Design A–D (visuelle Überarbeitung) · Design E „Formulare + Chart-Cockpit" (**ohne Migration**,
+  rein visuell: `components/form-frame.tsx` + `components/chart/colors.ts` als neue gemeinsame
+  Quellen, Chart-Cockpit von der alten Navy-Palette auf Indigo-Nacht).
+  **Die Roadmap ist damit vollständig** — offen ist nur noch der Ideenvorrat in
+  `IDEEN-BACKLOG.md`.
 
 ## Code-Exploration: codegraph zuerst (überschreibt die globale Read-Effizienz-Regel)
 Dieses Projekt hat einen lokalen `codegraph`-Index (`.codegraph/`, via MCP-Server `codegraph`).

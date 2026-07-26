@@ -20,7 +20,7 @@ import {
   parseMoodTags,
   type EmotionTagKey,
 } from '@/lib/emotions'
-import { Label } from '@/components/ui/label'
+import { Field } from '@/components/form-frame'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { Activity } from 'lucide-react'
@@ -86,14 +86,12 @@ export function MoodCheck({
     })
 
   return (
-    <div className="space-y-4 rounded-lg border border-primary/20 bg-primary/5 p-3">
-      <div className="flex items-start gap-2">
+    <div className="panel-sunken space-y-4 border-primary/20 bg-primary/5 p-3">
+      <div className="flex items-start gap-2.5">
         <Activity className="mt-0.5 size-4 shrink-0 text-primary" />
         <div>
-          <p className="font-heading text-sm font-bold text-foreground">{text.title}</p>
-          <p className="mt-0.5 font-mono text-[10px] leading-relaxed text-muted-foreground">
-            {text.lead}
-          </p>
+          <p className="text-sm font-semibold leading-tight text-foreground">{text.title}</p>
+          <p className="note mt-1">{text.lead}</p>
         </div>
       </div>
 
@@ -111,28 +109,29 @@ export function MoodCheck({
                 aria-label={`${step.value} — ${step.label}`}
                 onClick={() => onChange({ ...value, score: step.value })}
                 className={cn(
-                  'flex flex-col items-center gap-0.5 rounded-lg border py-2 transition-all disabled:opacity-50',
+                  'flex flex-col items-center gap-1 rounded-lg border py-2 transition-colors disabled:opacity-50',
                   active
                     ? toneSelected[step.tone]
-                    : 'border-border text-muted-foreground hover:border-primary/40',
+                    : 'border-border text-muted-foreground hover:border-primary/40 hover:text-foreground',
                 )}
               >
-                <span className="font-heading text-lg font-bold leading-none">{step.value}</span>
-                <span className="font-mono text-[8px] uppercase tracking-wider">{step.label}</span>
+                <span className="metric metric-sm">{step.value}</span>
+                {/* Bewusst kleiner als `.eyebrow`: „aufgewühlt" muss in eine
+                    Fünftel-Spalte passen, ohne umzubrechen. */}
+                <span className="eyebrow text-[8px] tracking-wider text-current opacity-80">
+                  {step.label}
+                </span>
               </button>
             )
           })}
         </div>
-        <p className="min-h-4 font-mono text-[10px] text-muted-foreground">
+        <p className="note min-h-4">
           {selected ? selected.hint : '1 = ruhig · 5 = aufgewühlt'}
         </p>
       </div>
 
       {/* Tags */}
-      <div className="space-y-2">
-        <Label className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-          {text.tagLead}
-        </Label>
+      <Field label={text.tagLead} as="div">
         <div className="flex flex-wrap gap-1.5">
           {EMOTION_TAGS.map((tag) => {
             const active = value.tags.includes(tag.key)
@@ -145,10 +144,10 @@ export function MoodCheck({
                 title={tag.hint}
                 onClick={() => toggleTag(tag.key)}
                 className={cn(
-                  'rounded-full border px-2.5 py-1 font-mono text-[11px] transition-all disabled:opacity-50',
+                  'rounded-full border px-2.5 py-1 font-mono text-[11px] transition-colors disabled:opacity-50',
                   active
                     ? tagSelected[tag.tone]
-                    : 'border-border text-muted-foreground hover:border-primary/40',
+                    : 'border-border text-muted-foreground hover:border-primary/40 hover:text-foreground',
                 )}
               >
                 {tag.label}
@@ -156,13 +155,10 @@ export function MoodCheck({
             )
           })}
         </div>
-      </div>
+      </Field>
 
       {/* Notiz */}
-      <div className="space-y-2">
-        <Label className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-          Notiz (optional)
-        </Label>
+      <Field label="Notiz (optional)">
         <Textarea
           value={value.note}
           disabled={disabled}
@@ -171,7 +167,7 @@ export function MoodCheck({
           placeholder={text.notePlaceholder}
           className="input-ocean min-h-14 font-mono text-sm"
         />
-      </div>
+      </Field>
     </div>
   )
 }

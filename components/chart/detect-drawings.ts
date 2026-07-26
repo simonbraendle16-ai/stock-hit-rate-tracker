@@ -2,6 +2,8 @@
 // außer den rohen Pixeldaten. Erkennt farbige Horizontallevel, Trendlinien und
 // Fib-Retracements in einem TradingView-Screenshot.
 
+import { CHART_COLORS } from './colors'
+
 export interface DetectedHLine {
   kind: 'hline'
   y: number
@@ -111,7 +113,7 @@ function avgColor(d: Uint8ClampedArray, w: number, pts: [number, number][]): str
     b += d[i + 2]
     n++
   }
-  return n === 0 ? '#45a8ec' : rgbToHex(r / n, g / n, b / n)
+  return n === 0 ? CHART_COLORS.accent : rgbToHex(r / n, g / n, b / n)
 }
 
 /** Horizontale Level: Zeilen mit langem, fast lückenlosem Farb-Lauf. */

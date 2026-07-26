@@ -15,7 +15,8 @@ export function ChartHeader({
 }: {
   icon: IconType
   title: string
-  subtitle: string
+  /** Erklärende Unterzeile. Entfällt, wo der Titel für sich steht (Formularkarten). */
+  subtitle?: string
   /** Optionale Kennzahl rechts im Kopf — z. B. der aktuelle Stand der Kurve. */
   right?: React.ReactNode
 }) {
@@ -25,7 +26,7 @@ export function ChartHeader({
         <Icon className="mt-0.5 size-4 shrink-0 text-primary" />
         <div>
           <h3 className="text-sm font-semibold leading-tight text-foreground">{title}</h3>
-          <p className="note mt-1">{subtitle}</p>
+          {subtitle && <p className="note mt-1">{subtitle}</p>}
         </div>
       </div>
       {right && <div className="shrink-0">{right}</div>}

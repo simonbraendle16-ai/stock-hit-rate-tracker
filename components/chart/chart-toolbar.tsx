@@ -262,12 +262,10 @@ export function ChartToolbar({
 
       {openGroup && (
         <div
-          className="glass-card fixed z-50 flex w-64 flex-col gap-0.5 p-1.5 shadow-lg"
+          className="panel-raised fixed z-50 flex w-64 flex-col gap-0.5 p-1.5"
           style={{ top: openGroup.top, left: openGroup.left }}
         >
-          <p className="px-2 py-1 font-mono text-[9px] uppercase tracking-widest text-muted-foreground">
-            {openGroup.name}
-          </p>
+          <p className="eyebrow px-2 py-1">{openGroup.name}</p>
           {GROUPS.find((g) => g.name === openGroup.name)?.tools.map((t) => (
             <Button
               key={t.id}

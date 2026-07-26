@@ -1,6 +1,7 @@
 import { ArrowDownRight, ArrowUpRight } from 'lucide-react'
 import Link from 'next/link'
 import { computeRiskReward } from '@/lib/trade-math'
+import { PLAN_COLORS } from './colors'
 
 /** Read-only Plan-Leiste unter dem Chart: Entry/Stop/Target/Invalidation + R:R je offenem Trade. */
 export interface PlanBarTrade {
@@ -22,10 +23,8 @@ export function PlanBar({ trades }: { trades: PlanBarTrade[] }) {
   if (trades.length === 0) return null
 
   return (
-    <div className="glass-card mt-3 p-4">
-      <p className="mb-3 font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-        Trading-Plan im Chart
-      </p>
+    <div className="panel rise-in mt-3 p-4">
+      <p className="eyebrow mb-3">Trading-Plan im Chart</p>
       <div className="divide-y divide-border">
         {trades.map((t) => {
           const rr =
@@ -47,16 +46,26 @@ export function PlanBar({ trades }: { trades: PlanBarTrade[] }) {
                   {t.status}
                 </span>
               </span>
-              <span style={{ color: '#45a8ec' }}>Entry {fmt(t.entryPrice)}</span>
-              <span style={{ color: '#D8505F' }}>Stop {fmt(t.stopLoss)}</span>
+              {/* Dieselben vier Farben wie die Linien im Chart — die Leiste ist
+                  die Legende dazu, deshalb kommen sie aus derselben Quelle. */}
+              <span className="tabular" style={{ color: PLAN_COLORS.entry }}>
+                Entry {fmt(t.entryPrice)}
+              </span>
+              <span className="tabular" style={{ color: PLAN_COLORS.stop }}>
+                Stop {fmt(t.stopLoss)}
+              </span>
               {t.takeProfit != null && (
-                <span style={{ color: '#4FBE8C' }}>Target {fmt(t.takeProfit)}</span>
+                <span className="tabular" style={{ color: PLAN_COLORS.target }}>
+                  Target {fmt(t.takeProfit)}
+                </span>
               )}
               {t.elliottInvalidation != null && (
-                <span style={{ color: '#D4AC4E' }}>Invalidation {fmt(t.elliottInvalidation)}</span>
+                <span className="tabular" style={{ color: PLAN_COLORS.invalidation }}>
+                  Invalidation {fmt(t.elliottInvalidation)}
+                </span>
               )}
               {rr != null && Number.isFinite(rr) && (
-                <span className="ml-auto text-foreground">
+                <span className="tabular ml-auto text-foreground">
                   R:R <span className="font-bold">{rr.toFixed(2)}</span>
                 </span>
               )}
@@ -64,9 +73,7 @@ export function PlanBar({ trades }: { trades: PlanBarTrade[] }) {
           )
         })}
       </div>
-      <p className="mt-3 font-mono text-[10px] text-muted-foreground">
-        Handle deinen Plan, nicht deine Emotion.
-      </p>
+      <p className="note mt-3">Handle deinen Plan, nicht deine Emotion.</p>
     </div>
   )
 }

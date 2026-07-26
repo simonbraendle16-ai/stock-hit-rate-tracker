@@ -22,6 +22,7 @@ import {
   type UTCTimestamp,
 } from 'lightweight-charts'
 import { useCandles } from './use-candles'
+import { CHART_COLORS } from './colors'
 import { ChartToolbar, type DrawTool } from './chart-toolbar'
 import { DrawingLayer } from './drawing-layer'
 import { AnalysisImport } from './analysis-import'
@@ -43,7 +44,8 @@ import {
 } from '@/app/actions/drawings'
 import type { Interval } from '@/lib/market-data/types'
 import { Button } from '@/components/ui/button'
-import { Camera, Loader2, Maximize2, Minimize2 } from 'lucide-react'
+import { ChartEmpty, ChartHeader } from '@/components/chart-frame'
+import { CandlestickChart, Camera, Loader2, Maximize2, Minimize2 } from 'lucide-react'
 import { toast } from 'sonner'
 
 /** Preislinie aus dem Trading-Plan (Entry/Stop/Target/Invalidation) — AP 3. */
@@ -94,24 +96,24 @@ interface ChartPalette {
   bg: string
 }
 
-// App-Schema „Privatbank-Nacht“ (Default)
+// App-Schema „Indigo-Nacht“ (Default) — Werte aus `components/chart/colors.ts`
 const DARK: ChartPalette = {
-  text: '#8fa3b8',
-  grid: 'rgba(143, 163, 184, 0.08)',
-  border: 'rgba(143, 163, 184, 0.15)',
-  up: '#4FBE8C',
-  down: '#D8505F',
-  accent: '#45a8ec',
+  text: CHART_COLORS.muted,
+  grid: 'rgba(163, 166, 205, 0.08)',
+  border: 'rgba(163, 166, 205, 0.15)',
+  up: CHART_COLORS.up,
+  down: CHART_COLORS.down,
+  accent: CHART_COLORS.accent,
   bg: 'transparent',
 }
 
 const LIGHT: ChartPalette = {
-  text: '#5b6b7c',
-  grid: 'rgba(91, 107, 124, 0.10)',
-  border: 'rgba(91, 107, 124, 0.25)',
+  text: '#5b5f8a',
+  grid: 'rgba(91, 95, 138, 0.10)',
+  border: 'rgba(91, 95, 138, 0.25)',
   up: '#1f9e6d',
   down: '#c93a4a',
-  accent: '#45a8ec',
+  accent: CHART_COLORS.accent,
   bg: 'transparent',
 }
 
@@ -405,7 +407,12 @@ export function PriceChart({
               : m.kind === 'falsch'
                 ? ('arrowDown' as const)
                 : ('circle' as const),
-          color: m.kind === 'richtig' ? palette.up : m.kind === 'falsch' ? palette.down : '#D4AC4E',
+          color:
+            m.kind === 'richtig'
+              ? palette.up
+              : m.kind === 'falsch'
+                ? palette.down
+                : CHART_COLORS.warning,
           text: m.text,
         }
       })
@@ -630,7 +637,7 @@ export function PriceChart({
           ? palette.bg
           : resolvedTheme === 'light'
             ? '#ffffff'
-            : '#0b1522'
+            : CHART_COLORS.background
       ctx.fillRect(0, 0, out.width, out.height)
       ctx.drawImage(base, 0, 0)
 
@@ -695,8 +702,13 @@ export function PriceChart({
   // Forex/Optionen: keine Gratis-Daten → Hinweis statt Chart (TradingView-Link bleibt).
   if (errorCode === 'unsupported') {
     return (
-      <div className="glass-card p-4">
-        <p className="font-mono text-xs text-muted-foreground">{error}</p>
+      <div className="panel p-4">
+        <ChartEmpty
+          icon={CandlestickChart}
+          title="Für dieses Instrument gibt es keine Kerzen"
+          hint={error ?? ''}
+          className="h-[200px]"
+        />
       </div>
     )
   }
@@ -706,14 +718,16 @@ export function PriceChart({
       className={
         fullscreen
           ? 'fixed inset-0 z-50 flex flex-col bg-background p-3 sm:p-4'
-          : 'glass-card p-4'
+          : 'panel rise-in p-4'
       }
     >
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-          Kurschart · {symbol}
-        </p>
-        <div className="flex flex-wrap items-center gap-1.5">
+      {/* Derselbe Kopf wie über den Auswertungen daneben — Werkzeuge rechts. */}
+      <ChartHeader
+        icon={CandlestickChart}
+        title={`Kurschart · ${symbol}`}
+        subtitle="Kerzen aus dem Zwischenspeicher — kein Echtzeitkurs."
+        right={
+          <div className="flex flex-wrap items-center justify-end gap-1.5">
           <div className="flex gap-0.5">
             {(Object.keys(TIMEFRAMES) as (keyof typeof TIMEFRAMES)[]).map((tf) => (
               <Button
@@ -788,12 +802,11 @@ export function PriceChart({
           >
             {fullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
           </Button>
-        </div>
-      </div>
+          </div>
+        }
+      />
 
-      {drawError && (
-        <p className="mb-2 font-mono text-[11px] text-destructive">{drawError}</p>
-      )}
+      {drawError && <p className="note mb-2 text-destructive">{drawError}</p>}
 
       <div
         className={
@@ -820,7 +833,7 @@ export function PriceChart({
           <div ref={containerRef} className="absolute inset-0" />
           <div
             ref={legendRef}
-            className="pointer-events-none absolute left-2 top-1 z-20 font-mono text-[11px] text-muted-foreground"
+            className="note pointer-events-none absolute left-2 top-1 z-20"
           />
           {stockId != null &&
             drawingsVisible &&
@@ -851,7 +864,7 @@ export function PriceChart({
           )}
           {error && !loading && errorCode !== 'unsupported' && (
             <div className="absolute inset-0 flex items-center justify-center p-4">
-              <p className="text-center font-mono text-xs text-muted-foreground">{error}</p>
+              <p className="note text-center">{error}</p>
             </div>
           )}
         </div>

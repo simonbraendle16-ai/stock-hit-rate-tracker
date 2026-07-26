@@ -3,6 +3,7 @@
 // berechnet: keine zusätzlichen Datenabrufe, keine Kosten.
 
 import type { Candle } from '@/lib/market-data/types'
+import { CHART_COLORS, EXTRA_SERIES_COLORS } from './colors'
 
 export interface LinePoint {
   time: number
@@ -721,35 +722,35 @@ export function computeIndicator(
     case 'supertrend': {
       const st = supertrend(candles, p(inst, 'period'), p(inst, 'mult'))
       return [
-        line(st.up as SpecPoint[], { title: 'SuperTrend', color: '#4FBE8C', lineWidth: 2 }),
-        line(st.down as SpecPoint[], { color: '#D8505F', lineWidth: 2 }),
+        line(st.up as SpecPoint[], { title: 'SuperTrend', color: CHART_COLORS.up, lineWidth: 2 }),
+        line(st.down as SpecPoint[], { color: CHART_COLORS.down, lineWidth: 2 }),
       ]
     }
     case 'ichimoku': {
       const ich = ichimoku(candles, p(inst, 'tenkan'), p(inst, 'kijun'), p(inst, 'senkou'))
       return [
-        line(ich.tenkan, { title: 'Tenkan', color: '#45a8ec' }),
-        line(ich.kijun, { color: '#D8505F' }),
-        line(ich.senkouA, { color: '#4FBE8C' }),
-        line(ich.senkouB, { color: '#D4AC4E' }),
-        line(ich.chikou, { color: '#9b8ec4' }),
+        line(ich.tenkan, { title: 'Tenkan', color: CHART_COLORS.accent }),
+        line(ich.kijun, { color: CHART_COLORS.down }),
+        line(ich.senkouA, { color: CHART_COLORS.up }),
+        line(ich.senkouB, { color: CHART_COLORS.warning }),
+        line(ich.chikou, { color: CHART_COLORS.muted }),
       ]
     }
     case 'bollinger': {
       const bb = bollinger(candles, p(inst, 'period'), p(inst, 'mult'))
       return [
         line(bb.upper, { title: `BB ${p(inst, 'period')}` }),
-        line(bb.mid, { color: '#D4AC4E' }),
+        line(bb.mid, { color: CHART_COLORS.warning }),
         line(bb.lower),
       ]
     }
     case 'keltner': {
       const kc = keltner(candles, p(inst, 'period'), p(inst, 'mult'), p(inst, 'atr'))
-      return [line(kc.upper, { title: 'Keltner' }), line(kc.mid, { color: '#D4AC4E' }), line(kc.lower)]
+      return [line(kc.upper, { title: 'Keltner' }), line(kc.mid, { color: CHART_COLORS.warning }), line(kc.lower)]
     }
     case 'donchian': {
       const dc = donchian(candles, p(inst, 'period'))
-      return [line(dc.upper, { title: 'Donchian' }), line(dc.mid, { color: '#D4AC4E' }), line(dc.lower)]
+      return [line(dc.upper, { title: 'Donchian' }), line(dc.mid, { color: CHART_COLORS.warning }), line(dc.lower)]
     }
     case 'volume':
       return [
@@ -797,15 +798,15 @@ export function computeIndicator(
             color: pt.value >= 0 ? `${palette.up}73` : `${palette.down}73`,
           })),
         },
-        line(m.macd, { overlay: false, title: 'MACD', color: '#45a8ec' }),
-        line(m.signal, { overlay: false, color: '#D8505F' }),
+        line(m.macd, { overlay: false, title: 'MACD', color: CHART_COLORS.accent }),
+        line(m.signal, { overlay: false, color: CHART_COLORS.down }),
       ]
     }
     case 'stochastic': {
       const st = stochastic(candles, p(inst, 'k'), p(inst, 'd'), p(inst, 'smooth'))
       return [
-        line(st.k, { overlay: false, title: 'Stoch %K', color: '#45a8ec', levels: [20, 80] }),
-        line(st.d, { overlay: false, color: '#D8505F' }),
+        line(st.k, { overlay: false, title: 'Stoch %K', color: CHART_COLORS.accent, levels: [20, 80] }),
+        line(st.d, { overlay: false, color: CHART_COLORS.down }),
       ]
     }
     case 'atr':
@@ -813,9 +814,9 @@ export function computeIndicator(
     case 'adx': {
       const a = adx(candles, p(inst, 'period'))
       return [
-        line(a.adxLine, { overlay: false, title: 'ADX', color: '#D4AC4E', levels: [25], lineWidth: 2 }),
-        line(a.plusDi, { overlay: false, color: '#4FBE8C' }),
-        line(a.minusDi, { overlay: false, color: '#D8505F' }),
+        line(a.adxLine, { overlay: false, title: 'ADX', color: CHART_COLORS.warning, levels: [25], lineWidth: 2 }),
+        line(a.plusDi, { overlay: false, color: CHART_COLORS.up }),
+        line(a.minusDi, { overlay: false, color: CHART_COLORS.down }),
       ]
     }
     case 'cci':
@@ -851,14 +852,13 @@ export function computeIndicator(
 
 /** Rotierende Linienfarben für neue Indikator-Instanzen. */
 export const INDICATOR_COLORS = [
-  '#45a8ec',
-  '#D4AC4E',
-  '#4FBE8C',
-  '#D8505F',
-  '#9b8ec4',
-  '#5fb8b0',
-  '#d88f50',
-  '#f1ece0',
+  CHART_COLORS.accent,
+  CHART_COLORS.warning,
+  CHART_COLORS.up,
+  CHART_COLORS.down,
+  CHART_COLORS.muted,
+  ...EXTRA_SERIES_COLORS,
+  CHART_COLORS.foreground,
 ]
 
 export const DEFAULT_INDICATORS: IndicatorConfig = { instances: [] }

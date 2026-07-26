@@ -10,8 +10,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import { ChoiceButton, Field } from '@/components/form-frame'
 import { Check, Shield, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { PRE_TRADE_QUESTIONS, type PreTradeAnswer } from '@/lib/pre-trade-questions'
@@ -111,49 +111,40 @@ export function PreTradeQuestionsDialog({
           </p>
 
           <div className="grid grid-cols-2 gap-2">
-            <button
-              type="button"
+            <ChoiceButton
+              active={draft.answer === 'ja'}
+              tone="positive"
+              icon={Check}
               onClick={() => setAnswer('ja')}
-              className={cn(
-                'flex items-center justify-center gap-2 rounded-lg border py-3 font-mono text-sm font-bold uppercase transition-all',
-                draft.answer === 'ja'
-                  ? 'border-positive/40 bg-positive/15 text-positive'
-                  : 'border-border text-muted-foreground',
-              )}
+              className="py-3 uppercase"
             >
-              <Check className="size-4" /> Ja
-            </button>
-            <button
-              type="button"
+              Ja
+            </ChoiceButton>
+            <ChoiceButton
+              active={draft.answer === 'nein'}
+              tone="destructive"
+              icon={X}
               onClick={() => setAnswer('nein')}
-              className={cn(
-                'flex items-center justify-center gap-2 rounded-lg border py-3 font-mono text-sm font-bold uppercase transition-all',
-                draft.answer === 'nein'
-                  ? 'border-destructive/40 bg-destructive/15 text-destructive'
-                  : 'border-border text-muted-foreground',
-              )}
+              className="py-3 uppercase"
             >
-              <X className="size-4" /> Nein
-            </button>
+              Nein
+            </ChoiceButton>
           </div>
 
           {draft.answer === 'nein' && (
-            <p className="font-mono text-[11px] text-warning">
+            <p className="note text-warning">
               Ein „Nein" bedeutet: Der Trade bleibt ein Entwurf und ist nicht aktivierbar.
             </p>
           )}
 
-          <div className="space-y-2">
-            <Label className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-              Kurze Bemerkung (optional)
-            </Label>
+          <Field label="Kurze Bemerkung (optional)">
             <Textarea
               value={draft.note}
               onChange={(e) => setNote(e.target.value)}
               placeholder="Gedanke zu dieser Frage…"
               className="input-ocean min-h-16 font-mono text-sm"
             />
-          </div>
+          </Field>
         </div>
 
         <DialogFooter>

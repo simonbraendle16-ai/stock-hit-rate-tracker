@@ -1148,7 +1148,7 @@ Etappe 7d (Zeit)       ─┤  ✅ erledigt — ohne Migration, rein aus vorhand
                        │
 Etappe 7c (MAE/MFE)    ─┘  ✅ erledigt — teilt sich den Kerzen-Ladeweg mit dem Bot-Zwilling
 
-offen: Design E (Formulare/Chart) — die Etappen 2–7 sind damit vollständig.
+Design E (Formulare/Chart) ─   ✅ erledigt — der letzte offene Punkt; die Roadmap ist vollständig.
 ```
 
 **Warum Etappe 4 zuerst:** Emotionsdaten sind nur rückwirkend nutzlos. Jeder Trade, der ohne
@@ -1216,4 +1216,90 @@ Alert-Puls, Sheen, App-Hintergrund mit leuchtenden Kerzen, Palette, Video-Re-Ren
   Sobald Kerzen kommen, läuft der Kurs in den Plan hinein — der Weg ist gebaut und getestet.
 - **Drei Trades ohne Watchlist-Verknüpfung:** `ADBE`, `TEAM`, `FI` existieren nicht als
   Instrument, deshalb ist dort `stockId` leer.
-- Design-Etappe **E** wäre: Formulare und Chart-Cockpit angleichen.
+
+---
+
+# Design E — Formulare und Chart-Cockpit ✅ ERLEDIGT (26.07.2026)
+
+Der Nachzügler aus A–D: die beiden Flächen, die damals bewusst ausgespart blieben, weil sie
+Douglas-Guards tragen. Nichts an diesen Guards wurde angefasst — geändert wurde ausschließlich,
+**wie** sie aussehen.
+
+## Warum es nötig war
+
+Nach A–D sprachen die Analyse-Flächen eine Sprache und die Formulare eine zweite: Karten in
+`.glass-card` statt der drei Ebenen, Beschriftungen mal in 9, mal in 10, mal in 11 px, mal in
+Akzentfarbe, mal grau. Sichtbar wurde das auf `/settings`, wo Einstellungs-Formular und
+Ein-/Auszahlungen direkt untereinander stehen. Das Chart-Cockpit war noch schlimmer dran: es
+trug **die komplette alte Navy-Palette** als Hex-Werte im Quelltext (`#45a8ec`, `#4FBE8C`,
+`#D8505F`, `#D4AC4E`, `#f1ece0`, `#0b1522`) — die Kerzen und Plan-Linien hatten die Umstellung
+auf „Indigo-Nacht" nie mitbekommen.
+
+## Die zwei gemeinsamen Quellen, die dabei entstanden sind
+
+| Datei | Was sie einmal festhält |
+|---|---|
+| `components/form-frame.tsx` | `FormSection` · `Field` · `ChoiceButton` · `ResultBlock` · `ResultRow` · `InlineNotice` — das Gegenstück zu `chart-frame.tsx` auf den Analyse-Flächen |
+| `components/chart/colors.ts` | `CHART_COLORS` + `PLAN_COLORS` — die Hex-Entsprechung der Tokens aus `globals.css`, für Canvas/SVG, wo `var(--positive)` nicht greift |
+
+**Neue Formularteile dort aufsetzen, neue Chart-Farben dort nachschlagen** — nicht daneben
+neu bauen. Ausgenommen bleibt das TradingView-Schema in `price-chart.tsx`: das sind die
+Originalfarben von TradingView und dürfen sich *nicht* mitbewegen.
+
+## Was gebaut wurde
+
+| Block | Inhalt | Dateien |
+|---|---|---|
+| **Formular-Sprache** | Karte = Ebene 2 mit demselben Kopf wie jedes Diagramm (Icon · Titel · `.note`), Beschriftung = `.eyebrow`, Ergebnis = vertiefte Ebene, Auswahl = ein Knopf-Typ | `form-frame.tsx` (neu) |
+| **Trade-Formular** | fünf benannte Abschnitte statt einer losen Feldkette: Die Fragen von Douglas · Der Plan · Kapital und Gebühren · Elliott-Wellen · Ausführung und Einordnung; gestaffelter Aufbau | `trade-form.tsx` |
+| **Einstellungen** | Konto · Risiko · Standard-Gebühren, dazu Ein-/Auszahlungen in derselben Form | `settings-form.tsx`, `cashflow-list.tsx` |
+| **Douglas-Dialog + Mood-Check** | Ja/Nein und die Skala 1–5 auf denselben Knopf, Notizen über `Field` | `pre-trade-questions-dialog.tsx`, `mood-check.tsx` |
+| **Chart-Palette** | 63 Hex-Werte maschinell ersetzt (Zeichenebene, Indikatoren, Bilderkennung, Import), das App-Schema und die Plan-Leiste von Hand; Kerzen, Zeichnungen, Indikatoren und Plan-Linien tragen jetzt Indigo-Nacht | `colors.ts` (neu), `price-chart.tsx`, `drawing-layer.tsx`, `indicators.ts`, `detect-drawings.ts`, `analysis-import.tsx`, `plan-bar.tsx` |
+| **Chart-Rahmen** | `.glass-card` → `.panel`, schwebende Menüs → `.panel-raised`, Kopf über `ChartHeader`, „keine Kerzen" über `ChartEmpty` | `price-chart.tsx`, `chart-toolbar.tsx`, `indicator-menu.tsx`, `tradingview-widget.tsx`, `plan-bar.tsx` |
+
+Nebenbei: `ChartHeader.subtitle` ist jetzt optional, `<Label>` ist aus den umgebauten
+Formularen verschwunden — die Beschriftung umschließt ihr Feld, damit sie ohne `id` mit ihm
+verbunden ist. Und **`.glass-card` ist weg**: Formulare und Chart-Cockpit waren die letzten
+Nutzer, damit bleiben app-weit die drei Ebenen `.panel` / `.panel-raised` / `.panel-sunken`.
+
+## Zwei inhaltliche Änderungen, die dabei entstanden sind
+
+- **Die Warn-Emojis sind raus.** „⚠️ Risiko überwiegt!" heißt jetzt „Risiko überwiegt." — Ton
+  und Farbe der Zeile sagen dasselbe, ohne zu rufen.
+- **Der Chart-Kopf sagt, was er zeigt:** „Kerzen aus dem Zwischenspeicher — kein Echtzeitkurs."
+  Das ist die Regel aus A–D (nie ein „LIVE"-Signal an Kursdaten), jetzt auch ausgeschrieben.
+
+## Bewusst NICHT dabei
+
+- **Keine Guard-Logik.** Pre-Trade-Gate, Plan-Lock, Revenge-Guard, Verlustannahme und die
+  Pflicht-Skala des Emotions-Check-ins sind unverändert; kein Server-Action-, Schema- oder
+  Rechenweg wurde angefasst.
+- **Die übrigen Dialoge** (`edit-trade-dialog`, `set-alert-dialog`, `bot-outcome-dialog`,
+  `add-stock-dialog`, `currency-change-dialog`, `risk-calculator`, `position-adjust`) tragen
+  weiter ihre eigene Beschriftung. Sie waren nie Teil von E; mit `form-frame.tsx` liegt der
+  Weg dorthin aber jetzt bereit.
+- **Kein neuer Ladeweg, keine Migration, keine neue Abhängigkeit.**
+
+## Nachweis
+
+- `node node_modules/typescript/bin/tsc --noEmit` — sauber.
+- `node node_modules/vitest/vitest.mjs run` — 301 Tests in 10 Dateien grün.
+- `node node_modules/next/dist/bin/next build` — alle 18 Routen gebaut.
+- **Sichtprüfung im laufenden Dev-Server** mit einem Wegwerf-Nutzer: `/trades/new` (leer,
+  gefüllt mit Echtgeld-Zweig und beiden Ergebniskästen), Douglas-Dialog, `/settings`,
+  `/stock/[id]` mit Kerzen aus echten Kursdaten — dazu derselbe Durchlauf mit
+  `prefers-reduced-motion: reduce`, weil der Endzustand ohne Bewegung stimmen muss.
+- **Datenbestand unberührt:** `.baseline-design-e-vorher` gegen `.baseline-design-e-nachher` —
+  Trades und Settings byteweise identisch (der einzige Unterschied im Dump ist sein eigener
+  Zeitstempel). Die vier Sandbox-Nutzer der Sichtprüfung sind samt ihrer beiden Instrumente
+  wieder gelöscht.
+
+## Offen
+
+- **Zwei Rotationsfarben ohne Bedeutung** (`EXTRA_SERIES_COLORS`, Teal und Orange) bleiben
+  außerhalb der Palette. Sie stehen für nichts — sie sind nur da, damit sich acht gleichzeitig
+  eingeblendete Indikatoren unterscheiden lassen.
+- **Das helle Chart-Schema** ist nur nachgezogen, nicht geprüft: die App läuft dark, `LIGHT`
+  greift erst, wenn jemand das Theme umstellt.
+- Die Umstellung ist rein visuell und deshalb **nicht testgedeckt** — Vitest prüft Logik, kein
+  Aussehen. Die Sichtprüfung oben ist der Beleg.

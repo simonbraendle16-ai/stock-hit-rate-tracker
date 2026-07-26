@@ -3,15 +3,13 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
+import { ChoiceButton, Field, FormSection } from '@/components/form-frame'
 import { addCashflow, deleteCashflow, type Cashflow } from '@/app/actions/cashflows'
 import { formatMoney } from '@/lib/format'
 import { ArrowDownToLine, ArrowUpFromLine, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-
-const labelCls = 'font-mono text-[10px] tracking-widest uppercase text-primary/60'
 
 function isoDate(d: Date | string): string {
   return new Date(d).toISOString().slice(0, 10)
@@ -70,54 +68,38 @@ export function CashflowList({
   }
 
   return (
-    <div className="panel sheen space-y-4 p-5">
-      <div className="flex items-center gap-2">
-        <ArrowDownToLine className="size-4 text-primary" />
-        <p className="font-mono text-[10px] font-bold tracking-widest text-primary">
-          EIN- & AUSZAHLUNGEN
-        </p>
-        {items.length > 0 && (
-          <span className="ml-auto font-mono text-[11px] text-muted-foreground">
-            Netto {formatMoney(net, currency)}
-          </span>
-        )}
-      </div>
-
-      <p className="font-mono text-[11px] leading-relaxed text-muted-foreground">
-        Geld, das du auf das Handelskonto einzahlst oder entnimmst. Die Rendite misst danach
-        gegen dein tatsächlich eingesetztes Kapital — eine Auszahlung ist kein Verlust und
-        zählt nicht in den Drawdown.
-      </p>
-
+    <FormSection
+      icon={ArrowDownToLine}
+      title="Ein- und Auszahlungen"
+      hint="Geld, das du auf das Handelskonto einzahlst oder entnimmst. Eine Auszahlung ist kein
+        Verlust und zählt nicht in den Drawdown — die Rendite misst danach gegen dein
+        tatsächlich eingesetztes Kapital."
+      right={
+        items.length > 0 ? (
+          <span className="note">Netto {formatMoney(net, currency)}</span>
+        ) : undefined
+      }
+      delay="rise-in-3"
+      className="sheen"
+    >
       <form onSubmit={submit} className="space-y-3">
         <div className="grid grid-cols-2 gap-2">
           {(['einzahlung', 'auszahlung'] as const).map((k) => (
-            <button
+            <ChoiceButton
               key={k}
-              type="button"
+              active={kind === k}
+              tone={k === 'einzahlung' ? 'positive' : 'warning'}
+              icon={k === 'einzahlung' ? ArrowDownToLine : ArrowUpFromLine}
               onClick={() => setKind(k)}
-              className={cn(
-                'flex items-center justify-center gap-1.5 rounded-lg border py-2 font-mono text-xs uppercase transition-all',
-                kind === k
-                  ? k === 'einzahlung'
-                    ? 'border-positive/40 bg-positive/15 text-positive'
-                    : 'border-warning/40 bg-warning/15 text-warning'
-                  : 'border-border text-muted-foreground',
-              )}
+              className="py-2 text-xs uppercase"
             >
-              {k === 'einzahlung' ? (
-                <ArrowDownToLine className="size-3.5" />
-              ) : (
-                <ArrowUpFromLine className="size-3.5" />
-              )}
               {k}
-            </button>
+            </ChoiceButton>
           ))}
         </div>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div className="space-y-2">
-            <Label className={labelCls}>Betrag</Label>
+          <Field label="Betrag">
             <Input
               type="number"
               step="any"
@@ -128,9 +110,8 @@ export function CashflowList({
               className="input-ocean h-11 font-mono"
               required
             />
-          </div>
-          <div className="space-y-2">
-            <Label className={labelCls}>Datum</Label>
+          </Field>
+          <Field label="Datum">
             <Input
               type="date"
               value={date}
@@ -138,18 +119,17 @@ export function CashflowList({
               className="input-ocean h-11 font-mono"
               required
             />
-          </div>
+          </Field>
         </div>
 
-        <div className="space-y-2">
-          <Label className={labelCls}>Notiz (optional)</Label>
+        <Field label="Notiz (optional)">
           <Input
             value={note}
             onChange={(e) => setNote(e.target.value)}
             placeholder="z. B. Sparplan, Entnahme für Miete"
             className="input-ocean h-11 font-mono"
           />
-        </div>
+        </Field>
 
         <Button
           type="submit"
@@ -197,6 +177,6 @@ export function CashflowList({
           ))}
         </div>
       )}
-    </div>
+    </FormSection>
   )
 }

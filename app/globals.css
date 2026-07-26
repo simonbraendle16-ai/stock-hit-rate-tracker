@@ -290,11 +290,10 @@ body > .app-backdrop {
 @layer components {
   /* -------------------------------------------------------------------------
      Drei Panel-Ebenen statt einer Fläche. Tiefe entsteht über Schatten und
-     Kantenlicht — nie über Glow. `.glass-card` ist der historische Name der
-     Standardebene und bleibt app-weit gültig.
+     Kantenlicht — nie über Glow. (Der historische Name `.glass-card` ist mit
+     Design E entfallen; die letzten Nutzer waren Formulare und Chart-Cockpit.)
   ------------------------------------------------------------------------- */
-  .panel,
-  .glass-card {
+  .panel {
     background: var(--card);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);

@@ -124,10 +124,8 @@ export function IndicatorMenu({
       </Button>
 
       {open && (
-        <div className="glass-card absolute right-0 top-full z-30 mt-1 flex max-h-[70vh] w-80 flex-col p-3">
-          <p className="mb-1 font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-            Indikatoren — aus geladenen Kerzen berechnet
-          </p>
+        <div className="panel-raised absolute right-0 top-full z-30 mt-1 flex max-h-[70vh] w-80 flex-col p-3">
+          <p className="eyebrow mb-1">Indikatoren — aus geladenen Kerzen berechnet</p>
 
           {instances.length > 0 && (
             <div className="mb-2 divide-y divide-border border-b border-border pb-2">

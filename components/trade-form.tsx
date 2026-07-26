@@ -4,9 +4,16 @@ import type React from 'react'
 import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
+import {
+  ChoiceButton,
+  Field,
+  FormSection,
+  InlineNotice,
+  ResultBlock,
+  ResultRow,
+} from '@/components/form-frame'
 import { createTrade, type TradeInput } from '@/app/actions/trades'
 import { SetupTagsInput } from '@/components/setup-tags-input'
 import {
@@ -21,13 +28,14 @@ import {
   Banknote,
   Coins,
   FlaskConical,
+  NotebookPen,
   Shield,
+  Target,
   TrendingDown,
   TrendingUp,
   Waves,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import { cn } from '@/lib/utils'
 import {
   computePositionValue,
   computeShares,
@@ -62,7 +70,9 @@ const waveDegrees = [
   'Subminuette',
 ]
 
-const labelCls = 'font-mono text-[10px] tracking-widest uppercase text-primary/60'
+/** Einheitliche Feldhöhe im ganzen Formular. */
+const inputCls = 'input-ocean h-11 font-mono'
+const selectCls = 'input-ocean h-11 w-full rounded-lg px-2.5 font-mono text-sm'
 
 export function TradeForm({
   startCapital = 10000,
@@ -233,204 +243,162 @@ export function TradeForm({
     <>
     <form onSubmit={handleSubmit} className="space-y-5">
       {/* Douglas-Fragen-Gate — beim Speichern als eigene Fenster abgefragt */}
-      <div className="glass-card p-4">
-        <div className="mb-3 flex items-center gap-2">
-          <Shield className="size-4 text-primary" />
-          <p className="font-mono text-[10px] font-bold tracking-widest text-primary">
-            DIE FRAGEN VON DOUGLAS — ENTSCHEIDE DEN TRADE VORHER
-          </p>
-        </div>
+      <FormSection
+        icon={Shield}
+        title="Die Fragen von Douglas"
+        hint="Entscheide den Trade, bevor du ihn eingehst."
+      >
         <ol className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {PRE_TRADE_QUESTIONS.map((q, i) => (
             <li key={q.key} className="flex items-center gap-2">
-              <span className="flex size-5 items-center justify-center rounded-full border border-border font-mono text-[10px] text-muted-foreground">
+              <span className="eyebrow flex size-5 shrink-0 items-center justify-center rounded-full border border-border">
                 {i + 1}
               </span>
               <span className="font-mono text-xs text-muted-foreground">{q.question}</span>
             </li>
           ))}
         </ol>
-        <p className="mt-3 font-mono text-[11px] text-muted-foreground">
+        <p className="note">
           Beim Speichern beantwortest du jede Frage einzeln mit Ja/Nein. Nur wenn alle mit
           „Ja" beantwortet sind, ist der Trade aktivierbar — sonst bleibt er ein Entwurf.
         </p>
-      </div>
+      </FormSection>
 
-      {/* Mit echtem Geld vs. Demo */}
-      <div className="space-y-2">
-        <Label className={labelCls}>Handelsart</Label>
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={() => setTradedWithMoney(true)}
-            className={cn(
-              'flex items-center justify-center gap-2 rounded-lg border py-2.5 font-mono text-sm font-bold transition-all',
-              tradedWithMoney
-                ? 'border-positive/40 bg-positive/15 text-positive'
-                : 'border-border text-muted-foreground',
-            )}
-          >
-            <Banknote className="size-4" /> MIT ECHTEM GELD
-          </button>
-          <button
-            type="button"
-            onClick={() => setTradedWithMoney(false)}
-            className={cn(
-              'flex items-center justify-center gap-2 rounded-lg border py-2.5 font-mono text-sm font-bold transition-all',
-              !tradedWithMoney
-                ? 'border-primary/40 bg-primary/15 text-primary'
-                : 'border-border text-muted-foreground',
-            )}
-          >
-            <FlaskConical className="size-4" /> DEMO · PAPERTRADE
-          </button>
-        </div>
-      </div>
-
-      {/* Ticker & Richtung */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <div className="space-y-2">
-          <Label className={labelCls}>Ticker / Symbol *</Label>
-          <Input
-            value={form.ticker}
-            onChange={(e) => set('ticker', e.target.value.toUpperCase())}
-            placeholder="z. B. AAPL, BTC, EUR/USD"
-            className="input-ocean h-11 font-mono"
-            required
-          />
-        </div>
-        <div className="space-y-2">
-          <Label className={labelCls}>Richtung *</Label>
+      {/* Der Plan selbst: Handelsart, Instrument, Richtung, Kurse */}
+      <FormSection
+        icon={Target}
+        title="Der Plan"
+        hint="Einstieg, Stop und Ziel stehen fest, bevor Geld im Markt ist."
+        delay="rise-in-1"
+      >
+        <Field label="Handelsart" as="div">
           <div className="grid grid-cols-2 gap-2">
-            <button
-              type="button"
-              onClick={() => set('direction', 'long')}
-              className={cn(
-                'flex items-center justify-center gap-2 rounded-lg border py-2.5 font-mono text-sm font-bold transition-all',
-                form.direction === 'long'
-                  ? 'border-positive/40 bg-positive/15 text-positive'
-                  : 'border-border text-muted-foreground',
-              )}
+            <ChoiceButton
+              active={tradedWithMoney}
+              tone="positive"
+              icon={Banknote}
+              onClick={() => setTradedWithMoney(true)}
             >
-              <ArrowUpRight className="size-4" /> LONG
-            </button>
-            <button
-              type="button"
-              onClick={() => set('direction', 'short')}
-              className={cn(
-                'flex items-center justify-center gap-2 rounded-lg border py-2.5 font-mono text-sm font-bold transition-all',
-                form.direction === 'short'
-                  ? 'border-destructive/40 bg-destructive/15 text-destructive'
-                  : 'border-border text-muted-foreground',
-              )}
+              MIT ECHTEM GELD
+            </ChoiceButton>
+            <ChoiceButton
+              active={!tradedWithMoney}
+              tone="primary"
+              icon={FlaskConical}
+              onClick={() => setTradedWithMoney(false)}
             >
-              <ArrowDownRight className="size-4" /> SHORT
-            </button>
+              DEMO · PAPERTRADE
+            </ChoiceButton>
           </div>
-        </div>
-      </div>
+        </Field>
 
-      {/* Kurse */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <div className="space-y-2">
-          <Label className={labelCls}>Einstiegskurs *</Label>
-          <Input
-            type="number"
-            step="any"
-            value={form.entryPrice}
-            onChange={(e) => set('entryPrice', e.target.value)}
-            placeholder="0.00"
-            className="input-ocean h-11 font-mono"
-            required
-          />
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <Field label="Ticker / Symbol *">
+            <Input
+              value={form.ticker}
+              onChange={(e) => set('ticker', e.target.value.toUpperCase())}
+              placeholder="z. B. AAPL, BTC, EUR/USD"
+              className={inputCls}
+              required
+            />
+          </Field>
+          <Field label="Richtung *" as="div">
+            <div className="grid grid-cols-2 gap-2">
+              <ChoiceButton
+                active={form.direction === 'long'}
+                tone="positive"
+                icon={ArrowUpRight}
+                onClick={() => set('direction', 'long')}
+              >
+                LONG
+              </ChoiceButton>
+              <ChoiceButton
+                active={form.direction === 'short'}
+                tone="destructive"
+                icon={ArrowDownRight}
+                onClick={() => set('direction', 'short')}
+              >
+                SHORT
+              </ChoiceButton>
+            </div>
+          </Field>
         </div>
-        <div className="space-y-2">
-          <Label className={cn(labelCls, 'flex items-center gap-1 text-destructive/70')}>
-            <AlertTriangle className="size-3" /> Stop-Loss *
-          </Label>
-          <Input
-            type="number"
-            step="any"
-            value={form.stopLoss}
-            onChange={(e) => set('stopLoss', e.target.value)}
-            placeholder="0.00"
-            className="input-ocean h-11 font-mono"
-            required
-          />
-        </div>
-        <div className="space-y-2">
-          <Label className={cn(labelCls, 'text-positive/70')}>Take-Profit</Label>
-          <Input
-            type="number"
-            step="any"
-            value={form.takeProfit}
-            onChange={(e) => set('takeProfit', e.target.value)}
-            placeholder="0.00"
-            className="input-ocean h-11 font-mono"
-          />
-        </div>
-      </div>
 
-      {/* CRV */}
-      {rr != null && (
-        <div
-          className={cn(
-            'flex items-center gap-3 rounded-lg border px-3 py-2.5 font-mono text-sm',
-            rr >= 2
-              ? 'border-positive/30 bg-positive/10 text-positive'
-              : rr >= 1
-                ? 'border-warning/30 bg-warning/10 text-warning'
-                : 'border-destructive/30 bg-destructive/10 text-destructive',
-          )}
-        >
-          <Waves className="size-4" />
-          CRV: <span className="font-bold">1:{rr.toFixed(2)}</span>
-          {rr < 1 && <span className="ml-1 text-xs">⚠️ Risiko überwiegt!</span>}
+        <div className="grid grid-cols-1 items-end gap-4 md:grid-cols-3">
+          <Field label="Einstiegskurs *">
+            <Input
+              type="number"
+              step="any"
+              value={form.entryPrice}
+              onChange={(e) => set('entryPrice', e.target.value)}
+              placeholder="0.00"
+              className={inputCls}
+              required
+            />
+          </Field>
+          <Field label="Stop-Loss *" icon={AlertTriangle} tone="destructive">
+            <Input
+              type="number"
+              step="any"
+              value={form.stopLoss}
+              onChange={(e) => set('stopLoss', e.target.value)}
+              placeholder="0.00"
+              className={inputCls}
+              required
+            />
+          </Field>
+          <Field label="Take-Profit" tone="positive">
+            <Input
+              type="number"
+              step="any"
+              value={form.takeProfit}
+              onChange={(e) => set('takeProfit', e.target.value)}
+              placeholder="0.00"
+              className={inputCls}
+            />
+          </Field>
         </div>
-      )}
 
-      {/* Risiko-Guard (nur Echtgeld) */}
-      {risk != null && (
-        <div
-          className={cn(
-            'flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border px-3 py-2.5 font-mono text-sm',
-            risk.over
-              ? 'border-destructive/40 bg-destructive/10 text-destructive'
-              : 'border-positive/30 bg-positive/10 text-positive',
-          )}
-        >
-          <Shield className="size-4" />
-          Konto-Risiko:{' '}
-          <span className="font-bold">
-            {money$(risk.riskEur)} · {risk.pct.toFixed(2)} %
-          </span>
-          <span className="text-muted-foreground">
-            von {money$(startCapital)} (Schwelle {num(maxRiskPct, 1)} %)
-          </span>
-          {risk.over && (
-            <span className="w-full text-xs font-bold">
-              ⚠️ Über deiner Risikoschwelle — Position verkleinern oder Stop enger setzen.
+        {/* CRV */}
+        {rr != null && (
+          <InlineNotice
+            tone={rr >= 2 ? 'positive' : rr >= 1 ? 'warning' : 'destructive'}
+            icon={Waves}
+          >
+            CRV: <span className="font-bold">1:{rr.toFixed(2)}</span>
+            {rr < 1 && <span className="text-xs">Risiko überwiegt.</span>}
+          </InlineNotice>
+        )}
+
+        {/* Risiko-Guard (nur Echtgeld) */}
+        {risk != null && (
+          <InlineNotice tone={risk.over ? 'destructive' : 'positive'} icon={Shield}>
+            Konto-Risiko:{' '}
+            <span className="font-bold">
+              {money$(risk.riskEur)} · {risk.pct.toFixed(2)} %
             </span>
-          )}
-        </div>
-      )}
+            <span className="text-muted-foreground">
+              von {money$(startCapital)} (Schwelle {num(maxRiskPct, 1)} %)
+            </span>
+            {risk.over && (
+              <span className="w-full text-xs font-bold">
+                Über deiner Risikoschwelle — Position verkleinern oder Stop enger setzen.
+              </span>
+            )}
+          </InlineNotice>
+        )}
+      </FormSection>
 
       {/* Kapital & Gebühren — nur bei Echtgeld */}
       {tradedWithMoney && (
-        <div className="glass-card space-y-4 p-4">
-          <div className="flex items-center gap-2">
-            <Coins className="size-4 text-primary" />
-            <p className="font-mono text-[10px] font-bold tracking-widest text-primary">
-              KAPITAL & GEBÜHREN
-            </p>
-            <span className="ml-auto font-mono text-[10px] text-muted-foreground">
-              Gebühren gelten für diesen Trade
-            </span>
-          </div>
-
+        <FormSection
+          icon={Coins}
+          title="Kapital und Gebühren"
+          hint="Die Gebühren gelten für diesen Trade — die Voreinstellung steht in den Einstellungen."
+          delay="rise-in-2"
+        >
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div className="space-y-2">
-              <Label className={labelCls}>Kapitaleinsatz ({currencySymbol(currency)})</Label>
+            <Field label={`Kapitaleinsatz (${currencySymbol(currency)})`}>
               <Input
                 type="number"
                 step="any"
@@ -438,11 +406,10 @@ export function TradeForm({
                 value={form.investedAmount}
                 onChange={(e) => set('investedAmount', e.target.value)}
                 placeholder="z. B. 5000"
-                className="input-ocean h-11 font-mono"
+                className={inputCls}
               />
-            </div>
-            <div className="space-y-2">
-              <Label className={labelCls}>Hebel</Label>
+            </Field>
+            <Field label="Hebel">
               <Input
                 type="number"
                 step="any"
@@ -450,52 +417,52 @@ export function TradeForm({
                 value={form.leverage}
                 onChange={(e) => set('leverage', e.target.value)}
                 placeholder="1"
-                className="input-ocean h-11 font-mono"
+                className={inputCls}
               />
-            </div>
+            </Field>
           </div>
 
           {/* Hebel wirkt auf die Positionsgröße, nicht auf das gebundene Kapital.
               Das Risiko bleibt der Stop — genau so wird es hier auch gezeigt. */}
           {money && money.leverage > 1 && (
-            <div className="rounded-lg border border-warning/25 bg-warning/5 p-3">
-              <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 font-mono text-xs sm:grid-cols-3">
-                <Row label="Gebundenes Kapital" value={money$(parseFloat(form.investedAmount))} />
-                <Row label="Positionswert" value={money$(money.positionValue)} strong />
-                <Row label="Stückzahl" value={num(money.shares)} />
+            <ResultBlock tone="warning">
+              <dl className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
+                <ResultRow
+                  label="Gebundenes Kapital"
+                  value={money$(parseFloat(form.investedAmount))}
+                />
+                <ResultRow label="Positionswert" value={money$(money.positionValue)} strong />
+                <ResultRow label="Stückzahl" value={num(money.shares)} />
               </dl>
-              <p className="mt-2 font-mono text-[10px] leading-relaxed text-muted-foreground">
+              <p className="note mt-2">
                 Der Hebel vergrößert die Position, nicht dein Risiko — das bestimmt weiterhin
                 allein dein Stop. Prüfe die Risikoschwelle oben.
               </p>
-            </div>
+            </ResultBlock>
           )}
 
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            <div className="space-y-2">
-              <Label className={labelCls}>Gebühr Kauf ({currencySymbol(currency)})</Label>
+          <div className="grid grid-cols-1 items-end gap-4 md:grid-cols-3">
+            <Field label={`Gebühr Kauf (${currencySymbol(currency)})`}>
               <Input
                 type="number"
                 step="any"
                 min="0"
                 value={form.feeEntry}
                 onChange={(e) => set('feeEntry', e.target.value)}
-                className="input-ocean h-11 font-mono"
+                className={inputCls}
               />
-            </div>
-            <div className="space-y-2">
-              <Label className={labelCls}>Gebühr Verkauf ({currencySymbol(currency)})</Label>
+            </Field>
+            <Field label={`Gebühr Verkauf (${currencySymbol(currency)})`}>
               <Input
                 type="number"
                 step="any"
                 min="0"
                 value={form.feeExit}
                 onChange={(e) => set('feeExit', e.target.value)}
-                className="input-ocean h-11 font-mono"
+                className={inputCls}
               />
-            </div>
-            <div className="space-y-2">
-              <Label className={labelCls}>Verkaufsanteil beim Take-Profit (%)</Label>
+            </Field>
+            <Field label="Verkaufsanteil beim Take-Profit (%)">
               <Input
                 type="number"
                 step="any"
@@ -504,71 +471,79 @@ export function TradeForm({
                 value={form.takeProfitPct}
                 onChange={(e) => set('takeProfitPct', e.target.value)}
                 placeholder="100"
-                className="input-ocean h-11 font-mono"
+                className={inputCls}
               />
-            </div>
+            </Field>
           </div>
 
           {money && (money.tp || money.sl) && (
             <div className="space-y-3">
               {money.tp && (
-                <div className="rounded-lg border border-positive/25 bg-positive/5 p-3">
-                  <div className="mb-2 flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-widest text-positive">
-                    <TrendingUp className="size-3.5" /> Beim Take-Profit
-                  </div>
-                  <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 font-mono text-xs sm:grid-cols-3">
-                    <Row label="Stückzahl gesamt" value={num(money.tp.shares)} />
-                    <Row label="Davon verkauft" value={num(money.tp.soldShares)} />
-                    <Row label="Restposition" value={num(money.tp.remainingShares)} />
-                    <Row label="Verkaufserlös" value={money$(money.tp.proceeds)} />
-                    <Row label="Brutto-Gewinn" value={money$(money.tp.grossProfit)} />
-                    <Row label="Gebühren" value={`−${money$(money.tp.fees)}`} tone="neg" />
-                    <Row
+                <ResultBlock tone="positive" icon={TrendingUp} title="Beim Take-Profit">
+                  <dl className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
+                    <ResultRow label="Stückzahl gesamt" value={num(money.tp.shares)} />
+                    <ResultRow label="Davon verkauft" value={num(money.tp.soldShares)} />
+                    <ResultRow label="Restposition" value={num(money.tp.remainingShares)} />
+                    <ResultRow label="Verkaufserlös" value={money$(money.tp.proceeds)} />
+                    <ResultRow label="Brutto-Gewinn" value={money$(money.tp.grossProfit)} />
+                    <ResultRow
+                      label="Gebühren"
+                      value={`−${money$(money.tp.fees)}`}
+                      tone="destructive"
+                    />
+                    <ResultRow
                       label="Netto-Gewinn"
                       value={money$(money.tp.netProfit)}
-                      tone={money.tp.netProfit >= 0 ? 'pos' : 'neg'}
+                      tone={money.tp.netProfit >= 0 ? 'positive' : 'destructive'}
                       strong
                     />
                   </dl>
-                </div>
+                </ResultBlock>
               )}
               {money.sl && (
-                <div className="rounded-lg border border-destructive/25 bg-destructive/5 p-3">
-                  <div className="mb-2 flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-widest text-destructive">
-                    <TrendingDown className="size-3.5" /> Beim Stop-Loss (volle Position)
-                  </div>
-                  <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 font-mono text-xs sm:grid-cols-3">
-                    <Row label="Kursverlust" value={money$(money.sl.grossLoss)} tone="neg" />
-                    <Row label="Gebühren" value={`−${money$(money.sl.fees)}`} tone="neg" />
-                    <Row
+                <ResultBlock
+                  tone="destructive"
+                  icon={TrendingDown}
+                  title="Beim Stop-Loss (volle Position)"
+                >
+                  <dl className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
+                    <ResultRow
+                      label="Kursverlust"
+                      value={money$(money.sl.grossLoss)}
+                      tone="destructive"
+                    />
+                    <ResultRow
+                      label="Gebühren"
+                      value={`−${money$(money.sl.fees)}`}
+                      tone="destructive"
+                    />
+                    <ResultRow
                       label="Netto-Verlust"
                       value={money$(money.sl.netLoss)}
-                      tone="neg"
+                      tone="destructive"
                       strong
                     />
                   </dl>
-                </div>
+                </ResultBlock>
               )}
             </div>
           )}
-        </div>
+        </FormSection>
       )}
 
       {/* Elliott-Block */}
-      <div className="glass-card space-y-4 p-4">
-        <div className="flex items-center gap-2">
-          <Waves className="size-4 text-primary" />
-          <p className="font-mono text-[10px] font-bold tracking-widest text-primary">
-            ELLIOTT-WELLEN
-          </p>
-        </div>
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          <div className="space-y-2 md:col-span-1">
-            <Label className={labelCls}>Wellengrad</Label>
+      <FormSection
+        icon={Waves}
+        title="Elliott-Wellen"
+        hint="Wo im Zyklus steht der Markt — und ab wo ist diese Lesart hinfällig?"
+        delay="rise-in-3"
+      >
+        <div className="grid grid-cols-1 items-end gap-4 md:grid-cols-3">
+          <Field label="Wellengrad">
             <select
               value={form.waveDegree}
               onChange={(e) => set('waveDegree', e.target.value)}
-              className="input-ocean h-11 w-full rounded-lg px-2.5 font-mono text-sm"
+              className={selectCls}
             >
               <option value="">– wählen –</option>
               {waveDegrees.map((d) => (
@@ -577,102 +552,101 @@ export function TradeForm({
                 </option>
               ))}
             </select>
-          </div>
-          <div className="space-y-2 md:col-span-1">
-            <Label className={labelCls}>Wellenzählung (Frage 1)</Label>
+          </Field>
+          <Field label="Wellenzählung (Frage 1)">
             <Input
               value={form.elliottWaveCount}
               onChange={(e) => set('elliottWaveCount', e.target.value)}
               placeholder="z. B. Welle 3 von (3)"
-              className="input-ocean h-11 font-mono"
+              className={inputCls}
             />
-          </div>
-          <div className="space-y-2 md:col-span-1">
-            <Label className={labelCls}>Invalidation-Level (Frage 4)</Label>
+          </Field>
+          <Field label="Invalidation-Level (Frage 4)" tone="warning">
             <Input
               type="number"
               step="any"
               value={form.elliottInvalidation}
               onChange={(e) => set('elliottInvalidation', e.target.value)}
               placeholder="Analyse ungültig ab…"
-              className="input-ocean h-11 font-mono"
+              className={inputCls}
             />
-          </div>
+          </Field>
         </div>
-      </div>
+      </FormSection>
 
-      {/* Markt / Größe / Broker */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <div className="space-y-2">
-          <Label className={labelCls}>Markt</Label>
-          <select
-            value={form.market}
-            onChange={(e) => set('market', e.target.value)}
-            className="input-ocean h-11 w-full rounded-lg px-2.5 font-mono text-sm"
-          >
-            {markets.map(([v, l]) => (
-              <option key={v} value={v}>
-                {l}
-              </option>
-            ))}
-          </select>
-        </div>
-        {tradedWithMoney ? (
-          <div className="space-y-2">
-            <Label className={labelCls}>Stückzahl (aus Kapitaleinsatz)</Label>
-            <div className="input-ocean flex h-11 items-center rounded-lg px-3 font-mono text-sm text-muted-foreground">
-              {money?.shares != null ? num(money.shares) : '—'}
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            <Label className={labelCls}>Positionsgröße</Label>
+      {/* Ausführung und Einordnung */}
+      <FormSection
+        icon={NotebookPen}
+        title="Ausführung und Einordnung"
+        hint="Wo der Trade läuft — und woran du ihn später wiedererkennst."
+        delay="rise-in-4"
+      >
+        <div className="grid grid-cols-1 items-end gap-4 md:grid-cols-3">
+          <Field label="Markt">
+            <select
+              value={form.market}
+              onChange={(e) => set('market', e.target.value)}
+              className={selectCls}
+            >
+              {markets.map(([v, l]) => (
+                <option key={v} value={v}>
+                  {l}
+                </option>
+              ))}
+            </select>
+          </Field>
+          {tradedWithMoney ? (
+            <Field label="Stückzahl (berechnet)" as="div">
+              <div className="input-ocean flex h-11 items-center rounded-lg px-3 font-mono text-sm text-muted-foreground">
+                {money?.shares != null ? num(money.shares) : '—'}
+              </div>
+            </Field>
+          ) : (
+            <Field label="Positionsgröße">
+              <Input
+                type="number"
+                step="any"
+                value={form.positionSize}
+                onChange={(e) => set('positionSize', e.target.value)}
+                placeholder="Anzahl / Betrag"
+                className={inputCls}
+              />
+            </Field>
+          )}
+          <Field label="Broker">
             <Input
-              type="number"
-              step="any"
-              value={form.positionSize}
-              onChange={(e) => set('positionSize', e.target.value)}
-              placeholder="Anzahl / Betrag"
-              className="input-ocean h-11 font-mono"
+              value={form.broker}
+              onChange={(e) => set('broker', e.target.value)}
+              placeholder="z. B. Interactive Brokers"
+              className={inputCls}
             />
-          </div>
-        )}
-        <div className="space-y-2">
-          <Label className={labelCls}>Broker</Label>
-          <Input
-            value={form.broker}
-            onChange={(e) => set('broker', e.target.value)}
-            placeholder="z. B. Interactive Brokers"
-            className="input-ocean h-11 font-mono"
-          />
+          </Field>
         </div>
-      </div>
 
-      {/* Setup (auswertbar) / Begründung (Freitext) / Notizen */}
-      <SetupTagsInput
-        value={setupTags}
-        onChange={setSetupTags}
-        freetext={form.strategy}
-        disabled={loading}
-      />
-      <div className="space-y-2">
-        <Label className={labelCls}>Begründung / Strategie</Label>
-        <Textarea
-          value={form.strategy}
-          onChange={(e) => set('strategy', e.target.value)}
-          placeholder="Warum dieser Trade? Welche Bedingungen müssen erfüllt sein?"
-          className="input-ocean min-h-24 font-mono text-sm"
+        {/* Setup (auswertbar) / Begründung (Freitext) / Notizen */}
+        <SetupTagsInput
+          value={setupTags}
+          onChange={setSetupTags}
+          freetext={form.strategy}
+          disabled={loading}
         />
-      </div>
-      <div className="space-y-2">
-        <Label className={labelCls}>Notizen</Label>
-        <Textarea
-          value={form.notes}
-          onChange={(e) => set('notes', e.target.value)}
-          placeholder="Marktbedingungen, News, Gedanken…"
-          className="input-ocean min-h-20 font-mono text-sm"
-        />
-      </div>
+        <Field label="Begründung / Strategie">
+          <Textarea
+            value={form.strategy}
+            onChange={(e) => set('strategy', e.target.value)}
+            placeholder="Warum dieser Trade? Welche Bedingungen müssen erfüllt sein?"
+            className="input-ocean min-h-24 font-mono text-sm"
+          />
+        </Field>
+        <Field label="Notizen">
+          <Textarea
+            value={form.notes}
+            onChange={(e) => set('notes', e.target.value)}
+            placeholder="Marktbedingungen, News, Gedanken…"
+            className="input-ocean min-h-20 font-mono text-sm"
+          />
+        </Field>
+      </FormSection>
 
       <div className="flex gap-3 pt-1">
         <Button
@@ -703,30 +677,3 @@ export function TradeForm({
   )
 }
 
-function Row({
-  label,
-  value,
-  tone,
-  strong,
-}: {
-  label: string
-  value: string
-  tone?: 'pos' | 'neg'
-  strong?: boolean
-}) {
-  return (
-    <div className="flex flex-col">
-      <dt className="text-[9px] uppercase tracking-widest text-muted-foreground">{label}</dt>
-      <dd
-        className={cn(
-          strong ? 'font-bold' : 'font-medium',
-          tone === 'pos' && 'text-positive',
-          tone === 'neg' && 'text-destructive',
-          !tone && 'text-foreground',
-        )}
-      >
-        {value}
-      </dd>
-    </div>
-  )
-}

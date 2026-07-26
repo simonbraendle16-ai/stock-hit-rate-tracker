@@ -4,15 +4,15 @@ import type React from 'react'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 import { updateSettings, type UserSettings } from '@/app/actions/settings'
 import { Wallet, ShieldAlert, Coins } from 'lucide-react'
 import { toast } from 'sonner'
 import { currencySymbol, SUPPORTED_CURRENCIES } from '@/lib/format'
 import { CurrencyChangeDialog } from '@/components/currency-change-dialog'
+import { Field, FormSection } from '@/components/form-frame'
 
-const labelCls = 'font-mono text-[10px] tracking-widest uppercase text-primary/60'
+const inputCls = 'input-ocean h-11 font-mono'
 
 export function SettingsForm({ initial }: { initial: UserSettings }) {
   const router = useRouter()
@@ -54,30 +54,28 @@ export function SettingsForm({ initial }: { initial: UserSettings }) {
 
   return (
     <form onSubmit={submit} className="space-y-5">
-      <div className="glass-card space-y-4 p-5">
-        <div className="flex items-center gap-2">
-          <Wallet className="size-4 text-primary" />
-          <p className="font-mono text-[10px] font-bold tracking-widest text-primary">KONTO</p>
-        </div>
+      <FormSection
+        icon={Wallet}
+        title="Konto"
+        hint="Basis für Bilanz und Rendite. Nur Echtgeld-Trades verändern den Kontostand."
+      >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div className="space-y-2">
-            <Label className={labelCls}>Startkapital ({currencySymbol(currency)})</Label>
+          <Field label={`Startkapital (${currencySymbol(currency)})`}>
             <Input
               type="number"
               step="any"
               min="0"
               value={startCapital}
               onChange={(e) => setStartCapital(e.target.value)}
-              className="input-ocean h-11 font-mono"
+              className={inputCls}
               required
             />
-          </div>
-          <div className="space-y-2">
-            <Label className={labelCls}>Kontowährung</Label>
+          </Field>
+          <Field label="Kontowährung">
             <select
               value={currency}
               onChange={(e) => setCurrency(e.target.value)}
-              className="input-ocean h-11 w-full rounded-md px-3 font-mono text-sm"
+              className="input-ocean h-11 w-full rounded-lg px-2.5 font-mono text-sm"
             >
               {SUPPORTED_CURRENCIES.map(([code, label]) => (
                 <option key={code} value={code}>
@@ -85,22 +83,21 @@ export function SettingsForm({ initial }: { initial: UserSettings }) {
                 </option>
               ))}
             </select>
-          </div>
+          </Field>
         </div>
-        <p className="font-mono text-[11px] text-muted-foreground">
-          Basis für Bilanz und Rendite. Nur Echtgeld-Trades verändern den Kontostand.
+        <p className="note">
           Kurse (Einstieg, Stop, Ziel) notieren weiterhin in der Währung des Instruments.
         </p>
-      </div>
+      </FormSection>
 
-      <div className="glass-card space-y-4 p-5">
-        <div className="flex items-center gap-2">
-          <ShieldAlert className="size-4 text-primary" />
-          <p className="font-mono text-[10px] font-bold tracking-widest text-primary">RISIKO</p>
-        </div>
+      <FormSection
+        icon={ShieldAlert}
+        title="Risiko"
+        hint="Wie viel des Kontos ein einzelner Stop kosten darf."
+        delay="rise-in-1"
+      >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div className="space-y-2">
-            <Label className={labelCls}>Standard-Risiko je Trade (%)</Label>
+          <Field label="Standard-Risiko je Trade (%)">
             <Input
               type="number"
               step="0.1"
@@ -108,12 +105,11 @@ export function SettingsForm({ initial }: { initial: UserSettings }) {
               max="100"
               value={defaultRiskPct}
               onChange={(e) => setDefaultRiskPct(e.target.value)}
-              className="input-ocean h-11 font-mono"
+              className={inputCls}
               required
             />
-          </div>
-          <div className="space-y-2">
-            <Label className={labelCls}>Warnschwelle max. Risiko (%)</Label>
+          </Field>
+          <Field label="Warnschwelle max. Risiko (%)" tone="warning">
             <Input
               type="number"
               step="0.1"
@@ -121,56 +117,52 @@ export function SettingsForm({ initial }: { initial: UserSettings }) {
               max="100"
               value={maxRiskPct}
               onChange={(e) => setMaxRiskPct(e.target.value)}
-              className="input-ocean h-11 font-mono"
+              className={inputCls}
               required
             />
-          </div>
+          </Field>
         </div>
-        <p className="font-mono text-[11px] text-muted-foreground">
+        <p className="note">
           Beim Planen eines Echtgeld-Trades zeigt das Formular, wie viel Prozent des Kontos der
           Stop-Loss riskiert — und warnt oberhalb der Schwelle.
         </p>
-      </div>
+      </FormSection>
 
-      <div className="glass-card space-y-4 p-5">
-        <div className="flex items-center gap-2">
-          <Coins className="size-4 text-primary" />
-          <p className="font-mono text-[10px] font-bold tracking-widest text-primary">
-            STANDARD-GEBÜHREN
-          </p>
-        </div>
+      <FormSection
+        icon={Coins}
+        title="Standard-Gebühren"
+        hint="Vorbelegung im Trade-Formular — dort pro Trade änderbar."
+        delay="rise-in-2"
+      >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div className="space-y-2">
-            <Label className={labelCls}>Gebühr Kauf ({currencySymbol(currency)})</Label>
+          <Field label={`Gebühr Kauf (${currencySymbol(currency)})`}>
             <Input
               type="number"
               step="any"
               min="0"
               value={feeEntry}
               onChange={(e) => setFeeEntry(e.target.value)}
-              className="input-ocean h-11 font-mono"
+              className={inputCls}
               required
             />
-          </div>
-          <div className="space-y-2">
-            <Label className={labelCls}>Gebühr Verkauf ({currencySymbol(currency)})</Label>
+          </Field>
+          <Field label={`Gebühr Verkauf (${currencySymbol(currency)})`}>
             <Input
               type="number"
               step="any"
               min="0"
               value={feeExit}
               onChange={(e) => setFeeExit(e.target.value)}
-              className="input-ocean h-11 font-mono"
+              className={inputCls}
               required
             />
-          </div>
+          </Field>
         </div>
-        <p className="font-mono text-[11px] text-muted-foreground">
-          Vorbelegung im Trade-Formular — dort pro Trade änderbar. Beim Abschluss wird die
-          tatsächlich gezahlte Gebühr auf dem Trade festgeschrieben; eine spätere Änderung
-          hier verschiebt deine Historie also nicht mehr.
+        <p className="note">
+          Beim Abschluss wird die tatsächlich gezahlte Gebühr auf dem Trade festgeschrieben;
+          eine spätere Änderung hier verschiebt deine Historie also nicht mehr.
         </p>
-      </div>
+      </FormSection>
 
       <Button
         type="submit"

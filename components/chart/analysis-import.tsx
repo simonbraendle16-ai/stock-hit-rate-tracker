@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { createDrawing, type Drawing, type DrawingPoint } from '@/app/actions/drawings'
 import { detectAll, FIB_INNER, type DetectedObject } from './detect-drawings'
+import { CHART_COLORS } from './colors'
 import type { Candle } from '@/lib/market-data/types'
 import { ImagePlus, Loader2, Upload } from 'lucide-react'
 import { toast } from 'sonner'
@@ -171,9 +172,9 @@ export function AnalysisImport({
       ctx.font = '11px monospace'
       ctx.fillText(label, x + 8, y - 6)
     }
-    priceRefs.forEach((r, i) => drawRef(30, r.y, `P${i + 1} ${r.price}`, '#45a8ec'))
-    timeRefs.forEach((r, i) => drawRef(r.x, canvas.height - 30, `T${i + 1}`, '#D4AC4E'))
-    if (pendingPx) drawRef(pendingPx.x, pendingPx.y, '?', '#f1ece0')
+    priceRefs.forEach((r, i) => drawRef(30, r.y, `P${i + 1} ${r.price}`, CHART_COLORS.accent))
+    timeRefs.forEach((r, i) => drawRef(r.x, canvas.height - 30, `T${i + 1}`, CHART_COLORS.warning))
+    if (pendingPx) drawRef(pendingPx.x, pendingPx.y, '?', CHART_COLORS.foreground)
 
     // Erkannte Objekte im Review überlagern
     if (step === 'review') {
@@ -194,7 +195,7 @@ export function AnalysisImport({
           ctx.lineTo(o.x2, o.y2)
           ctx.stroke()
         } else {
-          ctx.strokeStyle = '#D4AC4E'
+          ctx.strokeStyle = CHART_COLORS.warning
           for (const lvl of [0, ...FIB_INNER, 1]) {
             const y = o.y0 + (o.y100 - o.y0) * lvl
             ctx.beginPath()
@@ -527,7 +528,7 @@ export function AnalysisImport({
                           <span
                             className="inline-block size-2.5 rounded-full"
                             style={{
-                              background: it.obj.kind === 'fib' ? '#D4AC4E' : it.obj.color,
+                              background: it.obj.kind === 'fib' ? CHART_COLORS.warning : it.obj.color,
                             }}
                           />
                           <span className="w-28">{objLabel(it.obj)}</span>
@@ -568,7 +569,7 @@ export function AnalysisImport({
                     Von vorn
                   </Button>
                 </div>
-                <p className="mt-2 font-mono text-[10px] text-muted-foreground">
+                <p className="note mt-2">
                   Preise sind exakt eintippbar (Kalibrierung ist nie pixelperfekt). Nach dem Import
                   lassen sich alle Objekte im Chart verschieben, editieren und löschen.
                 </p>

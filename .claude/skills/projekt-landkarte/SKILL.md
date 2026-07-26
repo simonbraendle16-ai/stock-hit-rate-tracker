@@ -112,8 +112,17 @@ nachher je einen Dump ziehen und vergleichen — der Trade-Bestand muss unverän
 node scripts/baseline-report.mjs .baseline-<name>-vorher   # nur lesend
 node scripts/apply-migration.mjs
 node scripts/baseline-report.mjs .baseline-<name>-nachher
-# dann die trades.json beider Ordner vergleichen (müssen identisch sein)
 ```
+Dann die beiden Dumps vergleichen — **nicht per Datei-Hash**: `trades.json` enthält mit
+`erstelltAm` den Zeitstempel des Dumps selbst, die Datei weicht deshalb *immer* ab. Verglichen
+werden die Nutzlast-Felder:
+```powershell
+$a = Get-Content .baseline-<name>-vorher\trades.json  -Raw | ConvertFrom-Json
+$b = Get-Content .baseline-<name>-nachher\trades.json -Raw | ConvertFrom-Json
+($a.trades   | ConvertTo-Json -Depth 8 -Compress) -eq ($b.trades   | ConvertTo-Json -Depth 8 -Compress)
+($a.settings | ConvertTo-Json -Depth 8 -Compress) -eq ($b.settings | ConvertTo-Json -Depth 8 -Compress)
+```
+Beide Zeilen müssen `True` ergeben. Ein Unterschied allein in `erstelltAm` ist **kein** Befund.
 Neue Tabelle/Spalten anschließend gegen `information_schema` prüfen (Spalten, 0 Zeilen,
 CHECK-Constraints greifen). Ergebnis in `ROADMAP.md` unter „Nachweis" + „Abweichungen"
 dokumentieren.
@@ -138,12 +147,23 @@ node node_modules/next/dist/bin/next build         # Build
 
 ## 6. Design-Tokens & Konventionen
 
-- **Optik:** edel/institutionell „Privatbank-Nacht", App läuft **dark**. IBM Plex (Serif Titel,
-  Sans UI, Mono Daten/Kurse). Geldfarben kräftig, **kein Neon/Glow/Sci-Fi**.
+- **Optik:** edel/institutionell „Indigo-Nacht" (seit Design A–D; davor „Privatbank-Nacht" in
+  Navy — dieser Name steht nur noch in alten Kommentaren). App läuft **dark**. IBM Plex (Serif
+  Titel, Sans UI, Mono Daten/Kurse). Geldfarben kräftig, **kein Neon/Glow/Sci-Fi**.
 - **Farb-Variablen** in `app/globals.css` — im Code die Tailwind-Tokens nutzen
   (`text-positive`, `text-destructive`, `text-warning`, `text-primary`, `bg-primary/10`, …),
-  nicht rohe Hex-Werte. Kartenoptik: `.glass-card`. Referenzwerte: BG `#0b1522`, Akzent
-  `#45a8ec`, Grün `#4FBE8C`, Rot `#D8505F`, Gold `#D4AC4E`.
+  nicht rohe Hex-Werte. Referenzwerte: Seite `#0f1124`, Panel `#191c3a`, Hell `#ecebfa`,
+  Akzent `#7b6bf6`, Grün `#4fd6a0`, Rot `#f2607a`, Gold `#e0b455`.
+- **Tiefe kommt aus drei Ebenen, nicht aus Leuchten:** `.panel` (Standard) → `.panel-raised`
+  (das Wichtigste einer Seite: Hero, Formularkarte) → `.panel-sunken` (verschachtelte Zeilen,
+  Ergebniskästen). `.glass-card` ist nur noch ein Alias auf `.panel`.
+- **Typografische Rollen statt freier Größen:** `.eyebrow` beschriftet, `.metric` trägt die
+  Zahl, `.note` erklärt. Keine neuen 9/10/11-px-Varianten erfinden.
+- **Wiederverwendbare Formen:** Diagrammkopf/Leerzustand in `components/chart-frame.tsx`,
+  Formularteile in `components/form-frame.tsx`, Sektionsbeschriftung in
+  `components/section-label.tsx`. **Chart-Farben** (Canvas/SVG können keine CSS-Variablen
+  lesen) ausschließlich aus `components/chart/colors.ts` — außer dem TradingView-Schema in
+  `price-chart.tsx`, das bewusst die Originalfarben von TradingView behält.
 - **Sprache:** UI und Texte auf **Deutsch**, Umlaute (ä/ö/ü/ß) immer korrekt.
 - **Client-Komponenten** halten keinen eigenen Speicherpfad in die DB — sie rufen die
   Server Actions. Feste Tailwind-Klassen statt String-Interpolation (Tailwind braucht

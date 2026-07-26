@@ -5,6 +5,7 @@ import type { BarPrice, IChartApi, ISeriesApi, SeriesType, UTCTimestamp } from '
 import type { Drawing, DrawingPoint } from '@/app/actions/drawings'
 import type { Candle } from '@/lib/market-data/types'
 import type { DrawTool } from './chart-toolbar'
+import { CHART_COLORS } from './colors'
 
 /** Fib-Retracement-Levels (Frost & Prechter Standard). */
 const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1]
@@ -466,7 +467,7 @@ export function DrawingLayer({
     const dPrice = pb.price - pa.price
     const dPct = (dPrice / pa.price) * 100
     const up = dPrice >= 0
-    const col = kind === 'date' ? '#45a8ec' : up ? '#4FBE8C' : '#D8505F'
+    const col = kind === 'date' ? CHART_COLORS.accent : up ? CHART_COLORS.up : CHART_COLORS.down
     let label: string
     if (kind === 'price') {
       label = `${up ? '+' : ''}${formatDe(dPrice)} (${up ? '+' : ''}${dPct.toFixed(2)}%)`
@@ -498,7 +499,7 @@ export function DrawingLayer({
   }
 
   const renderDrawing = (d: Drawing) => {
-    const color = d.style?.color ?? '#45a8ec'
+    const color = d.style?.color ?? CHART_COLORS.accent
     const pts = d.points.map(toPx)
     if (pts.some((p) => p == null)) return null
     const P = pts as Pt[]
@@ -506,7 +507,7 @@ export function DrawingLayer({
 
     const handles = selected
       ? P.map((p, i) => (
-          <circle key={`h${i}`} cx={p.x} cy={p.y} r={4} fill="#f1ece0" stroke={color} />
+          <circle key={`h${i}`} cx={p.x} cy={p.y} r={4} fill={CHART_COLORS.foreground} stroke={color} />
         ))
       : null
 
@@ -590,8 +591,8 @@ export function DrawingLayer({
           <path d={path} fill="none" stroke={color} strokeWidth={selected ? 2.5 : 1.8} strokeLinecap="round" strokeLinejoin="round" />
           {selected && (
             <>
-              <circle cx={P[0].x} cy={P[0].y} r={4} fill="#f1ece0" stroke={color} />
-              <circle cx={P[P.length - 1].x} cy={P[P.length - 1].y} r={4} fill="#f1ece0" stroke={color} />
+              <circle cx={P[0].x} cy={P[0].y} r={4} fill={CHART_COLORS.foreground} stroke={color} />
+              <circle cx={P[P.length - 1].x} cy={P[P.length - 1].y} r={4} fill={CHART_COLORS.foreground} stroke={color} />
             </>
           )}
         </g>
@@ -599,14 +600,14 @@ export function DrawingLayer({
     }
     if ((d.type === 'ew_impulse' || d.type === 'ew_correction') && P.length >= 2) {
       const labels = WAVE_LABELS[d.type]
-      const col = d.style?.color ?? '#f1ece0'
+      const col = d.style?.color ?? CHART_COLORS.foreground
       const path = P.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')
       return (
         <g key={d.id}>
           <path d={path} fill="none" stroke={col} strokeWidth={selected ? 2 : 1.3} opacity={0.85} />
           {P.map((p, i) => (
             <g key={i}>
-              <circle cx={p.x} cy={p.y - 10} r={7} fill="#0b1522" stroke={col} strokeWidth={selected ? 1.5 : 1} />
+              <circle cx={p.x} cy={p.y - 10} r={7} fill={CHART_COLORS.background} stroke={col} strokeWidth={selected ? 1.5 : 1} />
               <text x={p.x} y={p.y - 7} fill={col} fontSize={9} fontFamily="monospace" textAnchor="middle">
                 {labels[i] ?? '?'}
               </text>
@@ -689,9 +690,9 @@ export function DrawingLayer({
             y={Math.min(entryY, targetY)}
             width={x2 - x1}
             height={Math.abs(targetY - entryY)}
-            fill="#4FBE8C"
+            fill={CHART_COLORS.up}
             opacity={0.14}
-            stroke="#4FBE8C"
+            stroke={CHART_COLORS.up}
             strokeWidth={selected ? 1.5 : 0.8}
           />
           {/* Risiko-Zone (rot) */}
@@ -700,19 +701,19 @@ export function DrawingLayer({
             y={Math.min(entryY, stopY)}
             width={x2 - x1}
             height={Math.abs(stopY - entryY)}
-            fill="#D8505F"
+            fill={CHART_COLORS.down}
             opacity={0.14}
-            stroke="#D8505F"
+            stroke={CHART_COLORS.down}
             strokeWidth={selected ? 1.5 : 0.8}
           />
-          <line x1={x1} y1={entryY} x2={x2} y2={entryY} stroke="#f1ece0" strokeWidth={1} strokeDasharray="4 3" />
-          <text x={x1 + 4} y={entryY - 3} fill="#f1ece0" fontSize={9} fontFamily="monospace">
+          <line x1={x1} y1={entryY} x2={x2} y2={entryY} stroke={CHART_COLORS.foreground} strokeWidth={1} strokeDasharray="4 3" />
+          <text x={x1 + 4} y={entryY - 3} fill={CHART_COLORS.foreground} fontSize={9} fontFamily="monospace">
             {long ? 'Long' : 'Short'} Entry {formatDe(entry)} · R:R {rr.toFixed(2)}
           </text>
-          <text x={x1 + 4} y={targetY + (targetY < entryY ? 10 : -3)} fill="#4FBE8C" fontSize={9} fontFamily="monospace">
+          <text x={x1 + 4} y={targetY + (targetY < entryY ? 10 : -3)} fill={CHART_COLORS.up} fontSize={9} fontFamily="monospace">
             Target {formatDe(target)} ({formatDe(reward)})
           </text>
-          <text x={x1 + 4} y={stopY + (stopY < entryY ? 10 : -3)} fill="#D8505F" fontSize={9} fontFamily="monospace">
+          <text x={x1 + 4} y={stopY + (stopY < entryY ? 10 : -3)} fill={CHART_COLORS.down} fontSize={9} fontFamily="monospace">
             Stop {formatDe(stop)} ({formatDe(risk)})
           </text>
           {handles}
@@ -732,8 +733,8 @@ export function DrawingLayer({
             if (y == null) return null
             return (
               <g key={lvl}>
-                <line x1={x1} y1={y} x2={x2} y2={y} stroke="#D4AC4E" strokeWidth={lvl === 0 || lvl === 1 ? 1.5 : 1} opacity={lvl === 0.5 ? 0.9 : 0.7} />
-                <text x={x2 + 4} y={y + 3} fill="#D4AC4E" fontSize={9} fontFamily="monospace">
+                <line x1={x1} y1={y} x2={x2} y2={y} stroke={CHART_COLORS.warning} strokeWidth={lvl === 0 || lvl === 1 ? 1.5 : 1} opacity={lvl === 0.5 ? 0.9 : 0.7} />
+                <text x={x2 + 4} y={y + 3} fill={CHART_COLORS.warning} fontSize={9} fontFamily="monospace">
                   {lvl.toFixed(3)} · {formatDe(price)}
                 </text>
               </g>
@@ -752,16 +753,16 @@ export function DrawingLayer({
       return (
         <g key={d.id}>
           {/* A–B–C-Basislinien */}
-          <line x1={P[0].x} y1={P[0].y} x2={P[1].x} y2={P[1].y} stroke="#D4AC4E" strokeWidth={1} strokeDasharray="3 3" opacity={0.6} />
-          <line x1={P[1].x} y1={P[1].y} x2={P[2].x} y2={P[2].y} stroke="#D4AC4E" strokeWidth={1} strokeDasharray="3 3" opacity={0.6} />
+          <line x1={P[0].x} y1={P[0].y} x2={P[1].x} y2={P[1].y} stroke={CHART_COLORS.warning} strokeWidth={1} strokeDasharray="3 3" opacity={0.6} />
+          <line x1={P[1].x} y1={P[1].y} x2={P[2].x} y2={P[2].y} stroke={CHART_COLORS.warning} strokeWidth={1} strokeDasharray="3 3" opacity={0.6} />
           {FIBEXT_LEVELS.map((lvl) => {
             const price = c + (b - a) * lvl
             const y = series.priceToCoordinate(price)
             if (y == null) return null
             return (
               <g key={lvl}>
-                <line x1={x1} y1={y} x2={x2} y2={y} stroke="#D4AC4E" strokeWidth={lvl === 1 ? 1.5 : 1} opacity={0.75} />
-                <text x={x1 + 4} y={y - 3} fill="#D4AC4E" fontSize={9} fontFamily="monospace">
+                <line x1={x1} y1={y} x2={x2} y2={y} stroke={CHART_COLORS.warning} strokeWidth={lvl === 1 ? 1.5 : 1} opacity={0.75} />
+                <text x={x1 + 4} y={y - 3} fill={CHART_COLORS.warning} fontSize={9} fontFamily="monospace">
                   {lvl.toFixed(3)} · {formatDe(price)}
                 </text>
               </g>
@@ -774,11 +775,11 @@ export function DrawingLayer({
     if (d.type === 'text') {
       return (
         <g key={d.id}>
-          <text x={P[0].x} y={P[0].y} fill={d.style?.color ?? '#f1ece0'} fontSize={11} fontFamily="monospace" textAnchor="middle">
+          <text x={P[0].x} y={P[0].y} fill={d.style?.color ?? CHART_COLORS.foreground} fontSize={11} fontFamily="monospace" textAnchor="middle">
             {d.points[0].text ?? ''}
           </text>
           {selected && (
-            <rect x={P[0].x - 42} y={P[0].y - 14} width={84} height={20} fill="none" stroke="#45a8ec" strokeDasharray="3 2" />
+            <rect x={P[0].x - 42} y={P[0].y - 14} width={84} height={20} fill="none" stroke={CHART_COLORS.accent} strokeDasharray="3 2" />
           )}
         </g>
       )
@@ -791,7 +792,7 @@ export function DrawingLayer({
     if (tool === 'brush' && brushPts && brushPts.length >= 2) {
       const P = brushPts.map(toPx).filter((p): p is Pt => p != null)
       const path = P.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')
-      return <path d={path} fill="none" stroke="#45a8ec" strokeWidth={1.8} strokeLinecap="round" />
+      return <path d={path} fill="none" stroke={CHART_COLORS.accent} strokeWidth={1.8} strokeLinecap="round" />
     }
 
     if (pending.length === 0 || !hoverPoint) return null
@@ -808,9 +809,9 @@ export function DrawingLayer({
           y={Math.min(a.y, b.y)}
           width={Math.abs(b.x - a.x)}
           height={Math.abs(b.y - a.y)}
-          fill="#45a8ec"
+          fill={CHART_COLORS.accent}
           fillOpacity={0.08}
-          stroke="#45a8ec"
+          stroke={CHART_COLORS.accent}
           strokeWidth={1}
           strokeDasharray="4 3"
         />
@@ -823,9 +824,9 @@ export function DrawingLayer({
           cy={(a.y + b.y) / 2}
           rx={Math.abs(b.x - a.x) / 2}
           ry={Math.abs(b.y - a.y) / 2}
-          fill="#45a8ec"
+          fill={CHART_COLORS.accent}
           fillOpacity={0.08}
-          stroke="#45a8ec"
+          stroke={CHART_COLORS.accent}
           strokeWidth={1}
           strokeDasharray="4 3"
         />
@@ -835,18 +836,18 @@ export function DrawingLayer({
       const off = channelOffset(Q)
       return (
         <g>
-          <line x1={Q[0].x} y1={Q[0].y} x2={Q[1].x} y2={Q[1].y} stroke="#45a8ec" strokeWidth={1} strokeDasharray="4 3" />
-          <line x1={Q[0].x} y1={Q[0].y + off} x2={Q[1].x} y2={Q[1].y + off} stroke="#45a8ec" strokeWidth={1} strokeDasharray="4 3" />
+          <line x1={Q[0].x} y1={Q[0].y} x2={Q[1].x} y2={Q[1].y} stroke={CHART_COLORS.accent} strokeWidth={1} strokeDasharray="4 3" />
+          <line x1={Q[0].x} y1={Q[0].y + off} x2={Q[1].x} y2={Q[1].y + off} stroke={CHART_COLORS.accent} strokeWidth={1} strokeDasharray="4 3" />
         </g>
       )
     }
     // Mehrpunkt-Werkzeuge (Elliott, Fib-Ext, Kanal-Basis): Polyline-Vorschau
     if (Q.length > 2 || tool === 'ew_impulse' || tool === 'ew_correction' || tool === 'fibext' || tool === 'channel') {
       const path = Q.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')
-      return <path d={path} fill="none" stroke="#45a8ec" strokeWidth={1} strokeDasharray="4 3" />
+      return <path d={path} fill="none" stroke={CHART_COLORS.accent} strokeWidth={1} strokeDasharray="4 3" />
     }
     const end = tool === 'ray' ? extendRay(a, b) : b
-    return <line x1={a.x} y1={a.y} x2={end.x} y2={end.y} stroke="#45a8ec" strokeWidth={1} strokeDasharray="4 3" />
+    return <line x1={a.x} y1={a.y} x2={end.x} y2={end.y} stroke={CHART_COLORS.accent} strokeWidth={1} strokeDasharray="4 3" />
   }
 
   const renderMeasure = () => {
