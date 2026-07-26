@@ -189,12 +189,13 @@ Bricht einer von euch eine Regel, taucht das beim anderen auf.
 
 ## Offen
 
-- **Klick-Test mit echtem Login steht aus:** unter `/friends` einen Code erzeugen, mit einem
-  zweiten Konto einlösen, das Journal des Freundes öffnen (geplante + abgeschlossene Trades in R,
-  keine Beträge), einen Regelbruch beim Freund provozieren und prüfen, dass er in der Liste oben
-  steht, dann die Freundschaft entfernen und prüfen, dass `/friends/[id]` „kein Zugriff" zeigt.
-  Server-Filter (`assertCanView`), Projektion und Whitelist sind durch Tests abgedeckt, der Weg
-  durch echte Anmeldung nicht.
+- ~~**Klick-Test mit echtem Login steht aus**~~ ✅ **erledigt (26.07.2026)** — Code `BBMZ8HXJ`
+  unter `/friends` erzeugt („gültig bis 02. Aug. · einmal einlösbar"), mit einem zweiten Konto
+  eingelöst, Freundschaft erschien sofort beidseitig. Das Journal des Freundes zeigt den
+  abgeschlossenen Trade als **`+2.36R`** unter der Zeile „Ergebnis in R-Vielfachen —
+  größenunabhängig, ohne Beträge": kein Kapitaleinsatz, keine Gebühr, kein Kontostand.
+  **Weiterhin ungeprüft im Klickweg:** Regelbruch beim Freund provozieren und die Sortierung
+  danach, sowie „Freundschaft entfernen → `/friends/[id]` zeigt kein Zugriff".
 
 ---
 
@@ -297,10 +298,11 @@ statt drei Stunden auf den Chart zu starren.
 
 ## Offen
 
-- **Klick-Test mit echtem Login steht aus:** an einer aktiven Position (aktuell 1 in der DB) den
-  Live-Stand laden, einen Alert setzen, warten bis der Kurs das Level kreuzt und die
-  Notification/den Cockpit-Eintrag prüfen. Server-Abgleich und Rechenlogik sind durch Tests
-  abgedeckt, der Weg durch echte Anmeldung und Browser-Notification nicht.
+- **Klick-Test teilweise erledigt (26.07.2026):** Beim Aktivieren eines Trades legt der Haken
+  „Kurs-Alerts aus dem Plan setzen" **automatisch zwei Alerts** an — 95 `below` (Stop) und
+  115 `above` (Ziel), beide mit `triggeredAt = null`. Der Weg Plan → Alert ist damit belegt.
+  **Weiterhin ungeprüft:** das tatsächliche Auslösen (Kurs kreuzt das Level) samt
+  Browser-Notification und Cockpit-Eintrag — dafür müsste ein echter Kurs durch die Marke laufen.
 - **Twelve-Data-Gratislimit unter Last ungetestet:** der Ein-Abruf-je-Symbol-Ansatz plus
   15-Min-Cache hält das Limit bei wenigen Positionen problemlos; bei vielen offenen Positionen
   auf verschiedenen Instrumenten wäre eine zusätzliche Staffelung/Priorisierung zu prüfen.
@@ -403,10 +405,11 @@ nicht mit einer Binsenweisheit aus einem Buch.
 
 ## Offen
 
-- **Klick-Test mit echtem Login steht aus:** einen geplanten Trade aktivieren → Check-in →
-  abschließen → auf `/tracking` prüfen, dass die Zeile erscheint. Ohne Zugangsdaten nicht
-  durchführbar; Server-Validierung und Rechenlogik sind durch Tests abgedeckt, der Weg durch
-  die echte Anmeldung nicht.
+- ~~**Klick-Test mit echtem Login steht aus**~~ ✅ **erledigt (26.07.2026)** — im eigenen
+  Sandbox-Konto durchgespielt: „Aktivieren" bleibt **gesperrt**, solange kein Skalenwert gewählt
+  ist; mit Wert (2 · gefasst + Tag „Zuversicht") ging es durch und `openedAt` wurde gesetzt.
+  Beim Abschließen verlangt der Dialog denselben Check-in erneut, die Momentaufnahme des
+  Einstiegs steht dabei sichtbar darüber („BEIM EINSTIEG: EIN · 2 · GEFASST").
 
 ---
 
@@ -676,11 +679,12 @@ Detailseite steht die vollständige Geschichte des Trades mit Zeitstempeln.
 
 ## Offen
 
-- **Klick-Test mit echtem Login steht aus:** an der aktiven Position einen Teilverkauf buchen
-  (Restmenge + realisierter R erscheinen), den Stop danach in Gewinnrichtung ziehen (kein
-  Regelbruch) und ihn aufweiten (Regelbruch), einen Nachkauf buchen (Durchschnittseinstieg wandert),
-  dann abschließen und die vollständige Chronik prüfen. Settlement, Richtungsregel und die
-  event-aware Statistik sind durch Tests abgedeckt, der Weg durch die echte Anmeldung nicht.
+- **Klick-Test teilweise erledigt (26.07.2026):** Teilverkauf über 40 von 100 Stück zu 108 mit
+  4,50 € Gebühr gebucht → „Realisiert (R) +0,64 · Realisiert (Geld) +315,50 € · Rest offen
+  60 / 100", und der Trade blieb **aktiv** (wie vorgesehen bis zur letzten Einheit). Nach dem
+  Abschluss steht die vollständige Kette `eroeffnet → teilverkauf → geschlossen` in
+  `trade_event`. **Weiterhin ungeprüft im Klickweg:** Stop in Gewinnrichtung ziehen (kein
+  Regelbruch) gegen Aufweiten (Regelbruch) und der Nachkauf mit wanderndem Durchschnittseinstieg.
 - **R-Konvention bei verschachteltem Nachkauf + Teilverkauf** ist eine dokumentierte
   Modellierung (gewichteter Durchschnittseinstieg zum Zeitpunkt jedes Teilverkaufs, 1R fix aus dem
   Ursprungsplan); bei reinen Teilverkäufen ohne Nachkauf exakt.
@@ -1160,9 +1164,13 @@ Trade seinen Zustand mit.)
 
 # Offene Punkte aus Etappe 1
 
-- **Klick-Test steht aus:** Trade mit Hebel und abweichender Gebühr planen → aktivieren →
-  schließen; prüfen, dass ein Abschluss ohne Ausstiegskurs abgelehnt wird und die Gebühr danach
-  in der Datenbank steht.
+- ~~**Klick-Test steht aus**~~ ✅ **erledigt (26.07.2026)**, im eigenen Sandbox-Konto:
+  Trade mit **Hebel 2** und **abweichenden Gebühren** (12,50 € Kauf / 7,25 € Verkauf) geplant —
+  die Karte rechnete Ordergebühr 19,75 €, Positionswert 10.000 €, Stückzahl 100,
+  Netto-Verlust −519,75 €. Ein **Abschluss ohne Ausstiegskurs wurde abgelehnt**: der Trade blieb
+  `aktiv`, `actualExitPrice` und `result` blieben leer. Mit Kurs 112 abgeschlossen und die
+  Verkaufsgebühr dabei auf 6,90 € korrigiert → in der Datenbank steht `feeExit: 6.9` am Trade,
+  die Gebühr ist also tatsächlich beim Abschluss eingefroren worden.
 - **ESLint bleibt bewusst uninstalliert** (Entscheidung vom 26.07.2026). `pnpm lint` schlägt
   deshalb weiter fehl — das ist kein Defekt, sondern der Stand: die tatsächlichen Prüfungen
   sind `tsc --noEmit` und Vitest. Eine Installation über npm brächte ein zweites Lockfile
