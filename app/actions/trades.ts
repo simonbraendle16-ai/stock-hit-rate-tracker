@@ -37,6 +37,13 @@ import {
   type TradeEventsByTrade,
 } from '@/lib/trade-stats'
 import { parseSetupTags, rankSetupTags, serializeSetupTags } from '@/lib/setups'
+import {
+  isQuickTrade,
+  normalizeTradeKind,
+  requiresMoodCheck,
+  requiresPreTradeGate,
+  type TradeKind,
+} from '@/lib/trade-kind'
 import { simulateFuture, type MonteCarloStats } from '@/lib/monte-carlo'
 import {
   settlePosition,
@@ -95,6 +102,9 @@ export type TradeInput = {
   tradedWithMoney?: boolean
   // die 4 Douglas-Antworten (Gate = alle 'ja')
   preTradeAnswers?: PreTradeAnswer[]
+  // Erfassungsweg: 'langfristig' (voller Weg) oder 'schnell' (ohne Fragen-Gate).
+  // Regeln in `lib/trade-kind.ts`; Unbekanntes fällt auf den vollen Weg zurück.
+  tradeKind?: TradeKind
 }
 
 const COOLDOWN_MIN = 60 // Revenge-Guard window
@@ -131,6 +141,24 @@ function requireMood(input: MoodCheckInput | null | undefined, phase: 'entry' | 
     )
   }
   return mood
+}
+
+/**
+ * Check-in je nach Erfassungsweg: Pflicht beim langfristigen Trade, freiwillig
+ * beim schnellen (`lib/trade-kind.ts`). Wird beim schnellen Weg trotzdem einer
+ * erfasst, zählt er ganz normal in die Auswertung — nur erzwungen wird er nicht.
+ *
+ * Die Begründung für die Ausnahme steht in `lib/trade-kind.ts`: eine hastig
+ * weggeklickte Skala ist schlechter als gar keine, weil sie die Auswertung mit
+ * Zufallswerten füllt statt sie ehrlich leer zu lassen.
+ */
+function moodForKind(
+  kind: string | null | undefined,
+  input: MoodCheckInput | null | undefined,
+  phase: 'entry' | 'exit',
+) {
+  if (requiresMoodCheck(kind)) return requireMood(input, phase)
+  return normalizeMoodCheck(input)
 }
 
 // ---------------------------------------------------------------------------
@@ -176,7 +204,16 @@ export async function createTrade(input: TradeInput): Promise<{ id: number }> {
     .where(and(eq(stock.userId, userId), eq(stock.ticker, ticker)))
   if (existing) stockId = existing.id
 
+  // Erfassungsweg zuerst: er entscheidet, ob das Gate überhaupt gilt.
+  const tradeKind = normalizeTradeKind(input.tradeKind)
+
   // Gate: nur wenn ALLE Douglas-Fragen mit 'ja' beantwortet sind.
+  //
+  // Beim schnellen Trade bleibt das Feld bewusst `false` — es wird nicht
+  // stillschweigend auf `true` gesetzt, denn die Fragen wurden ja nicht
+  // beantwortet. Dass der Trade trotzdem aktivierbar ist, entscheidet allein
+  // `requiresPreTradeGate(tradeKind)` beim Aktivieren. So bleibt in den Daten
+  // sichtbar, was tatsächlich passiert ist.
   const answers = input.preTradeAnswers ?? []
   const preTradeAnswered =
     answers.length === PRE_TRADE_QUESTIONS.length &&
@@ -215,6 +252,7 @@ export async function createTrade(input: TradeInput): Promise<{ id: number }> {
       stockId,
       ticker,
       market: input.market ?? 'aktien',
+      tradeKind,
       direction: input.direction,
       entryPrice: input.entryPrice,
       stopLoss: input.stopLoss,
@@ -324,10 +362,14 @@ export async function activateTrade(
   const userId = await getUserId()
   const t = await loadOwnedTrade(userId, id)
   if (t.status !== 'geplant') throw new Error('Nur geplante Trades können aktiviert werden.')
-  if (!t.preTradeAnswered) {
+  // Das Fragen-Gate gilt nur auf dem vollen Weg. Ein schneller Trade überspringt
+  // es bewusst (siehe `lib/trade-kind.ts`) — er bleibt aber als solcher
+  // gekennzeichnet, damit später niemand Disziplin unterstellt, wo keine
+  // geprüft wurde.
+  if (requiresPreTradeGate(t.tradeKind) && !t.preTradeAnswered) {
     throw new Error('Erst die 4 Douglas-Fragen beantworten (Wellenzählung, Einstieg, Stop, Ziel/Invalidation).')
   }
-  const checkIn = requireMood(mood, 'entry')
+  const checkIn = moodForKind(t.tradeKind, mood, 'entry')
 
   // Revenge-Guard: any loss closed within the cooldown window?
   const [lastLoss] = await db
@@ -355,9 +397,15 @@ export async function activateTrade(
         status: 'aktiv',
         openedAt,
         ruleViolations: JSON.stringify(violations),
-        moodEntry: checkIn.score,
-        moodEntryTags: serializeMoodTags(checkIn.tags),
-        moodEntryNote: checkIn.note,
+        // Ohne Check-in (schneller Trade) bleiben die Felder leer, statt eine
+        // Momentaufnahme zu erfinden — dieselbe Haltung wie beim Altbestand.
+        ...(checkIn
+          ? {
+              moodEntry: checkIn.score,
+              moodEntryTags: serializeMoodTags(checkIn.tags),
+              moodEntryNote: checkIn.note,
+            }
+          : {}),
       })
       .where(and(eq(trade.id, id), eq(trade.userId, userId)))
 
@@ -545,7 +593,10 @@ export async function closeTrade(
   if (t.status === 'abgeschlossen' || t.status === 'abgebrochen') {
     throw new Error('Trade ist bereits abgeschlossen.')
   }
-  const checkOut = requireMood(data.mood, 'exit')
+  const checkOut = moodForKind(t.tradeKind, data.mood, 'exit')
+  // Die bewusste Verlustannahme gilt in BEIDEN Wegen. Sie ist kein
+  // Formular-Ballast, sondern der Douglas-Kern beim Ausstieg — ein schneller
+  // Trade darf sie so wenig überspringen wie den Stop.
   if (data.result === 'verlust' && !data.lossAccepted) {
     throw new Error('Verlust bitte bewusst akzeptieren, bevor der Trade geschlossen wird.')
   }
@@ -586,9 +637,13 @@ export async function closeTrade(
         // Einstellungsänderung mehr die Bilanz dieses Trades.
         feeEntry: frozenFeeEntry,
         feeExit: frozenFeeExit,
-        moodExit: checkOut.score,
-        moodExitTags: serializeMoodTags(checkOut.tags),
-        moodExitNote: checkOut.note,
+        ...(checkOut
+          ? {
+              moodExit: checkOut.score,
+              moodExitTags: serializeMoodTags(checkOut.tags),
+              moodExitNote: checkOut.note,
+            }
+          : {}),
         closedAt,
       })
       .where(and(eq(trade.id, id), eq(trade.userId, userId)))

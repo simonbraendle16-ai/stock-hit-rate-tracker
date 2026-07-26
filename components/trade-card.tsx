@@ -38,7 +38,14 @@ import {
   Trash2,
   Waves,
   X,
+  Zap,
 } from 'lucide-react'
+import {
+  TRADE_KIND_BADGE,
+  isQuickTrade,
+  requiresMoodCheck,
+  requiresPreTradeGate,
+} from '@/lib/trade-kind'
 import { EditTradeDialog } from '@/components/edit-trade-dialog'
 import {
   MoodBadge,
@@ -115,6 +122,10 @@ export function TradeCard({
     }
   }
 
+  // Sperrt das Fragen-Gate diesen Trade? Beim schnellen Trade gibt es keines —
+  // dieselbe Entscheidung wie serverseitig in `activateTrade`.
+  const gateOpen = requiresPreTradeGate(t.tradeKind) && !t.preTradeAnswered
+
   // Nach dem Löschen auf die Liste navigieren — sonst lädt eine offene
   // Detailseite (/trades/[id]) den geloeschten Trade neu und stürzt via notFound() ab.
   const handleDelete = async () => {
@@ -187,6 +198,17 @@ export function TradeCard({
               </>
             )}
           </span>
+          {/* Ein schneller Trade ist ohne Fragen-Gate entstanden. Das muss man
+              ihm ansehen — sonst steht er später neben den geprüften Trades, als
+              wäre er denselben Weg gegangen. */}
+          {isQuickTrade(t.tradeKind) && (
+            <span
+              className="flex items-center gap-1 rounded-md border border-warning/40 bg-warning/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest text-warning"
+              title="Ohne die neun Douglas-Fragen erfasst"
+            >
+              <Zap className="size-3" /> {TRADE_KIND_BADGE.schnell}
+            </span>
+          )}
         </div>
       </div>
 
@@ -258,7 +280,7 @@ export function TradeCard({
           <>
             <Button
               size="sm"
-              disabled={busy || !t.preTradeAnswered}
+              disabled={busy || gateOpen}
               onClick={() => setActivateOpen(true)}
               className="btn-teal-glow font-mono text-xs"
             >
@@ -273,7 +295,7 @@ export function TradeCard({
             >
               <Target className="size-3" /> Kein Handel
             </Button>
-            {!t.preTradeAnswered && (
+            {gateOpen && (
               <span className="flex items-center gap-1 font-mono text-[10px] text-warning">
                 <Lock className="size-3" /> Erst die 4 Fragen
               </span>
@@ -520,8 +542,11 @@ function ActivateDialog({
     }
   }, [open])
 
+  // Beim schnellen Trade ist der Check-in freiwillig (siehe `lib/trade-kind.ts`).
+  const moodRequired = requiresMoodCheck(trade.tradeKind)
+
   const submit = async () => {
-    if (!isMoodDraftComplete(mood)) {
+    if (moodRequired && !isMoodDraftComplete(mood)) {
       toast.error('Bitte auf der Skala eintragen, wie ruhig du gerade bist.')
       return
     }
@@ -560,8 +585,9 @@ function ActivateDialog({
             {trade.ticker} aktivieren
           </DialogTitle>
           <DialogDescription className="font-mono text-xs">
-            Ab jetzt ist Geld im Markt und der Plan festgeschrieben. Halte kurz fest, in
-            welchem Zustand du einsteigst.
+            {moodRequired
+              ? 'Ab jetzt ist Geld im Markt und der Plan festgeschrieben. Halte kurz fest, in welchem Zustand du einsteigst.'
+              : 'Schneller Trade — ab jetzt ist Geld im Markt. Der Check-in ist hier freiwillig; wenn du ihn ausfüllst, zählt er ganz normal mit.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -588,7 +614,7 @@ function ActivateDialog({
         <DialogFooter>
           <Button
             onClick={submit}
-            disabled={busy || !isMoodDraftComplete(mood)}
+            disabled={busy || (moodRequired && !isMoodDraftComplete(mood))}
             className="btn-teal-glow w-full font-mono text-sm font-bold tracking-wider sm:w-auto"
           >
             {busy ? 'WIRD AKTIVIERT…' : 'AKTIVIEREN'}
@@ -704,7 +730,9 @@ function CloseDialog({
       toast.error('Bitte den tatsächlichen Ausstiegskurs eintragen.')
       return
     }
-    if (!isMoodDraftComplete(mood)) {
+    // Freiwillig beim schnellen Trade — Ausstiegskurs und Verlustannahme oben
+    // gelten dagegen in beiden Wegen.
+    if (requiresMoodCheck(trade.tradeKind) && !isMoodDraftComplete(mood)) {
       toast.error('Bitte auf der Skala eintragen, wie du aus dem Trade gehst.')
       return
     }
@@ -918,7 +946,9 @@ function CloseDialog({
         <DialogFooter>
           <Button
             onClick={submit}
-            disabled={busy || !isMoodDraftComplete(mood)}
+            disabled={
+              busy || (requiresMoodCheck(trade.tradeKind) && !isMoodDraftComplete(mood))
+            }
             className="btn-teal-glow w-full font-mono text-sm font-bold tracking-wider sm:w-auto"
           >
             {busy ? 'WIRD GESPEICHERT…' : 'ABSCHLIESSEN'}

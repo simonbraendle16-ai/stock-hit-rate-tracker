@@ -136,6 +136,10 @@ export const trade = pgTable('trade', {
   stockId: integer('stockId'),
   ticker: text('ticker').notNull(),
   market: text('market').notNull().default('aktien'),
+  // Erfassungsweg (Migration 0018): 'langfristig' = voller Weg mit Fragen-Gate,
+  // 'schnell' = nur das Nötigste, Gate und Check-in entfallen. An diesem Feld
+  // hängen zwei Guard-Entscheidungen — die Regeln stehen in lib/trade-kind.ts.
+  tradeKind: text('tradeKind').notNull().default('langfristig'),
 
   // --- Plan (locked once status = aktiv) ---
   direction: text('direction').notNull(), // long | short

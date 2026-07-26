@@ -144,7 +144,18 @@ Candlesticks) · pnpm via corepack.
   Skala 1–5 (ruhig ↔ aufgewühlt) + Tags aus fester Liste. **Skala ist Pflicht**, Tags/Notiz
   freiwillig. Auswertung „Zustand & Ergebnis" auf `/tracking`; unter 10 Trades je Gruppe
   zeigt sie bewusst keine Quote.
-- Guards: **Pre-Trade-Gate** (alle 9 = "ja" nötig zum Aktivieren) · **Plan-Lock**
+- **Schneller Trade** (Etappe 8) = zweiter Erfassungsweg neben dem vollen. `tradeKind`
+  (`langfristig` | `schnell`, Migration `0018`, Default `langfristig`) steht am Trade; die
+  beiden Guard-Entscheidungen dazu stehen **nur** in `lib/trade-kind.ts`
+  (`requiresPreTradeGate`, `requiresMoodCheck`) — nicht daneben neu entscheiden. Der schnelle
+  Weg überspringt die **neun Fragen** und macht den **Check-in freiwillig**; er lässt Elliott,
+  Setup, Begründung, Notizen, Broker und die Gebühren-Eingabe weg (Gebühren kommen aus den
+  Einstellungen). **Stop und bewusste Verlustannahme bleiben in beiden Wegen Pflicht.**
+  `preTradeAnswered` wird dabei **nicht** auf `true` gesetzt — die Daten sollen nicht
+  behaupten, die Fragen seien beantwortet worden. Ein schneller Trade trägt sichtbar das
+  Abzeichen `SCHNELL`, damit ihm anzusehen ist, dass kein Gate lief.
+- Guards: **Pre-Trade-Gate** (alle 9 = "ja" nötig zum Aktivieren; **entfällt beim schnellen
+  Trade**) · **Plan-Lock**
   (Stop/Invalidation verschieben = Regelbruch; **Ausnahme ab Etappe 6:** nach einem Teilverkauf
   ist risiko-reduzierendes Stop-Nachziehen erlaubt, Invalidation bleibt streng) · **Revenge-Guard**
   (60-Min-Cooldown nach Verlust) · **bewusste Verlustannahme** beim Schließen · **Emotions-Check-in**
@@ -213,6 +224,8 @@ Candlesticks) · pnpm via corepack.
   Design A–D (visuelle Überarbeitung) · Design E „Formulare + Chart-Cockpit" (**ohne Migration**,
   rein visuell: `components/form-frame.tsx` + `components/chart/colors.ts` als neue gemeinsame
   Quellen, Chart-Cockpit von der alten Navy-Palette auf Indigo-Nacht).
+  · Etappe 8 „Schneller Trade" (Migration `0018`, Spalte `tradeKind`; zweiter Erfassungsweg
+  ohne Fragen-Gate, `lib/trade-kind.ts`).
   **Die Roadmap ist damit vollständig** — offen ist nur noch der Ideenvorrat in
   `IDEEN-BACKLOG.md`.
 

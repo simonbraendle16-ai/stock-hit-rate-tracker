@@ -29,11 +29,13 @@ import {
   Coins,
   FlaskConical,
   NotebookPen,
+  Route,
   Shield,
   Target,
   TrendingDown,
   TrendingUp,
   Waves,
+  Zap,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -43,6 +45,12 @@ import {
   projectTakeProfit,
 } from '@/lib/trade-math'
 import { currencySymbol, formatMoney } from '@/lib/format'
+import {
+  DEFAULT_TRADE_KIND,
+  TRADE_KIND_HINT,
+  TRADE_KIND_LABEL,
+  type TradeKind,
+} from '@/lib/trade-kind'
 
 const num = (n: number, d = 4) =>
   n.toLocaleString('de-DE', { maximumFractionDigits: d })
@@ -92,6 +100,10 @@ export function TradeForm({
   const [setupTags, setSetupTags] = useState<string[]>([])
   const [questionsOpen, setQuestionsOpen] = useState(false)
   const [tradedWithMoney, setTradedWithMoney] = useState(true)
+  // Erfassungsweg. Vorbelegt ist der volle Weg — die Abkürzung wählt man
+  // bewusst, nicht aus Versehen.
+  const [tradeKind, setTradeKind] = useState<TradeKind>(DEFAULT_TRADE_KIND)
+  const quick = tradeKind === 'schnell'
   const money$ = (n: number | null | undefined) => formatMoney(n, currency)
   const [form, setForm] = useState({
     ticker: '',
@@ -178,7 +190,12 @@ export function TradeForm({
     return { riskEur, pct, over: pct > maxRiskPct }
   }, [tradedWithMoney, money, startCapital, maxRiskPct])
 
-  // Schritt 1: Pflichtfelder prüfen, dann den 4-Fragen-Dialog öffnen.
+  // Schritt 1: Pflichtfelder prüfen. Auf dem vollen Weg öffnet das den
+  // Fragen-Dialog; der schnelle Trade legt direkt an — genau das ist sein Zweck.
+  //
+  // Ticker, Einstieg und Stop werden in BEIDEN Wegen verlangt: ohne Stop gibt es
+  // kein vordefiniertes Risiko, und dann wäre es kein schneller Trade, sondern
+  // gar kein Plan.
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!form.ticker.trim()) {
@@ -189,11 +206,12 @@ export function TradeForm({
       toast.error('Einstieg und Stop-Loss sind erforderlich.')
       return
     }
-    setQuestionsOpen(true)
+    if (quick) void submitTrade([])
+    else setQuestionsOpen(true)
   }
 
-  // Schritt 2: Nach Beantwortung der 4 Fragen den Trade anlegen.
-  const handleAnswersComplete = async (answers: PreTradeAnswer[]) => {
+  // Schritt 2: Trade anlegen — mit den Antworten des vollen Wegs oder ohne.
+  const submitTrade = async (answers: PreTradeAnswer[]) => {
     setLoading(true)
     try {
       const payload: TradeInput = {
@@ -207,28 +225,33 @@ export function TradeForm({
         investedAmount:
           tradedWithMoney && form.investedAmount ? parseFloat(form.investedAmount) : null,
         leverage: form.leverage ? parseFloat(form.leverage) : 1,
-        feeEntry: form.feeEntry.trim() === '' ? null : parseFloat(form.feeEntry),
-        feeExit: form.feeExit.trim() === '' ? null : parseFloat(form.feeExit),
-        takeProfitPct: form.takeProfitPct ? parseFloat(form.takeProfitPct) : 100,
-        broker: form.broker || null,
-        strategy: form.strategy || null,
-        setupTags,
-        notes: form.notes || null,
-        elliottWaveCount: form.elliottWaveCount || null,
-        waveDegree: form.waveDegree || null,
-        elliottInvalidation: form.elliottInvalidation
-          ? parseFloat(form.elliottInvalidation)
-          : null,
+        // Beim schnellen Trade bleiben Gebühren, Setup, Begründung und Elliott
+        // ungefragt: die Gebühren zieht der Server aus den Einstellungen, der
+        // Rest bleibt leer statt hastig ausgefüllt.
+        feeEntry: quick || form.feeEntry.trim() === '' ? null : parseFloat(form.feeEntry),
+        feeExit: quick || form.feeExit.trim() === '' ? null : parseFloat(form.feeExit),
+        takeProfitPct: !quick && form.takeProfitPct ? parseFloat(form.takeProfitPct) : 100,
+        broker: quick ? null : form.broker || null,
+        strategy: quick ? null : form.strategy || null,
+        setupTags: quick ? [] : setupTags,
+        notes: quick ? null : form.notes || null,
+        elliottWaveCount: quick ? null : form.elliottWaveCount || null,
+        waveDegree: quick ? null : form.waveDegree || null,
+        elliottInvalidation:
+          !quick && form.elliottInvalidation ? parseFloat(form.elliottInvalidation) : null,
         tradedWithMoney,
         preTradeAnswers: answers,
+        tradeKind,
       }
       const allYes = answers.every((a) => a.answer === 'ja')
       const { id } = await createTrade(payload)
       setQuestionsOpen(false)
       toast.success(
-        allYes
-          ? 'Trade geplant — bereit zur Aktivierung.'
-          : 'Entwurf gespeichert. Bei einem „Nein" bleibt der Trade nicht aktivierbar.',
+        quick
+          ? 'Schneller Trade angelegt — sofort aktivierbar.'
+          : allYes
+            ? 'Trade geplant — bereit zur Aktivierung.'
+            : 'Entwurf gespeichert. Bei einem „Nein" bleibt der Trade nicht aktivierbar.',
       )
       router.push(`/trades/${id}`)
       router.refresh()
@@ -242,27 +265,59 @@ export function TradeForm({
   return (
     <>
     <form onSubmit={handleSubmit} className="space-y-5">
-      {/* Douglas-Fragen-Gate — beim Speichern als eigene Fenster abgefragt */}
-      <FormSection
-        icon={Shield}
-        title="Die Fragen von Douglas"
-        hint="Entscheide den Trade, bevor du ihn eingehst."
-      >
-        <ol className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {PRE_TRADE_QUESTIONS.map((q, i) => (
-            <li key={q.key} className="flex items-center gap-2">
-              <span className="eyebrow flex size-5 shrink-0 items-center justify-center rounded-full border border-border">
-                {i + 1}
-              </span>
-              <span className="font-mono text-xs text-muted-foreground">{q.question}</span>
-            </li>
-          ))}
-        </ol>
-        <p className="note">
-          Beim Speichern beantwortest du jede Frage einzeln mit Ja/Nein. Nur wenn alle mit
-          „Ja" beantwortet sind, ist der Trade aktivierbar — sonst bleibt er ein Entwurf.
-        </p>
+      {/* Erfassungsweg — bestimmt, wie viel Formular überhaupt kommt. */}
+      <FormSection icon={Route} title="Wie erfasst du diesen Trade?">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <ChoiceButton
+            active={!quick}
+            tone="primary"
+            icon={Shield}
+            onClick={() => setTradeKind('langfristig')}
+          >
+            {TRADE_KIND_LABEL.langfristig.toUpperCase()}
+          </ChoiceButton>
+          <ChoiceButton
+            active={quick}
+            tone="warning"
+            icon={Zap}
+            onClick={() => setTradeKind('schnell')}
+          >
+            {TRADE_KIND_LABEL.schnell.toUpperCase()}
+          </ChoiceButton>
+        </div>
+        <p className="note">{TRADE_KIND_HINT[tradeKind]}</p>
+        {quick && (
+          <p className="note">
+            Einstieg und <strong className="text-foreground">Stop bleiben Pflicht</strong> — ohne
+            sie wäre es kein schneller Plan, sondern keiner. Der Trade wird als „schnell"
+            gekennzeichnet, damit später sichtbar bleibt, dass hier kein Gate lief.
+          </p>
+        )}
       </FormSection>
+
+      {/* Douglas-Fragen-Gate — beim Speichern als eigene Fenster abgefragt */}
+      {!quick && (
+        <FormSection
+          icon={Shield}
+          title="Die Fragen von Douglas"
+          hint="Entscheide den Trade, bevor du ihn eingehst."
+        >
+          <ol className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {PRE_TRADE_QUESTIONS.map((q, i) => (
+              <li key={q.key} className="flex items-center gap-2">
+                <span className="eyebrow flex size-5 shrink-0 items-center justify-center rounded-full border border-border">
+                  {i + 1}
+                </span>
+                <span className="font-mono text-xs text-muted-foreground">{q.question}</span>
+              </li>
+            ))}
+          </ol>
+          <p className="note">
+            Beim Speichern beantwortest du jede Frage einzeln mit Ja/Nein. Nur wenn alle mit
+            „Ja" beantwortet sind, ist der Trade aktivierbar — sonst bleibt er ein Entwurf.
+          </p>
+        </FormSection>
+      )}
 
       {/* Der Plan selbst: Handelsart, Instrument, Richtung, Kurse */}
       <FormSection
@@ -441,40 +496,45 @@ export function TradeForm({
             </ResultBlock>
           )}
 
-          <div className="grid grid-cols-1 items-end gap-4 md:grid-cols-3">
-            <Field label={`Gebühr Kauf (${currencySymbol(currency)})`}>
-              <Input
-                type="number"
-                step="any"
-                min="0"
-                value={form.feeEntry}
-                onChange={(e) => set('feeEntry', e.target.value)}
-                className={inputCls}
-              />
-            </Field>
-            <Field label={`Gebühr Verkauf (${currencySymbol(currency)})`}>
-              <Input
-                type="number"
-                step="any"
-                min="0"
-                value={form.feeExit}
-                onChange={(e) => set('feeExit', e.target.value)}
-                className={inputCls}
-              />
-            </Field>
-            <Field label="Verkaufsanteil beim Take-Profit (%)">
-              <Input
-                type="number"
-                step="any"
-                min="0"
-                max="100"
-                value={form.takeProfitPct}
-                onChange={(e) => set('takeProfitPct', e.target.value)}
-                placeholder="100"
-                className={inputCls}
-              />
-            </Field>
-          </div>
+          {/* Gebühren und Teilverkaufs-Anteil sind auf dem schnellen Weg kein
+              Thema: es gelten die Standardgebühren aus den Einstellungen und
+              voller Verkauf am Ziel. */}
+          {!quick && (
+            <div className="grid grid-cols-1 items-end gap-4 md:grid-cols-3">
+              <Field label={`Gebühr Kauf (${currencySymbol(currency)})`}>
+                <Input
+                  type="number"
+                  step="any"
+                  min="0"
+                  value={form.feeEntry}
+                  onChange={(e) => set('feeEntry', e.target.value)}
+                  className={inputCls}
+                />
+              </Field>
+              <Field label={`Gebühr Verkauf (${currencySymbol(currency)})`}>
+                <Input
+                  type="number"
+                  step="any"
+                  min="0"
+                  value={form.feeExit}
+                  onChange={(e) => set('feeExit', e.target.value)}
+                  className={inputCls}
+                />
+              </Field>
+              <Field label="Verkaufsanteil beim Take-Profit (%)">
+                <Input
+                  type="number"
+                  step="any"
+                  min="0"
+                  max="100"
+                  value={form.takeProfitPct}
+                  onChange={(e) => set('takeProfitPct', e.target.value)}
+                  placeholder="100"
+                  className={inputCls}
+                />
+              </Field>
+            </div>
+          )}
 
           {money && (money.tp || money.sl) && (
             <div className="space-y-3">
@@ -531,7 +591,8 @@ export function TradeForm({
         </FormSection>
       )}
 
-      {/* Elliott-Block */}
+      {/* Elliott-Block — die Zählung ist Arbeit am Chart, nicht am Ticket. */}
+      {!quick && (
       <FormSection
         icon={Waves}
         title="Elliott-Wellen"
@@ -573,12 +634,17 @@ export function TradeForm({
           </Field>
         </div>
       </FormSection>
+      )}
 
       {/* Ausführung und Einordnung */}
       <FormSection
         icon={NotebookPen}
-        title="Ausführung und Einordnung"
-        hint="Wo der Trade läuft — und woran du ihn später wiedererkennst."
+        title={quick ? 'Ausführung' : 'Ausführung und Einordnung'}
+        hint={
+          quick
+            ? 'Der Markt bestimmt die Kursquelle des Charts.'
+            : 'Wo der Trade läuft — und woran du ihn später wiedererkennst.'
+        }
         delay="rise-in-4"
       >
         <div className="grid grid-cols-1 items-end gap-4 md:grid-cols-3">
@@ -613,39 +679,48 @@ export function TradeForm({
               />
             </Field>
           )}
-          <Field label="Broker">
-            <Input
-              value={form.broker}
-              onChange={(e) => set('broker', e.target.value)}
-              placeholder="z. B. Interactive Brokers"
-              className={inputCls}
-            />
-          </Field>
+          {!quick && (
+            <Field label="Broker">
+              <Input
+                value={form.broker}
+                onChange={(e) => set('broker', e.target.value)}
+                placeholder="z. B. Interactive Brokers"
+                className={inputCls}
+              />
+            </Field>
+          )}
         </div>
 
-        {/* Setup (auswertbar) / Begründung (Freitext) / Notizen */}
-        <SetupTagsInput
-          value={setupTags}
-          onChange={setSetupTags}
-          freetext={form.strategy}
-          disabled={loading}
-        />
-        <Field label="Begründung / Strategie">
-          <Textarea
-            value={form.strategy}
-            onChange={(e) => set('strategy', e.target.value)}
-            placeholder="Warum dieser Trade? Welche Bedingungen müssen erfüllt sein?"
-            className="input-ocean min-h-24 font-mono text-sm"
-          />
-        </Field>
-        <Field label="Notizen">
-          <Textarea
-            value={form.notes}
-            onChange={(e) => set('notes', e.target.value)}
-            placeholder="Marktbedingungen, News, Gedanken…"
-            className="input-ocean min-h-20 font-mono text-sm"
-          />
-        </Field>
+        {/* Setup (auswertbar) / Begründung (Freitext) / Notizen — die
+            Einordnungs-Schicht. Sie ist der eigentliche Unterschied der beiden
+            Wege und entfällt beim schnellen Trade vollständig. Setup-Tags lassen
+            sich später jederzeit nachtragen (`updateTradeSetupTags`). */}
+        {!quick && (
+          <>
+            <SetupTagsInput
+              value={setupTags}
+              onChange={setSetupTags}
+              freetext={form.strategy}
+              disabled={loading}
+            />
+            <Field label="Begründung / Strategie">
+              <Textarea
+                value={form.strategy}
+                onChange={(e) => set('strategy', e.target.value)}
+                placeholder="Warum dieser Trade? Welche Bedingungen müssen erfüllt sein?"
+                className="input-ocean min-h-24 font-mono text-sm"
+              />
+            </Field>
+            <Field label="Notizen">
+              <Textarea
+                value={form.notes}
+                onChange={(e) => set('notes', e.target.value)}
+                placeholder="Marktbedingungen, News, Gedanken…"
+                className="input-ocean min-h-20 font-mono text-sm"
+              />
+            </Field>
+          </>
+        )}
       </FormSection>
 
       <div className="flex gap-3 pt-1">
@@ -654,7 +729,11 @@ export function TradeForm({
           disabled={loading}
           className="btn-teal-glow h-11 flex-1 font-mono text-sm font-bold tracking-wider"
         >
-          {loading ? 'WIRD GESPEICHERT…' : 'WEITER ZUR FINALEN ENTSCHEIDUNG'}
+          {loading
+            ? 'WIRD GESPEICHERT…'
+            : quick
+              ? 'SCHNELLEN TRADE ANLEGEN'
+              : 'WEITER ZUR FINALEN ENTSCHEIDUNG'}
         </Button>
         <Button
           type="button"
@@ -670,7 +749,7 @@ export function TradeForm({
       <PreTradeQuestionsDialog
         open={questionsOpen}
         onOpenChange={setQuestionsOpen}
-        onComplete={handleAnswersComplete}
+        onComplete={submitTrade}
         submitting={loading}
       />
     </>

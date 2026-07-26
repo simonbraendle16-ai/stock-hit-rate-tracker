@@ -1235,6 +1235,86 @@ Alert-Puls, Sheen, App-Hintergrund mit leuchtenden Kerzen, Palette, Video-Re-Ren
 
 ---
 
+# Etappe 8 — Schneller Trade ✅ ERLEDIGT (26.07.2026)
+
+Zwei Erfassungswege statt einem. Die Idee kam vom Nutzer und ist bewusst so
+gewollt — sie steht damit *neben* der Douglas-Strenge, nicht gegen sie.
+
+## Warum
+
+Bisher ging jeder Trade durch dasselbe Nadelöhr: neun Fragen als Gate, Elliott-Zählung,
+Setup, Begründung, Emotions-Check-in. Für einen geplanten Positions-Trade ist genau das der
+Sinn der App. Für eine Intraday-Reaktion ist es zu viel — der Trade wäre vorbei, bevor das
+Formular ausgefüllt ist. Das Ergebnis wäre kein disziplinierterer Trader, sondern ein
+Journal, in dem die schnellen Trades **gar nicht erst auftauchen**: die schlechteste
+Variante, weil dann ausgerechnet die impulsiven Trades unsichtbar bleiben.
+
+## Wie es gebaut wurde — die Entscheidungen
+
+- **Ein Feld am Trade, kein stiller Modus.** `tradeKind` (`langfristig` | `schnell`,
+  Migration `0018`) steht in der Zeile und im Abzeichen an der Karte. Ein Trade ohne Gate
+  muss als solcher erkennbar sein, sonst stünde er später neben den geprüften Trades, als
+  wäre er denselben Weg gegangen.
+- **`preTradeAnswered` bleibt `false`.** Es wäre einfach gewesen, das Feld beim schnellen
+  Trade auf `true` zu setzen, damit das Gate durchlässt — dann würden die Daten aber
+  behaupten, die Fragen seien beantwortet worden. Stattdessen entscheidet allein
+  `requiresPreTradeGate(tradeKind)`, ob das Gate überhaupt gilt.
+- **Der Stop bleibt Pflicht, in beiden Wegen.** „Risiko ist vor dem Einstieg definiert" ist
+  nicht die Formalie, die einen schnellen Trade langsam macht — es ist der Kern. Weggelassen
+  wird die *Begründungs*-Schicht, nicht die Risikogrenze. Ebenso bleibt die **bewusste
+  Verlustannahme** beim Schließen in beiden Wegen bestehen.
+- **Der Emotions-Check-in wird freiwillig, nicht abgeschafft.** Wer eine Bewegung mitnimmt,
+  füllt keine Skala aus — er würde sie hastig wegklicken, und eine hastig weggeklickte Skala
+  ist schlechter als keine, weil sie die Auswertung mit Zufallswerten füllt. Wird trotzdem
+  einer erfasst, zählt er ganz normal mit.
+- **Was im schnellen Weg entfällt:** die neun Fragen, Elliott (Grad/Zählung/Invalidation),
+  Setup-Tags, Begründung, Notizen, Broker, Gebühren-Eingabe und der Verkaufsanteil. Gebühren
+  kommen aus den Einstellungen, der Verkaufsanteil ist 100 %. Setup-Tags lassen sich
+  jederzeit nachtragen (`updateTradeSetupTags`).
+- **Der Default ist der volle Weg.** Die Abkürzung wählt man bewusst, nicht aus Versehen.
+
+## Dateien
+
+| Datei | Änderung |
+|---|---|
+| `lib/trade-kind.ts` (+ Test) | **neu** — Wege, Beschriftungen und die beiden Guard-Fragen |
+| `drizzle/0018_trade_kind.sql` | **neu** — Spalte + CHECK, `DEFAULT 'langfristig'` |
+| `lib/db/schema.ts` | Feld `tradeKind` |
+| `app/actions/trades.ts` | `TradeInput.tradeKind`, Gate wegabhängig, `moodForKind` |
+| `components/trade-form.tsx` | Umschalter oben, Blöcke je Weg, Absenden ohne Dialog |
+| `components/trade-card.tsx` | `SCHNELL`-Abzeichen, Gate-/Check-in-Regel in beiden Dialogen |
+
+## Nachweis
+
+- **Migration:** Spalte `tradeKind text NOT NULL DEFAULT 'langfristig'`, CHECK auf die zwei
+  Werte — gegen die Produktions-DB angewendet und geprüft: alle 17 Bestandstrades stehen auf
+  `langfristig`, ein ungültiger Wert wird mit `23514 check_violation` abgewiesen.
+  `.baseline-0018-vorher` gegen `.baseline-0018-nachher`: keine Abweichung.
+- **Prüfläufe grün:** `tsc --noEmit`, `vitest run` (308 Tests, 11 Dateien), `next build`.
+- **Klickweg im Sandbox-Konto:** Umschalter auf „Schneller Trade" → Fragen-Karte, Elliott und
+  Einordnung verschwinden; TSLA 200/190/230 mit 4.000 € angelegt → **kein Fragen-Dialog**,
+  Trade sofort aktivierbar (der Hinweis „Erst die 4 Fragen" bleibt aus); aktiviert **ohne**
+  Skalenwert. In der Zeile steht danach `tradeKind: 'schnell'`, `preTradeAnswered: false`,
+  `moodEntry: null`, Gebühren 9/9 aus den Einstellungen.
+- **Take-Profit geprüft** (offene Frage aus Etappe 1): am Ziel 230 abgeschlossen →
+  Netto-Ergebnis **582 €** = (230 − 200) × 20 − 18 € Gebühren, exakt die Projektion, die das
+  Formular vor dem Trade angezeigt hatte.
+
+## Offen
+
+- **Kein eigener Schnitt in der Auswertung.** Schnelle Trades laufen in Disziplin-Score,
+  Erwartungswert und Trefferquote ganz normal mit. Die naheliegende nächste Frage — „wie
+  schneiden meine schnellen gegen meine geplanten Trades ab?" — wäre eine eigene Zeile in
+  `computeDisciplineStats`; das Feld dafür liegt jetzt bereit.
+- **Der Weg ist nach dem Anlegen fest.** Ein schneller Trade lässt sich nicht nachträglich zum
+  geplanten machen (und umgekehrt). Das ist bewusst so: der Weg beschreibt, wie der Trade
+  *entstanden* ist — das ändert sich nicht rückwirkend.
+- **Der Revenge-Guard greift auch hier.** Ein schneller Trade kurz nach einem Verlust bekommt
+  dieselbe Warnung und denselben Regelbruch-Eintrag. Genau so gedacht: der kurze Weg soll den
+  Rache-Trade erfassen, nicht ihn verstecken.
+
+---
+
 # Design E — Formulare und Chart-Cockpit ✅ ERLEDIGT (26.07.2026)
 
 Der Nachzügler aus A–D: die beiden Flächen, die damals bewusst ausgespart blieben, weil sie
