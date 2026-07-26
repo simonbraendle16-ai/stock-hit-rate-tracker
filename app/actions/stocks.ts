@@ -2,8 +2,8 @@
 
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
-import { stock, assessment } from '@/lib/db/schema'
-import { and, asc, eq, type SQL } from 'drizzle-orm'
+import { stock, assessment, trade } from '@/lib/db/schema'
+import { and, asc, eq, isNull, type SQL } from 'drizzle-orm'
 import { headers } from 'next/headers'
 import { revalidatePath } from 'next/cache'
 
@@ -254,7 +254,26 @@ export async function addStock(formData: {
     ;[row] = await db.insert(stock).values(legacy).returning({ id: stock.id })
   }
 
+  // Bestehende Trades desselben Tickers nachträglich anhängen.
+  //
+  // `createTrade` verknüpft nur im Moment des Anlegens: existiert das Instrument
+  // da noch nicht, bleibt `stockId` leer — und blieb es bisher für immer. Ein
+  // später angelegtes Instrument holt seine Trades jetzt nach, sonst fehlen dem
+  // Trade dauerhaft Chart, Kerzen und Bot-Zwilling.
+  //
+  // Nur unverknüpfte Zeilen (`stockId IS NULL`) werden angefasst; eine bereits
+  // bestehende Zuordnung wird nie überschrieben.
+  const linked = await db
+    .update(trade)
+    .set({ stockId: row.id })
+    .where(and(eq(trade.userId, userId), eq(trade.ticker, ticker), isNull(trade.stockId)))
+    .returning({ id: trade.id })
+
   revalidatePath('/')
+  if (linked.length) {
+    revalidatePath('/trades')
+    revalidatePath(`/stock/${row.id}`)
+  }
   return { id: row.id }
 }
 

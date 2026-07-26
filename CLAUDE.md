@@ -40,6 +40,11 @@ Candlesticks) · pnpm via corepack.
 - Datenzugriff: **Server Actions** (`app/actions/{trades,stocks,settings,alerts}.ts`,
   `'use server'`). API-Routen: Better Auth (`app/api/auth/[...all]`), Kerzen
   (`/api/candles`, `/api/sparklines`) und Kurs-Snapshot (`/api/quote`, letzte Kerze).
+- **Trade ↔ Instrument:** `createTrade` verknüpft über den **Ticker** und nur im Moment des
+  Anlegens; fehlt das Instrument, bleibt `stockId` leer. `addStock` holt die Verknüpfung
+  nachträglich für alle unverknüpften Trades desselben Tickers nach — eine bestehende
+  Zuordnung wird nie überschrieben. Ohne `stockId` gibt es für den Trade keinen Chart,
+  keine Kerzen und keinen Bot-Zwilling.
 - Schema: `lib/db/schema.ts` — Kern-Tabellen `stock` (Watchlist/Instrument),
   `assessment` (reine Prognose, kein Geld), `trade` (echter/geplanter Trade mit
   Douglas- + Elliott-Feldern), `price_alert` (Kurs-Alert je Level, Etappe 3).

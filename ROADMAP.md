@@ -1163,8 +1163,10 @@ Trade seinen Zustand mit.)
 - **Klick-Test steht aus:** Trade mit Hebel und abweichender Gebühr planen → aktivieren →
   schließen; prüfen, dass ein Abschluss ohne Ausstiegskurs abgelehnt wird und die Gebühr danach
   in der Datenbank steht.
-- **ESLint ist nicht installiert** — `pnpm lint` schlägt deshalb fehl. Vorbefund, nicht durch
-  Etappe 1 verursacht.
+- **ESLint bleibt bewusst uninstalliert** (Entscheidung vom 26.07.2026). `pnpm lint` schlägt
+  deshalb weiter fehl — das ist kein Defekt, sondern der Stand: die tatsächlichen Prüfungen
+  sind `tsc --noEmit` und Vitest. Eine Installation über npm brächte ein zweites Lockfile
+  neben `pnpm-lock.yaml` ein, worüber Next schon heute warnt.
 - **Währungswechsel ungetestet gegen echte Daten** — die Umrechnung ist gebaut und typgeprüft,
   aber noch nie ausgeführt worden. Vor dem ersten echten Einsatz mit einem Testkonto prüfen.
 
@@ -1214,8 +1216,14 @@ Alert-Puls, Sheen, App-Hintergrund mit leuchtenden Kerzen, Palette, Video-Re-Ren
 - **Trade-Replay zeigt meist den Fallback.** Das Gratis-Limit von Twelve Data
   (~8 Anfragen/Minute) wird durch Watchlist und `AlertWatcher` schnell ausgeschöpft.
   Sobald Kerzen kommen, läuft der Kurs in den Plan hinein — der Weg ist gebaut und getestet.
-- **Drei Trades ohne Watchlist-Verknüpfung:** `ADBE`, `TEAM`, `FI` existieren nicht als
-  Instrument, deshalb ist dort `stockId` leer.
+- ~~**Drei Trades ohne Watchlist-Verknüpfung:** `ADBE`, `TEAM`, `FI`~~ ✅ **erledigt
+  (26.07.2026)** — und die Ursache mit. `createTrade` verknüpft nur im Moment des Anlegens
+  (`app/actions/trades.ts:171`): fehlt das Instrument da noch, bleibt `stockId` für immer leer.
+  `addStock` holt das jetzt nach und hängt bestehende Trades desselben Tickers an das neue
+  Instrument (nur `stockId IS NULL`, eine bestehende Zuordnung wird nie überschrieben).
+  Adobe, Fiserv und Atlassian angelegt → Trades 22, 18, 21 hängen automatisch daran.
+  **Nachweis:** `.baseline-stockid-vorher` gegen `.baseline-stockid-nachher` — genau drei
+  Felder geändert (die drei `stockId`), alle übrigen Felder und die Settings identisch.
 
 ---
 
