@@ -13,6 +13,7 @@ import { ChartLinkControl } from '@/components/chart-link-control'
 import { PriceChart, type ChartMarker, type PlanLine } from '@/components/chart/price-chart'
 import { ChartModeTabs } from '@/components/chart/chart-mode-tabs'
 import { PlanBar } from '@/components/chart/plan-bar'
+import { PLAN_COLORS } from '@/components/chart/colors'
 import { Badge } from '@/components/ui/badge'
 import { ArrowLeft, ArrowUpRight, ArrowDownRight } from 'lucide-react'
 
@@ -41,17 +42,18 @@ export default async function StockDetailPage({
   const openTrades = trades.filter((t) => t.status === 'geplant' || t.status === 'aktiv')
   const planLines: PlanLine[] = openTrades.flatMap((t) => {
     const dir = t.direction === 'long' ? 'Long' : 'Short'
+    // Dieselben vier Farben wie die Plan-Leiste unter dem Chart — eine Quelle.
     const lines: PlanLine[] = [
-      { price: t.entryPrice, color: '#45a8ec', title: `Entry ${dir}` },
-      { price: t.stopLoss, color: '#D8505F', title: `Stop ${dir}` },
+      { price: t.entryPrice, color: PLAN_COLORS.entry, title: `Entry ${dir}` },
+      { price: t.stopLoss, color: PLAN_COLORS.stop, title: `Stop ${dir}` },
     ]
     if (t.takeProfit != null) {
-      lines.push({ price: t.takeProfit, color: '#4FBE8C', title: `Target ${dir}` })
+      lines.push({ price: t.takeProfit, color: PLAN_COLORS.target, title: `Target ${dir}` })
     }
     if (t.elliottInvalidation != null) {
       lines.push({
         price: t.elliottInvalidation,
-        color: '#D4AC4E',
+        color: PLAN_COLORS.invalidation,
         title: 'Elliott-Invalidation',
         dashed: true,
       })

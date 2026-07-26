@@ -14,6 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { CHART_COLORS } from '@/components/chart/colors'
 import { ChevronDown, ChevronRight, FolderInput, Search } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -101,7 +102,7 @@ function Sparkline({ closes, positive }: { closes: number[]; positive: boolean }
       <path
         d={path}
         fill="none"
-        stroke={positive ? '#4FBE8C' : '#D8505F'}
+        stroke={positive ? CHART_COLORS.up : CHART_COLORS.down}
         strokeWidth="1.5"
         vectorEffect="non-scaling-stroke"
       />
