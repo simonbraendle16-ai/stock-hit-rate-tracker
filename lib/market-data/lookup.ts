@@ -60,3 +60,48 @@ export function lookupProviderSymbol(
     { revalidate: 300 },
   )()
 }
+
+/**
+ * Auflöser für viele Zeilen auf einmal — eine Abfrage statt einer je Trade.
+ *
+ * Warum es das zusätzlich braucht: `lookupProviderSymbol` findet über den
+ * TICKER. Ein Trade trägt aber seinen eigenen, oft abweichenden Ticker: Der
+ * Solana-Trade heißt `SOL`, das Instrument dazu `SOLUSD`, und beim Anbieter
+ * heißt es `SOL-USD`. Über den Ticker war der Trade damit nicht aufzulösen —
+ * Yahoo kennt weder `SOL` noch `SOLUSD`, und der Chart des Trades blieb leer.
+ * Verbunden sind die beiden über `trade.stockId`; genau darüber geht dieser
+ * Auflöser zuerst.
+ *
+ * Reihenfolge: verknüpftes Instrument → Tickergleichheit → Rohticker. Der
+ * Rückfall auf den Rohticker bleibt Absicht (siehe oben).
+ */
+export async function createSymbolResolver(
+  userId: string,
+): Promise<(ticker: string, stockId?: number | null) => string> {
+  const rows = await db
+    .select({
+      id: stock.id,
+      ticker: stock.ticker,
+      providerSymbol: stock.providerSymbol,
+      status: stock.resolutionStatus,
+    })
+    .from(stock)
+    .where(eq(stock.userId, userId))
+
+  const byId = new Map<number, string>()
+  const byTicker = new Map<string, string>()
+  for (const r of rows) {
+    if (!r.providerSymbol || r.status !== 'ok') continue
+    byId.set(r.id, r.providerSymbol)
+    byTicker.set(r.ticker.trim().toUpperCase(), r.providerSymbol)
+  }
+
+  return (ticker, stockId) => {
+    const clean = ticker.trim().toUpperCase()
+    if (stockId != null) {
+      const viaInstrument = byId.get(stockId)
+      if (viaInstrument) return viaInstrument
+    }
+    return byTicker.get(clean) ?? clean
+  }
+}

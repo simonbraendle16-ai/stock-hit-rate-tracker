@@ -190,6 +190,21 @@ Candlesticks) · pnpm via corepack.
   **Näherungen werden ausgewiesen:** Yahoo führt keinen Edelmetall-Spot (`XAUUSD=X` existiert
   nicht) — `XAUUSD` löst auf `GC=F` auf und trägt `resolutionApproximate`, die Watchlist zeigt
   „Näherung".
+- **Ein Trade wird über sein INSTRUMENT aufgelöst, nie über seinen Ticker** (Etappe 11).
+  `lookupProviderSymbol` sucht über Tickergleichheit — das reicht für die Watchlist, aber
+  nicht für Trades: Der Solana-Trade heißt `SOL`, das Instrument dazu `SOLUSD`, und beim
+  Anbieter heißt es `SOL-USD`. Yahoo kennt weder `SOL` noch `SOLUSD`. Verbunden sind die
+  beiden über `trade.stockId`; genau darüber geht `createSymbolResolver` (`lib/market-data/
+  lookup.ts`) — verknüpftes Instrument → Tickergleichheit → Rohticker.
+  **Warum das mehr als ein fehlender Chart war:** Yahoo kennt ein *anderes* Papier namens
+  `BTC`. Der Rohticker lieferte deshalb keinen Fehler, sondern einen **falschen Kurs von
+  28,10 € für eine Bitcoin-Position** (richtig: 63.533,80) — samt falschem R und falschem
+  Abstand zum Stop. Ein stiller falscher Wert ist genau das, wogegen diese App gebaut ist.
+  Angeschlossen sind: `components/trade-replay.tsx`, `app/actions/bot-twin.ts` (Bot-Zwilling
+  UND MAE/MFE), `app/actions/excursion.ts`, `components/live-position.tsx` sowie
+  `/api/quote` und `/api/candles` über den optionalen Parameter `stockId`.
+  **Wer künftig irgendwo Marktdaten holt, reicht `stockId` mit — ohne ihn ist das Ergebnis
+  nicht nur leer, sondern womöglich falsch.**
 - **Instrumentenkarte** (Etappe 10) = Prognosen UND Trades desselben Wertes an einer Stelle.
   Die beiden Welten lagen bis dahin auf getrennten Seiten (`/analysis` kannte nur Prognosen,
   `/tracking` nur Trades ohne Instrumentbezug) — damit war die Kernfrage nirgends zu

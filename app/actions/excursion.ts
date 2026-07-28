@@ -15,6 +15,7 @@ import { trade, tradeEvent, tradeExcursion } from '@/lib/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { headers } from 'next/headers'
 import { revalidatePath } from 'next/cache'
+import { createSymbolResolver } from '@/lib/market-data/lookup'
 import { createCandleLoader } from '@/lib/market-data/candle-loader'
 import { tradeRMultiple, type TradeRow } from '@/lib/trade-stats'
 import type { ExcursionEntry } from '@/lib/excursion'
@@ -70,6 +71,10 @@ export async function getTradeExcursion(tradeId: number): Promise<ExcursionEntry
     if (!isMissingTable(err)) throw err
   }
 
+  // Auch hier über das verknüpfte Instrument auflösen — sonst misst die
+  // Detailseite denselben Trade stumm, den der Bot-Zwilling messen kann.
+  const resolve = await createSymbolResolver(userId)
+
   return measureExcursion(t, {
     label: (t.closedAt ?? t.createdAt).toLocaleDateString('de-DE', {
       day: '2-digit',
@@ -79,6 +84,7 @@ export async function getTradeExcursion(tradeId: number): Promise<ExcursionEntry
     realR: tradeRMultiple(t, events),
     load: createCandleLoader(),
     manual,
+    symbol: resolve(t.ticker, t.stockId),
   })
 }
 

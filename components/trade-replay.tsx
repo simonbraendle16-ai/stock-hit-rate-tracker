@@ -1,4 +1,5 @@
 import { getCachedCandles } from '@/lib/market-data/cached'
+import { createSymbolResolver } from '@/lib/market-data/lookup'
 import type { Candle } from '@/lib/market-data/types'
 import type { Market } from '@/lib/market-data'
 import type { TradeRow } from '@/lib/trade-stats'
@@ -30,7 +31,12 @@ export async function TradeReplay({ t }: { t: TradeRow }) {
   let fehler: string | null = null
 
   try {
-    const data = await getCachedCandles(t.ticker, (t.market ?? 'aktien') as Market, '1day')
+    // Über das verknüpfte Instrument auflösen, nicht über den Ticker des
+    // Trades: Der Solana-Trade heißt `SOL`, beim Anbieter heißt er `SOL-USD`.
+    // Ungefragt weitergereicht blieb der Chart hier leer.
+    const resolve = await createSymbolResolver(t.userId)
+    const symbol = resolve(t.ticker, t.stockId)
+    const data = await getCachedCandles(symbol, (t.market ?? 'aktien') as Market, '1day')
     candles = Array.isArray(data) ? data.slice(-90) : []
   } catch (err) {
     fehler = err instanceof Error ? err.message : 'Kursdaten nicht verfügbar'

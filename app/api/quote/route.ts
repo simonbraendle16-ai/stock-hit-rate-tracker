@@ -1,6 +1,6 @@
 import { auth } from '@/lib/auth'
 import { Market, MarketDataError } from '@/lib/market-data'
-import { lookupProviderSymbol } from '@/lib/market-data/lookup'
+import { createSymbolResolver, lookupProviderSymbol } from '@/lib/market-data/lookup'
 import { getCachedQuote } from '@/lib/market-data/quote'
 import { headers } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
@@ -29,6 +29,10 @@ export async function GET(req: NextRequest) {
   const params = req.nextUrl.searchParams
   const symbol = params.get('symbol')?.trim().toUpperCase() ?? ''
   const market = (params.get('market') ?? 'aktien') as Market
+  // Ein TRADE trägt seinen eigenen Ticker (`SOL`), das verknüpfte Instrument
+  // einen anderen (`SOLUSD`) — aufzulösen ist er nur über die Verknüpfung.
+  const stockIdRaw = params.get('stockId')
+  const stockId = stockIdRaw && /^\d+$/.test(stockIdRaw) ? Number(stockIdRaw) : null
 
   if (!symbol || symbol.length > 20 || !/^[A-Z0-9./:-]+$/.test(symbol)) {
     return NextResponse.json({ error: 'Ungültiges Symbol.' }, { status: 400 })
@@ -39,9 +43,11 @@ export async function GET(req: NextRequest) {
 
   try {
     // Ticker der Watchlist → Anbieter-Symbol, zentral (siehe `lookup.ts`).
-    const resolved = await lookupProviderSymbol(session.user.id, symbol)
-    const quote = await getCachedQuote(resolved.symbol, market)
-    return NextResponse.json({ symbol, providerSymbol: resolved.symbol, market, ...quote })
+    const providerSymbol = stockId
+      ? (await createSymbolResolver(session.user.id))(symbol, stockId)
+      : (await lookupProviderSymbol(session.user.id, symbol)).symbol
+    const quote = await getCachedQuote(providerSymbol, market)
+    return NextResponse.json({ symbol, providerSymbol, market, ...quote })
   } catch (err) {
     if (err instanceof MarketDataError) {
       const status =

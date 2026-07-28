@@ -31,7 +31,13 @@ interface QuoteState {
   errorCode: string | null
 }
 
-function useQuote(symbol: string, market: string, enabled: boolean): QuoteState {
+function useQuote(
+  symbol: string,
+  market: string,
+  enabled: boolean,
+  /** Verknüpftes Instrument — erst darueber ist ein Trade-Ticker aufloesbar. */
+  stockId: number | null,
+): QuoteState {
   const [state, setState] = useState<QuoteState>({
     price: null,
     time: null,
@@ -46,6 +52,7 @@ function useQuote(symbol: string, market: string, enabled: boolean): QuoteState 
     setState((s) => ({ ...s, loading: true, error: null, errorCode: null }))
 
     const params = new URLSearchParams({ symbol, market })
+    if (stockId != null) params.set('stockId', String(stockId))
     fetch(`/api/quote?${params}`, { signal: controller.signal })
       .then(async (res) => {
         const data = await res.json()
@@ -73,7 +80,7 @@ function useQuote(symbol: string, market: string, enabled: boolean): QuoteState 
       })
 
     return () => controller.abort()
-  }, [symbol, market, enabled])
+  }, [symbol, market, enabled, stockId])
 
   return state
 }
@@ -108,7 +115,7 @@ export function LivePosition({
   const [alertOpen, setAlertOpen] = useState(false)
   // Optionen haben keine Gratis-Kursdaten — gar nicht erst abrufen.
   const enabled = t.market !== 'optionen'
-  const { price, time, loading, error, errorCode } = useQuote(t.ticker, t.market, enabled)
+  const { price, time, loading, error, errorCode } = useQuote(t.ticker, t.market, enabled, t.stockId)
 
   // Etappe 6: liegen Events vor und wurde bereits ein Teil verkauft, bezieht sich
   // der unrealisierte Stand auf die verbleibende Restmenge zum gewichteten

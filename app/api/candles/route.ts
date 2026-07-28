@@ -1,7 +1,7 @@
 import { auth } from '@/lib/auth'
 import { Interval, Market, MarketDataError } from '@/lib/market-data'
 import { getCachedCandles } from '@/lib/market-data/cached'
-import { lookupProviderSymbol } from '@/lib/market-data/lookup'
+import { createSymbolResolver, lookupProviderSymbol } from '@/lib/market-data/lookup'
 import { headers } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 
@@ -26,6 +26,9 @@ export async function GET(req: NextRequest) {
   const symbol = params.get('symbol')?.trim().toUpperCase() ?? ''
   const market = (params.get('market') ?? 'aktien') as Market
   const interval = (params.get('interval') ?? '1day') as Interval
+  // Siehe `/api/quote`: über die Verknüpfung, wenn der Aufrufer sie kennt.
+  const stockIdRaw = params.get('stockId')
+  const stockId = stockIdRaw && /^\d+$/.test(stockIdRaw) ? Number(stockIdRaw) : null
 
   if (!symbol || symbol.length > 20 || !/^[A-Z0-9./:-]+$/.test(symbol)) {
     return NextResponse.json({ error: 'Ungültiges Symbol.' }, { status: 400 })
@@ -41,11 +44,13 @@ export async function GET(req: NextRequest) {
     // Der Aufrufer schickt den Ticker, wie er in der Watchlist steht (`CL1!`).
     // Beim Anbieter heißt derselbe Wert anders (`CL=F`) — die Übersetzung
     // passiert zentral in `lookupProviderSymbol`, nie hier von Hand.
-    const resolved = await lookupProviderSymbol(session.user.id, symbol)
-    const candles = await getCachedCandles(resolved.symbol, market, interval)
+    const providerSymbol = stockId
+      ? (await createSymbolResolver(session.user.id))(symbol, stockId)
+      : (await lookupProviderSymbol(session.user.id, symbol)).symbol
+    const candles = await getCachedCandles(providerSymbol, market, interval)
     return NextResponse.json({
       symbol,
-      providerSymbol: resolved.symbol,
+      providerSymbol,
       market,
       interval,
       candles,

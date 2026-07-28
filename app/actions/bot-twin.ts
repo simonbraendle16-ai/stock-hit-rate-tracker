@@ -23,6 +23,7 @@ import {
   type CandleLoader,
 } from '@/lib/market-data/candle-loader'
 import { type Candle, type Interval, type Market } from '@/lib/market-data/types'
+import { createSymbolResolver } from '@/lib/market-data/lookup'
 import {
   aggregateExcursion,
   resolveRun,
@@ -162,11 +163,17 @@ function toExcursionInput(t: TradeRow): ExcursionInput | null {
 }
 
 /** Trade-Zeile → schmale Eingabe der Simulation. `null`, wenn Kerndaten fehlen. */
-function toBotTrade(t: TradeRow, events: TradeEventRow[], from: Date | null): BotTrade | null {
+function toBotTrade(
+  t: TradeRow,
+  events: TradeEventRow[],
+  from: Date | null,
+  /** ANBIETER-Symbol, nicht der Ticker des Trades — siehe `createSymbolResolver`. */
+  symbol: string,
+): BotTrade | null {
   if (!from) return null
   return {
     id: t.id,
-    ticker: t.ticker,
+    ticker: symbol,
     direction: t.direction === 'short' ? 'short' : 'long',
     entryPrice: t.entryPrice,
     stopLoss: t.stopLoss,
@@ -268,6 +275,11 @@ export async function getBotTwinStats(): Promise<BotTwinStats & { excursion: Exc
     loadManualExcursions(userId),
   ])
 
+  // Kerzen IMMER unter dem Anbieter-Symbol holen. Ein Trade trägt seinen
+  // eigenen Ticker (`SOL`), das verknüpfte Instrument einen anderen (`SOLUSD`),
+  // und beim Anbieter heißt es `SOL-USD`. Ohne diese Übersetzung blieben
+  // Bot-Zwilling und MAE/MFE für solche Trades stumm.
+  const resolve = await createSymbolResolver(userId)
   const load = createCandleLoader()
   const nowSec = Math.floor(Date.now() / 1000)
   const market = (t: TradeRow): Market => (t.market as Market) ?? 'aktien'
@@ -277,7 +289,7 @@ export async function getBotTwinStats(): Promise<BotTwinStats & { excursion: Exc
   const excursions: ExcursionEntry[] = []
   for (const t of closed) {
     const events = eventsByTrade.get(t.id) ?? []
-    const bot = toBotTrade(t, events, t.openedAt)
+    const bot = toBotTrade(t, events, t.openedAt, resolve(t.ticker, t.stockId))
     const label = dateLabel(t.closedAt ?? t.createdAt)
     const realR = tradeRMultiple(t, events)
     const editable = { hasTarget: t.takeProfit != null, manual: manual.get(t.id) ?? null }
@@ -293,6 +305,7 @@ export async function getBotTwinStats(): Promise<BotTwinStats & { excursion: Exc
           realR,
           load,
           manual: manualExcursions.get(t.id) ?? null,
+          symbol: resolve(t.ticker, t.stockId),
         }),
       )
     }
@@ -347,7 +360,7 @@ export async function getBotTwinStats(): Promise<BotTwinStats & { excursion: Exc
   const missedEntries: MissedEntry[] = []
   for (const t of missed) {
     const events = eventsByTrade.get(t.id) ?? []
-    const bot = toBotTrade(t, events, t.createdAt)
+    const bot = toBotTrade(t, events, t.createdAt, resolve(t.ticker, t.stockId))
     const label = dateLabel(t.createdAt)
     const editable = { hasTarget: t.takeProfit != null, manual: manual.get(t.id) ?? null }
 
@@ -409,6 +422,8 @@ export async function measureExcursion(
     realR: number
     load: CandleLoader
     manual: ManualExcursion | null
+    /** ANBIETER-Symbol; ohne Angabe der Ticker des Trades (Altverhalten). */
+    symbol?: string
   },
 ): Promise<ExcursionEntry> {
   const base = {
@@ -442,7 +457,7 @@ export async function measureExcursion(
   const spanHours = (input.toSec - input.fromSec) / 3600
   const { run: measured, resolution } = await resolveExcursion(
     input,
-    t.ticker,
+    ctx.symbol ?? t.ticker,
     (t.market as Market) ?? 'aktien',
     preferredInterval(spanHours),
     ctx.load,
