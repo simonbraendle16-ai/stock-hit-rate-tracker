@@ -6,6 +6,7 @@ import {
   serial,
   integer,
   doublePrecision,
+  primaryKey,
 } from 'drizzle-orm/pg-core'
 
 // --- Better Auth required tables -------------------------------------------
@@ -106,7 +107,77 @@ export const stock = pgTable('stock', {
   // Watchlist V2: benutzerdefinierte Sektion (TradingView-Stil-Gruppen) + Sortierung
   watchlistSection: text('watchlistSection'),
   sortOrder: integer('sortOrder').notNull().default(0),
+  // Etappe 9 „Symbolauflösung": `ticker` bleibt, was der Nutzer eingetippt hat
+  // (und die Verknüpfung zu den Trades); daneben steht das beim Anbieter
+  // tatsächlich existierende Symbol. Erst diese Trennung erlaubt „CL1!" in der
+  // Oberfläche und „CL=F" in der Abfrage.
+  providerSymbol: text('providerSymbol'),
+  // yahoo | twelvedata | binance
+  provider: text('provider'),
+  // ok | ambiguous | unresolved — NULL heißt „noch nie versucht".
+  resolutionStatus: text('resolutionStatus'),
+  resolutionConfidence: integer('resolutionConfidence'),
+  // Was der Anbieter zum Symbol sagt — damit der Nutzer prüfen kann, ob wirklich
+  // sein Wert gemeint ist.
+  resolvedName: text('resolvedName'),
+  resolvedExchange: text('resolvedExchange'),
+  resolvedCurrency: text('resolvedCurrency'),
+  resolutionNote: text('resolutionNote'),
+  // Geprüfte Alternativen als JSON-Array (siehe `ResolutionCandidate`).
+  resolutionCandidates: text('resolutionCandidates'),
+  // Von Hand gesetzt → die Automatik fasst es nie wieder an.
+  resolutionPinned: boolean('resolutionPinned').notNull().default(false),
+  // Näherung statt Entsprechung (z. B. Gold-Future statt Spot).
+  resolutionApproximate: boolean('resolutionApproximate').notNull().default(false),
+  resolvedAt: timestamp('resolvedAt'),
   createdAt: timestamp('createdAt').notNull().defaultNow(),
+})
+
+// Etappe 9: dauerhafter Kursspeicher, Schlüssel ist das ANBIETER-Symbol, nicht
+// das Instrument — dasselbe Papier in mehreren Watchlists wird einmal abgefragt.
+// Die Oberfläche liest ausschließlich hier, nie direkt beim Anbieter; gefüllt
+// wird gebündelt vom Synchronisierungslauf. Dadurch überlebt die Anzeige einen
+// Anbieterausfall mit dem letzten bekannten Kurs statt mit einem leeren Feld.
+export const quoteSnapshot = pgTable(
+  'quote_snapshot',
+  {
+    provider: text('provider').notNull(),
+    symbol: text('symbol').notNull(),
+    price: doublePrecision('price').notNull(),
+    previousClose: doublePrecision('previousClose'),
+    changePct: doublePrecision('changePct'),
+    currency: text('currency'),
+    exchange: text('exchange'),
+    name: text('name'),
+    // Kursstand beim Anbieter (Unix-Sekunden) — Grundlage für „Kurs von 14:32".
+    quotedAt: integer('quotedAt').notNull(),
+    // Zeitpunkt unseres Abrufs. Differenz zeigt geschlossenen Markt vs. Hänger.
+    // MIT Zeitzone (Migration 0021): Aus diesem Wert wird gerechnet („ist der
+    // Kurs zu alt?"). Eine Spalte ohne Zeitzone speichert nur eine Wanduhrzeit
+    // und war beim Zurücklesen um den Serverversatz daneben — die Kurse galten
+    // dadurch immer als zwei Stunden alt.
+    fetchedAt: timestamp('fetchedAt', { withTimezone: true }).notNull().defaultNow(),
+    lastError: text('lastError'),
+    failCount: integer('failCount').notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.provider, t.symbol] })],
+)
+
+// Etappe 9: Protokoll der Synchronisierungsläufe. Die Anforderung war, nicht
+// mehr nachhaken zu müssen — ohne Protokoll ließe sich nur vermuten, ob die
+// Automatik läuft.
+export const symbolSyncRun = pgTable('symbol_sync_run', {
+  id: serial('id').primaryKey(),
+  // Ebenfalls mit Zeitzone (Migration 0021) — siehe `quote_snapshot.fetchedAt`.
+  startedAt: timestamp('startedAt', { withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp('finishedAt', { withTimezone: true }),
+  // cron | manual | onload
+  trigger: text('trigger').notNull().default('cron'),
+  symbolsTotal: integer('symbolsTotal').notNull().default(0),
+  quotesUpdated: integer('quotesUpdated').notNull().default(0),
+  resolvedNew: integer('resolvedNew').notNull().default(0),
+  stillUnresolved: integer('stillUnresolved').notNull().default(0),
+  error: text('error'),
 })
 
 // One row per individual analysis result (correct or wrong) — a PURE prediction

@@ -140,9 +140,13 @@ export function TradeForm({
     return Math.abs(tp - entry) / risk
   }, [form.entryPrice, form.stopLoss, form.takeProfit])
 
-  // --- Geld-/Gebühren-Projektion (nur Echtgeld) ---
+  // --- Geld-/Gebühren-Projektion ---
+  //
+  // Läuft auch auf Papier: Ein Demo-Trade mit Hebel ist nur dann eine echte
+  // Übung, wenn Positionswert und Stückzahl dieselben sind wie später mit
+  // echtem Geld. Der Unterschied bleibt, dass auf Papier keine Gebühren
+  // anfallen — dieselbe Regel wie in `tradeFees`.
   const money = useMemo(() => {
-    if (!tradedWithMoney) return null
     const invested = parseFloat(form.investedAmount)
     const entry = parseFloat(form.entryPrice)
     if (!invested || !entry) return null
@@ -153,7 +157,9 @@ export function TradeForm({
     // Gebühren aus dem Formular — 0 ist ein gültiger Wert (gebührenfreier Broker).
     const feeEntry = form.feeEntry.trim() === '' ? defaultFeeEntry : parseFloat(form.feeEntry)
     const feeExit = form.feeExit.trim() === '' ? defaultFeeExit : parseFloat(form.feeExit)
-    const fees = { entry: feeEntry, exit: feeExit }
+    const fees = tradedWithMoney
+      ? { entry: feeEntry, exit: feeExit }
+      : { entry: 0, exit: 0 }
     return {
       shares: computeShares(invested, entry, leverage),
       positionValue: computePositionValue(invested, leverage),
@@ -222,8 +228,9 @@ export function TradeForm({
         stopLoss: parseFloat(form.stopLoss),
         takeProfit: form.takeProfit ? parseFloat(form.takeProfit) : null,
         positionSize: form.positionSize ? parseFloat(form.positionSize) : null,
-        investedAmount:
-          tradedWithMoney && form.investedAmount ? parseFloat(form.investedAmount) : null,
+        // Auch auf Papier: Einsatz und Hebel ergeben die Positionsgröße, sonst
+        // wäre der Hebel im Demo-Trade eine Zahl ohne Wirkung.
+        investedAmount: form.investedAmount ? parseFloat(form.investedAmount) : null,
         leverage: form.leverage ? parseFloat(form.leverage) : 1,
         // Beim schnellen Trade bleiben Gebühren, Setup, Begründung und Elliott
         // ungefragt: die Gebühren zieht der Server aus den Einstellungen, der
@@ -444,16 +451,27 @@ export function TradeForm({
         )}
       </FormSection>
 
-      {/* Kapital & Gebühren — nur bei Echtgeld */}
-      {tradedWithMoney && (
-        <FormSection
+      {/* Kapital & Hebel — auf Papier dasselbe, nur ohne echtes Geld und ohne
+          Gebühren. Ein Demo-Trade ohne Hebel wäre keine Übung für einen
+          gehebelten Echtgeld-Trade. */}
+      <FormSection
           icon={Coins}
-          title="Kapital und Gebühren"
-          hint="Die Gebühren gelten für diesen Trade — die Voreinstellung steht in den Einstellungen."
+          title={tradedWithMoney ? 'Kapital und Gebühren' : 'Papier-Kapital und Hebel'}
+          hint={
+            tradedWithMoney
+              ? 'Die Gebühren gelten für diesen Trade — die Voreinstellung steht in den Einstellungen.'
+              : 'Übungsgeld: Einsatz und Hebel bestimmen die Positionsgröße wie beim Echtgeld-Trade — nur zahlt niemand etwas.'
+          }
           delay="rise-in-2"
         >
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <Field label={`Kapitaleinsatz (${currencySymbol(currency)})`}>
+            <Field
+              label={
+                tradedWithMoney
+                  ? `Kapitaleinsatz (${currencySymbol(currency)})`
+                  : `Papier-Einsatz (${currencySymbol(currency)})`
+              }
+            >
               <Input
                 type="number"
                 step="any"
@@ -483,7 +501,7 @@ export function TradeForm({
             <ResultBlock tone="warning">
               <dl className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
                 <ResultRow
-                  label="Gebundenes Kapital"
+                  label={tradedWithMoney ? 'Gebundenes Kapital' : 'Gebundenes Papiergeld'}
                   value={money$(parseFloat(form.investedAmount))}
                 />
                 <ResultRow label="Positionswert" value={money$(money.positionValue)} strong />
@@ -491,15 +509,19 @@ export function TradeForm({
               </dl>
               <p className="note mt-2">
                 Der Hebel vergrößert die Position, nicht dein Risiko — das bestimmt weiterhin
-                allein dein Stop. Prüfe die Risikoschwelle oben.
+                allein dein Stop.{' '}
+                {tradedWithMoney
+                  ? 'Prüfe die Risikoschwelle oben.'
+                  : 'Auf Papier greift der Risiko-Guard nicht: Er misst dein echtes Konto, und das steht hier nicht im Feuer.'}
               </p>
             </ResultBlock>
           )}
 
           {/* Gebühren und Teilverkaufs-Anteil sind auf dem schnellen Weg kein
               Thema: es gelten die Standardgebühren aus den Einstellungen und
-              voller Verkauf am Ziel. */}
-          {!quick && (
+              voller Verkauf am Ziel. Auf Papier fallen ohnehin keine Gebühren
+              an — dieselbe Regel wie in `tradeFees`. */}
+          {!quick && tradedWithMoney && (
             <div className="grid grid-cols-1 items-end gap-4 md:grid-cols-3">
               <Field label={`Gebühr Kauf (${currencySymbol(currency)})`}>
                 <Input
@@ -539,20 +561,29 @@ export function TradeForm({
           {money && (money.tp || money.sl) && (
             <div className="space-y-3">
               {money.tp && (
-                <ResultBlock tone="positive" icon={TrendingUp} title="Beim Take-Profit">
+                <ResultBlock
+                  tone="positive"
+                  icon={TrendingUp}
+                  title={
+                    tradedWithMoney ? 'Beim Take-Profit' : 'Beim Take-Profit (Papiergeld)'
+                  }
+                >
                   <dl className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
                     <ResultRow label="Stückzahl gesamt" value={num(money.tp.shares)} />
                     <ResultRow label="Davon verkauft" value={num(money.tp.soldShares)} />
                     <ResultRow label="Restposition" value={num(money.tp.remainingShares)} />
                     <ResultRow label="Verkaufserlös" value={money$(money.tp.proceeds)} />
                     <ResultRow label="Brutto-Gewinn" value={money$(money.tp.grossProfit)} />
+                    {/* Auf Papier wären das immer 0 € — eine Zeile, die nichts sagt. */}
+                    {tradedWithMoney && (
+                      <ResultRow
+                        label="Gebühren"
+                        value={`−${money$(money.tp.fees)}`}
+                        tone="destructive"
+                      />
+                    )}
                     <ResultRow
-                      label="Gebühren"
-                      value={`−${money$(money.tp.fees)}`}
-                      tone="destructive"
-                    />
-                    <ResultRow
-                      label="Netto-Gewinn"
+                      label={tradedWithMoney ? 'Netto-Gewinn' : 'Gewinn'}
                       value={money$(money.tp.netProfit)}
                       tone={money.tp.netProfit >= 0 ? 'positive' : 'destructive'}
                       strong
@@ -564,7 +595,11 @@ export function TradeForm({
                 <ResultBlock
                   tone="destructive"
                   icon={TrendingDown}
-                  title="Beim Stop-Loss (volle Position)"
+                  title={
+                    tradedWithMoney
+                      ? 'Beim Stop-Loss (volle Position)'
+                      : 'Beim Stop-Loss (volle Position, Papiergeld)'
+                  }
                 >
                   <dl className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
                     <ResultRow
@@ -572,13 +607,15 @@ export function TradeForm({
                       value={money$(money.sl.grossLoss)}
                       tone="destructive"
                     />
+                    {tradedWithMoney && (
+                      <ResultRow
+                        label="Gebühren"
+                        value={`−${money$(money.sl.fees)}`}
+                        tone="destructive"
+                      />
+                    )}
                     <ResultRow
-                      label="Gebühren"
-                      value={`−${money$(money.sl.fees)}`}
-                      tone="destructive"
-                    />
-                    <ResultRow
-                      label="Netto-Verlust"
+                      label={tradedWithMoney ? 'Netto-Verlust' : 'Verlust'}
                       value={money$(money.sl.netLoss)}
                       tone="destructive"
                       strong
@@ -589,7 +626,6 @@ export function TradeForm({
             </div>
           )}
         </FormSection>
-      )}
 
       {/* Elliott-Block — die Zählung ist Arbeit am Chart, nicht am Ticket. */}
       {!quick && (

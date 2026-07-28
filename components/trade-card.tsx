@@ -376,9 +376,14 @@ export function TradeCard({
   )
 }
 
+// Zeigt Einsatz, Hebel und Projektion — bei Echtgeld wie auf Papier. Ein
+// Demo-Trade mit Hebel hat dieselbe Positionsgröße wie sein Echtgeld-Zwilling;
+// verschwiegen würde der Hebel die Übung wertlos machen. Der Unterschied steht
+// in der Überschrift und darin, dass auf Papier keine Gebühren anfallen.
 function MoneyPanel({ t, currency = 'EUR' }: { t: TradeRow; currency?: string }) {
-  if (!t.tradedWithMoney || t.investedAmount == null) return null
+  if (t.investedAmount == null) return null
 
+  const paper = !t.tradedWithMoney
   const eur = (n: number | null | undefined) => formatMoney(n, currency)
   const invested = t.investedAmount
   const shares = t.positionSize ?? null
@@ -389,8 +394,12 @@ function MoneyPanel({ t, currency = 'EUR' }: { t: TradeRow; currency?: string })
   // keine zweite Rechenlogik in der Anzeige. `null` = kein Ausstiegskurs erfasst.
   const realizedNet = closed ? tradePnl(t) : null
 
-  // Geplante Gebühren des Trades; bei Altbestand ohne Wert die Vorgabe.
-  const fees = { entry: t.feeEntry ?? DEFAULT_ORDER_FEE, exit: t.feeExit ?? DEFAULT_ORDER_FEE }
+  // Geplante Gebühren des Trades; bei Altbestand ohne Wert die Vorgabe. Auf
+  // Papier kostet nichts — dieselbe Regel wie in `tradeFees`, sonst würde ein
+  // Alt-Demo-Trade ohne Gebührenwert hier die Standardgebühr erfinden.
+  const fees = paper
+    ? { entry: 0, exit: 0 }
+    : { entry: t.feeEntry ?? DEFAULT_ORDER_FEE, exit: t.feeExit ?? DEFAULT_ORDER_FEE }
 
   const tp =
     !closed && t.takeProfit != null
@@ -416,21 +425,31 @@ function MoneyPanel({ t, currency = 'EUR' }: { t: TradeRow; currency?: string })
     : null
 
   return (
-    <div className="mt-3 rounded-lg border border-primary/20 bg-primary/5 p-3">
-      <p className="mb-2 font-mono text-[9px] font-bold uppercase tracking-widest text-primary/70">
-        Kapital & Gebühren
+    <div
+      className={`mt-3 rounded-lg border p-3 ${
+        paper ? 'border-border bg-muted/30' : 'border-primary/20 bg-primary/5'
+      }`}
+    >
+      <p
+        className={`mb-2 font-mono text-[9px] font-bold uppercase tracking-widest ${
+          paper ? 'text-muted-foreground' : 'text-primary/70'
+        }`}
+      >
+        {paper ? 'Papier-Kapital · Übungsgeld' : 'Kapital & Gebühren'}
       </p>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 font-mono text-xs sm:grid-cols-3">
-        <MRow label="Kapitaleinsatz" value={eur(invested)} />
+        <MRow label={paper ? 'Papier-Einsatz' : 'Kapitaleinsatz'} value={eur(invested)} />
         {leverage > 1 && <MRow label="Hebel" value={`${num(leverage)}×`} />}
         {leverage > 1 && <MRow label="Positionswert" value={eur(invested * leverage)} />}
         {shares != null && <MRow label="Stückzahl" value={num(shares)} />}
-        <MRow label="Ordergebühr" value={`${eur(fees.entry + fees.exit)} (Kauf + Verkauf)`} />
+        {!paper && (
+          <MRow label="Ordergebühr" value={`${eur(fees.entry + fees.exit)} (Kauf + Verkauf)`} />
+        )}
 
         {closed ? (
           realizedNet != null ? (
             <MRow
-              label="Netto-Ergebnis"
+              label={paper ? 'Ergebnis (Papier)' : 'Netto-Ergebnis'}
               value={eur(realizedNet)}
               tone={realizedNet >= 0 ? 'pos' : 'neg'}
               strong
@@ -443,14 +462,19 @@ function MoneyPanel({ t, currency = 'EUR' }: { t: TradeRow; currency?: string })
           <>
             {tp && (
               <MRow
-                label={`Netto-Gewinn (TP · ${num(t.takeProfitPct ?? 100)} %)`}
+                label={`${paper ? 'Gewinn' : 'Netto-Gewinn'} (TP · ${num(t.takeProfitPct ?? 100)} %)`}
                 value={eur(tp.netProfit)}
                 tone={tp.netProfit >= 0 ? 'pos' : 'neg'}
                 strong
               />
             )}
             {sl && (
-              <MRow label="Netto-Verlust (SL)" value={eur(sl.netLoss)} tone="neg" strong />
+              <MRow
+                label={paper ? 'Verlust (SL)' : 'Netto-Verlust (SL)'}
+                value={eur(sl.netLoss)}
+                tone="neg"
+                strong
+              />
             )}
           </>
         )}

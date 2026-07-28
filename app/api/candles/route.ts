@@ -1,6 +1,7 @@
 import { auth } from '@/lib/auth'
 import { Interval, Market, MarketDataError } from '@/lib/market-data'
 import { getCachedCandles } from '@/lib/market-data/cached'
+import { lookupProviderSymbol } from '@/lib/market-data/lookup'
 import { headers } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 
@@ -37,8 +38,18 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const candles = await getCachedCandles(symbol, market, interval)
-    return NextResponse.json({ symbol, market, interval, candles })
+    // Der Aufrufer schickt den Ticker, wie er in der Watchlist steht (`CL1!`).
+    // Beim Anbieter heißt derselbe Wert anders (`CL=F`) — die Übersetzung
+    // passiert zentral in `lookupProviderSymbol`, nie hier von Hand.
+    const resolved = await lookupProviderSymbol(session.user.id, symbol)
+    const candles = await getCachedCandles(resolved.symbol, market, interval)
+    return NextResponse.json({
+      symbol,
+      providerSymbol: resolved.symbol,
+      market,
+      interval,
+      candles,
+    })
   } catch (err) {
     if (err instanceof MarketDataError) {
       const status =

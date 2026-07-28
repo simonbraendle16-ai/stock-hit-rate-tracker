@@ -11,22 +11,30 @@ import { StatCards } from '@/components/stat-cards'
 import { DistributionChart } from '@/components/distribution-chart'
 import { DistributionBarChart } from '@/components/distribution-bar-chart'
 import { HitRateTimeline } from '@/components/hitrate-timeline'
-import { StockRanking } from '@/components/stock-ranking'
+import { InstrumentCardGrid } from '@/components/instrument-card-grid'
+import { SectionLabel } from '@/components/section-label'
+import { QuoteAutoRefresh } from '@/components/quote-auto-refresh'
 import { AddStockDialog } from '@/components/add-stock-dialog'
+import { getInstrumentCards } from '@/app/actions/instruments'
+import { getSettings } from '@/app/actions/settings'
 
 export default async function AnalysisPage() {
   const session = await auth.api.getSession({ headers: await headers() })
   if (!session?.user) redirect('/sign-in')
 
-  const [stats, stocks, timeline] = await Promise.all([
+  const [stats, stocks, timeline, instruments, settings] = await Promise.all([
     getOverallStats(),
     getStocksWithStats(),
     getHitRateTimeline(),
+    getInstrumentCards(),
+    getSettings(),
   ])
 
   return (
     <div className="min-h-svh">
       <CockpitHeader userLabel={session.user.name || session.user.email} />
+      {/* Hält die Kurse in den Instrumentenkarten frisch, solange die Seite offen ist. */}
+      <QuoteAutoRefresh />
       <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
         <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
           <div>
@@ -51,8 +59,17 @@ export default async function AnalysisPage() {
           <DistributionBarChart correct={stats.correct} wrong={stats.wrong} />
         </div>
 
-        <div className="mt-6">
-          <StockRanking stocks={stocks} />
+        {/* Die frühere Rangliste stand nur für Prognosen. Die Instrumentenkarte
+            zeigt daneben die Trades — sonst bliebe die eigentliche Frage
+            unbeantwortet: Liegt es an der Analyse oder an der Umsetzung? */}
+        <div className="mt-8">
+          <SectionLabel>Instrumente · Prognose und Umsetzung</SectionLabel>
+          <InstrumentCardGrid
+            cards={instruments.cards}
+            quotes={instruments.quotes}
+            currency={settings.currency}
+            stocks={stocks}
+          />
         </div>
       </main>
     </div>

@@ -5,6 +5,10 @@ import Link from 'next/link'
 import { getStockDetail } from '@/app/actions/stocks'
 import { getInstrumentTrades } from '@/app/actions/trades'
 import { getDrawings } from '@/app/actions/drawings'
+import { getInstrumentCard } from '@/app/actions/instruments'
+import { getSettings } from '@/app/actions/settings'
+import { InstrumentCard } from '@/components/instrument-card'
+import { QuoteAutoRefresh } from '@/components/quote-auto-refresh'
 import { CockpitHeader } from '@/components/cockpit-header'
 import { DistributionChart } from '@/components/distribution-chart'
 import { HitRateTimeline } from '@/components/hitrate-timeline'
@@ -29,10 +33,12 @@ export default async function StockDetailPage({
   const stockId = Number(id)
   if (!Number.isInteger(stockId)) notFound()
 
-  const [detail, trades, drawings] = await Promise.all([
+  const [detail, trades, drawings, instrument, settings] = await Promise.all([
     getStockDetail(stockId),
     getInstrumentTrades(stockId),
     getDrawings(stockId),
+    getInstrumentCard(stockId),
+    getSettings(),
   ])
   if (!detail) notFound()
 
@@ -71,6 +77,8 @@ export default async function StockDetailPage({
   return (
     <div className="min-h-svh">
       <CockpitHeader userLabel={session.user.name || session.user.email} />
+      {/* Hält den Kurs im Kopf der Seite frisch, solange sie offen ist. */}
+      <QuoteAutoRefresh />
 
       <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
         <Link
@@ -92,7 +100,7 @@ export default async function StockDetailPage({
             </div>
             <p className="mt-1 font-mono text-xs text-muted-foreground">
               {hasData
-                ? `${detail.hitRate.toFixed(0)}% Trefferquote über ${detail.total} Prognose${detail.total === 1 ? '' : 'n'}${detail.notReached > 0 ? ` · ${detail.notReached} nicht angelaufen` : ''} · ${trades.length} echte Trade${trades.length === 1 ? '' : 's'}.`
+                ? 'Prognosen und Trades zu diesem Instrument — die Zahlen stehen in der Karte darunter.'
                 : `Noch keine Prognosen${detail.notReached > 0 ? ` · ${detail.notReached} nicht angelaufen` : ''} · ${trades.length} echte Trade${trades.length === 1 ? '' : 's'}.`}
             </p>
           </div>
@@ -103,6 +111,19 @@ export default async function StockDetailPage({
             chartUrl={detail.chartUrl}
           />
         </div>
+
+        {/* Der Kopf: beide Welten dieses Instruments in einer Karte, bevor der
+            Chart kommt. Fehlt sie (Instrument ohne jede Aktivität), fällt die
+            Seite auf ihren bisherigen Aufbau zurück. */}
+        {instrument.card && (
+          <div className="mb-6">
+            <InstrumentCard
+              stats={instrument.card}
+              quote={instrument.quote ?? undefined}
+              currency={settings.currency}
+            />
+          </div>
+        )}
 
         <div className="mb-6">
           <ChartModeTabs

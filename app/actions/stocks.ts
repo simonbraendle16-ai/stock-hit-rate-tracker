@@ -15,22 +15,22 @@ async function getUserId() {
 
 type StockRow = typeof stock.$inferSelect
 
-/** Postgres „undefined column“ (42703) — Migration 0009 noch nicht angewendet. */
+/** Postgres „undefined column“ (42703) — Migration 0009 oder 0019 fehlt noch. */
 function isMissingColumn(err: unknown): boolean {
   if (typeof err !== 'object' || err === null) return false
   const e = err as { code?: string; cause?: { code?: string }; message?: string }
   return (
     e.code === '42703' ||
     e.cause?.code === '42703' ||
-    /watchlistSection|sortOrder/.test(e.message ?? '')
+    /watchlistSection|sortOrder|providerSymbol|resolution/.test(e.message ?? '')
   )
 }
 
 /**
- * `stock`-Zeilen laden, tolerant gegenüber fehlender Migration 0009
- * (`drizzle/0009_watchlist_sections.sql`): Fehlen die Sektions-Spalten in der DB,
- * wird ohne sie geladen und mit Defaults aufgefüllt — die Watchlist läuft dann
- * ohne Sektionen, statt zu crashen.
+ * `stock`-Zeilen laden, tolerant gegenüber fehlenden Migrationen: Fehlen die
+ * Sektions-Spalten (0009) oder die Auflösungs-Spalten (0019) in der DB, wird
+ * ohne sie geladen und mit Defaults aufgefüllt — die Watchlist läuft dann ohne
+ * Sektionen bzw. ohne Kursauflösung, statt zu crashen.
  */
 async function selectStocksTolerant(where: SQL | undefined): Promise<StockRow[]> {
   try {
@@ -49,7 +49,23 @@ async function selectStocksTolerant(where: SQL | undefined): Promise<StockRow[]>
       })
       .from(stock)
       .where(where)
-    return rows.map((r) => ({ ...r, watchlistSection: null, sortOrder: 0 }))
+    return rows.map((r) => ({
+      ...r,
+      watchlistSection: null,
+      sortOrder: 0,
+      providerSymbol: null,
+      provider: null,
+      resolutionStatus: null,
+      resolutionConfidence: null,
+      resolvedName: null,
+      resolvedExchange: null,
+      resolvedCurrency: null,
+      resolutionNote: null,
+      resolutionCandidates: null,
+      resolutionPinned: false,
+      resolutionApproximate: false,
+      resolvedAt: null,
+    }))
   }
 }
 
@@ -85,6 +101,15 @@ export type StockWithStats = {
   notReached: number // Zone nicht angelaufen (neutral)
   total: number // entscheidungsrelevant = correct + wrong
   hitRate: number // 0-100
+  // Etappe 9 „Symbolauflösung": Damit die Watchlist einen fehlenden Kurs
+  // ERKLÄREN kann statt ihn nur wegzulassen.
+  providerSymbol: string | null
+  resolutionStatus: string | null
+  resolutionNote: string | null
+  resolutionApproximate: boolean
+  resolutionPinned: boolean
+  /** Geprüfte Alternativen für den Reparatur-Dialog (JSON aus der DB). */
+  resolutionCandidates: string | null
 }
 
 export type OverallStats = {
@@ -140,6 +165,12 @@ export async function getStocksWithStats(): Promise<StockWithStats[]> {
       notReached: counts.notReached,
       total,
       hitRate,
+      providerSymbol: s.providerSymbol,
+      resolutionStatus: s.resolutionStatus,
+      resolutionNote: s.resolutionNote,
+      resolutionApproximate: !!s.resolutionApproximate,
+      resolutionPinned: !!s.resolutionPinned,
+      resolutionCandidates: s.resolutionCandidates,
     }
   })
 
@@ -269,7 +300,26 @@ export async function addStock(formData: {
     .where(and(eq(trade.userId, userId), eq(trade.ticker, ticker), isNull(trade.stockId)))
     .returning({ id: trade.id })
 
+  // Symbol sofort auflösen und den ersten Kurs holen.
+  //
+  // Bewusst hier und nicht erst im nächsten Hintergrundlauf: Ein frisch
+  // angelegtes Instrument, das eine Viertelstunde lang ohne Kurs dasteht, ist
+  // genau der Zustand, den diese Etappe beseitigen soll. Und wenn der Ticker
+  // nicht auflösbar ist, erfährt man es in dem Moment, in dem man ihn eintippt —
+  // nicht Tage später beim Draufschauen.
+  //
+  // Fehlschläge sind absichtlich folgenlos: Das Instrument ist angelegt, die
+  // Auflösung holt der Hintergrundlauf nach. Ein hängender Anbieter darf das
+  // Anlegen nicht verhindern.
+  try {
+    const { runSymbolSync } = await import('@/lib/market-data/sync')
+    await runSymbolSync({ trigger: 'manual', onlyStockIds: [row.id], forceResolve: true })
+  } catch {
+    /* siehe oben — der Hintergrundlauf holt es nach */
+  }
+
   revalidatePath('/')
+  revalidatePath('/watchlist')
   if (linked.length) {
     revalidatePath('/trades')
     revalidatePath(`/stock/${row.id}`)

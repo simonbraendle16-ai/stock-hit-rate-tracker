@@ -14,6 +14,7 @@ import {
   moodScoreLabel,
   type MoodCheckInput,
 } from '@/lib/emotions'
+import type { Market } from '@/lib/market-data/types'
 import { computeRiskReward, computeShares } from '@/lib/trade-math'
 import {
   computeDisciplineStats,
@@ -197,12 +198,38 @@ export async function createTrade(input: TradeInput): Promise<{ id: number }> {
   }
 
   // Optional link to an instrument in the watchlist (shared hit-rate key).
+  //
+  // Zuerst wie bisher über exakte Tickergleichheit — der Normalfall, ohne
+  // Netzzugriff. Findet das nichts, greift die Zuordnung über das aufgelöste
+  // Anbieter-Symbol (`lib/link-trades.ts`): So landet ein als `BTC` erfasster
+  // Trade auch dann am Instrument `BTCUSD`, wenn die Kürzel abweichen. Ohne das
+  // bliebe der Trade ohne `stockId` — und damit ohne Chart, ohne Kerzen, ohne
+  // Bot-Zwilling und unsichtbar in jeder Instrumentensicht.
   let stockId: number | null = null
   const [existing] = await db
     .select({ id: stock.id })
     .from(stock)
     .where(and(eq(stock.userId, userId), eq(stock.ticker, ticker)))
-  if (existing) stockId = existing.id
+  if (existing) {
+    stockId = existing.id
+  } else {
+    try {
+      const { findInstrumentFor } = await import('@/lib/link-trades')
+      const instruments = await db
+        .select({ id: stock.id, ticker: stock.ticker, providerSymbol: stock.providerSymbol })
+        .from(stock)
+        .where(eq(stock.userId, userId))
+      const found = await findInstrumentFor(
+        ticker,
+        (input.market ?? 'aktien') as Market,
+        instruments,
+      )
+      stockId = found.stockId
+    } catch {
+      // Auflösung nicht möglich (Anbieter weg) → Trade wird trotzdem angelegt.
+      // Der Hintergrundlauf holt die Verknüpfung nach.
+    }
+  }
 
   // Erfassungsweg zuerst: er entscheidet, ob das Gate überhaupt gilt.
   const tradeKind = normalizeTradeKind(input.tradeKind)
@@ -226,12 +253,19 @@ export async function createTrade(input: TradeInput): Promise<{ id: number }> {
     input.takeProfit ?? null,
   )
 
-  // Bei Echtgeld: Stückzahl aus Kapitaleinsatz und Hebel ableiten (Basis der
-  // P&L-Rechnung). Der Hebel steckt danach in positionSize und wirkt dadurch
-  // automatisch in Risiko, Guard und Statistik mit.
+  // Stückzahl aus Einsatz und Hebel ableiten (Basis der P&L-Rechnung). Der Hebel
+  // steckt danach in positionSize und wirkt dadurch automatisch in Risiko, Guard
+  // und Statistik mit.
+  //
+  // Der Einsatz wird AUCH bei Demo gespeichert: Wer auf Papier mit Hebel übt,
+  // übt nur dann etwas Übertragbares, wenn Positionsgröße und Hebel dieselben
+  // sind wie später mit echtem Geld. Es bleibt Übungsgeld — jede Geldkennzahl
+  // (Bilanz, Equity, Drawdown, Risiko-Guard) filtert weiterhin auf
+  // `tradedWithMoney`, und Gebühren fallen auf Papier keine an. Das
+  // R-Vielfache ist von der Stückzahl unabhängig (Gewinn und Risiko skalieren
+  // gleich), Disziplin- und Erwartungswert-Kennzahlen ändern sich dadurch nicht.
   const withMoney = input.tradedWithMoney ?? true
-  const investedAmount =
-    withMoney && input.investedAmount != null ? input.investedAmount : null
+  const investedAmount = input.investedAmount ?? null
   const leverage = normalizeLeverage(input.leverage)
   const positionSize =
     investedAmount != null

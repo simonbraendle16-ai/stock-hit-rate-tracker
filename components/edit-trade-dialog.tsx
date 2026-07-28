@@ -50,6 +50,7 @@ export function EditTradeDialog({
   const [investedAmount, setInvestedAmount] = useState(
     trade.investedAmount != null ? String(trade.investedAmount) : '',
   )
+  const [leverage, setLeverage] = useState(String(trade.leverage ?? 1))
   const [takeProfitPct, setTakeProfitPct] = useState(String(trade.takeProfitPct ?? 100))
   const [elliottInvalidation, setElliottInvalidation] = useState(
     trade.elliottInvalidation != null ? String(trade.elliottInvalidation) : '',
@@ -85,6 +86,7 @@ export function EditTradeDialog({
           stopLoss: numOrNull(stopLoss) ?? undefined,
           takeProfit: takeProfit === '' ? null : numOrNull(takeProfit),
           investedAmount: investedAmount === '' ? null : numOrNull(investedAmount),
+          leverage: numOrNull(leverage) ?? undefined,
           takeProfitPct: numOrNull(takeProfitPct) ?? undefined,
           elliottInvalidation:
             elliottInvalidation === '' ? null : numOrNull(elliottInvalidation),
@@ -134,17 +136,27 @@ export function EditTradeDialog({
             <Input type="number" step="any" value={takeProfit}
               onChange={(e) => setTakeProfit(e.target.value)} className="input-ocean font-mono" />
           </Field>
+          {/* Einsatz und Hebel gibt es auch auf Papier — sonst ließe sich ein
+              gehebelter Demo-Trade anlegen, aber nicht mehr korrigieren. */}
+          <Field
+            label={
+              trade.tradedWithMoney
+                ? `Kapitaleinsatz (${currencySymbol(currency)})`
+                : `Papier-Einsatz (${currencySymbol(currency)})`
+            }
+          >
+            <Input type="number" step="any" value={investedAmount}
+              onChange={(e) => setInvestedAmount(e.target.value)} className="input-ocean font-mono" />
+          </Field>
+          <Field label="Hebel">
+            <Input type="number" step="any" min="1" value={leverage}
+              onChange={(e) => setLeverage(e.target.value)} className="input-ocean font-mono" />
+          </Field>
           {trade.tradedWithMoney && (
-            <>
-              <Field label={`Kapitaleinsatz (${currencySymbol(currency)})`}>
-                <Input type="number" step="any" value={investedAmount}
-                  onChange={(e) => setInvestedAmount(e.target.value)} className="input-ocean font-mono" />
-              </Field>
-              <Field label="Verkaufsanteil TP (%)">
-                <Input type="number" step="any" value={takeProfitPct}
-                  onChange={(e) => setTakeProfitPct(e.target.value)} className="input-ocean font-mono" />
-              </Field>
-            </>
+            <Field label="Verkaufsanteil TP (%)">
+              <Input type="number" step="any" value={takeProfitPct}
+                onChange={(e) => setTakeProfitPct(e.target.value)} className="input-ocean font-mono" />
+            </Field>
           )}
           <Field label="Invalidation">
             <Input type="number" step="any" value={elliottInvalidation}

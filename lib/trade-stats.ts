@@ -527,7 +527,7 @@ export type BucketCore = {
  * `computeDisciplineStats`: Trefferquote über entschiedene Trades,
  * Erwartungswert nur über die mit berechenbarem P&L.
  */
-function baseBucket(
+export function baseBucket(
   rows: TradeRow[],
   minGroupSize: number,
   eventsByTrade?: TradeEventsByTrade,

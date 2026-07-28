@@ -1,5 +1,6 @@
 import { auth } from '@/lib/auth'
 import { Market, MarketDataError } from '@/lib/market-data'
+import { lookupProviderSymbol } from '@/lib/market-data/lookup'
 import { getCachedQuote } from '@/lib/market-data/quote'
 import { headers } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
@@ -37,8 +38,10 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const quote = await getCachedQuote(symbol, market)
-    return NextResponse.json({ symbol, market, ...quote })
+    // Ticker der Watchlist → Anbieter-Symbol, zentral (siehe `lookup.ts`).
+    const resolved = await lookupProviderSymbol(session.user.id, symbol)
+    const quote = await getCachedQuote(resolved.symbol, market)
+    return NextResponse.json({ symbol, providerSymbol: resolved.symbol, market, ...quote })
   } catch (err) {
     if (err instanceof MarketDataError) {
       const status =

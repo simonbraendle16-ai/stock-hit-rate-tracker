@@ -46,3 +46,35 @@ export class MarketDataError extends Error {
 export interface MarketDataProvider {
   getCandles(symbol: string, interval: Interval): Promise<Candle[]>
 }
+
+/**
+ * Eine Watchlist-Zeile mit Auflösungszustand und letztem bekannten Kurs.
+ *
+ * Liegt hier und nicht bei der Serveraktion, die sie liefert: Eine Datei mit
+ * `'use server'` darf ausschließlich async Funktionen exportieren — jeder andere
+ * Export, auch ein reiner Typ, lässt den Build mit „A 'use server' file can only
+ * export async functions" scheitern.
+ */
+export interface WatchlistQuote {
+  stockId: number
+  /** ok | ambiguous | unresolved | null (noch nie versucht) */
+  status: string | null
+  /** Das Anbieter-Symbol, das tatsächlich abgefragt wird. */
+  providerSymbol: string | null
+  resolvedName: string | null
+  resolvedExchange: string | null
+  resolutionNote: string | null
+  /** Näherung statt Entsprechung (z. B. Gold-Future statt Spot). */
+  approximate: boolean
+  /** Von Hand festgelegt — die Automatik fasst es nicht mehr an. */
+  pinned: boolean
+  price: number | null
+  changePct: number | null
+  currency: string | null
+  /** Unix-Sekunden des Kursstands beim Anbieter. */
+  quotedAt: number | null
+  /** Wann wir den Kurs geholt haben (ISO) — Grundlage für „Stand von …". */
+  fetchedAt: string | null
+  /** Wie oft die Aktualisierung zuletzt in Folge misslang. */
+  failCount: number
+}

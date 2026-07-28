@@ -25,7 +25,12 @@ import { SetupComparisonPanel } from '@/components/setup-comparison-panel'
 import { TimeHeatmapPanel } from '@/components/time-heatmap-panel'
 import { BotTwinPanel } from '@/components/bot-twin-panel'
 import { ExcursionPanel } from '@/components/excursion-panel'
+import { InstrumentCardGrid } from '@/components/instrument-card-grid'
+import { PrognosisGapRow } from '@/components/prognosis-gap-row'
+import { QuoteAutoRefresh } from '@/components/quote-auto-refresh'
+import { SectionLabel } from '@/components/section-label'
 import { getBotTwinStats } from '@/app/actions/bot-twin'
+import { getInstrumentCards } from '@/app/actions/instruments'
 import { getSettings } from '@/app/actions/settings'
 import { formatMoney } from '@/lib/format'
 
@@ -50,6 +55,7 @@ export default async function TrackingPage() {
     timeStats,
     botTwin,
     settings,
+    instruments,
   ] =
     await Promise.all([
       getDisciplineStats(),
@@ -65,6 +71,7 @@ export default async function TrackingPage() {
       // ab: fehlende Reihen werden als Lücke ausgewiesen, nicht geworfen.
       getBotTwinStats(),
       getSettings(),
+      getInstrumentCards(),
     ])
   const completed = trades.filter((t) => t.status === 'abgeschlossen')
 
@@ -98,6 +105,8 @@ export default async function TrackingPage() {
   return (
     <div className="min-h-svh">
       <CockpitHeader userLabel={session.user.name || session.user.email} />
+      {/* Hält die Kurse in den Instrumentenkarten frisch, solange die Seite offen ist. */}
+      <QuoteAutoRefresh />
       <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
         <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
           <div>
@@ -134,6 +143,11 @@ export default async function TrackingPage() {
 
         <div className="mt-4">
           <CockpitStats stats={stats} />
+        </div>
+
+        {/* Analyse gegen Umsetzung — die Kernfrage, über alle Instrumente. */}
+        <div className="mt-4">
+          <PrognosisGapRow overall={instruments.overall} />
         </div>
 
         {/* Equity-Kurve + Risiko-Kennzahlen */}
@@ -309,6 +323,18 @@ export default async function TrackingPage() {
               </div>
             )}
           </div>
+        </div>
+
+        {/* Dieselbe Frage je Instrument. Hier ohne Bedienelemente: Auf der
+            Auswertungsseite wird gelesen, nicht erfasst. */}
+        <div className="mt-8">
+          <SectionLabel>Je Instrument · Prognose und Umsetzung</SectionLabel>
+          <InstrumentCardGrid
+            cards={instruments.cards}
+            quotes={instruments.quotes}
+            currency={settings.currency}
+            emptyHint="Sobald Prognosen oder Trades zu einem Instrument vorliegen, steht es hier."
+          />
         </div>
       </main>
     </div>

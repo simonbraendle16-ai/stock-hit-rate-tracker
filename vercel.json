@@ -1,0 +1,12 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/sync-symbols",
+      "schedule": "*/15 6-23 * * 1-5"
+    },
+    {
+      "path": "/api/cron/sync-symbols",
+      "schedule": "0 */4 * * 0,6"
+    }
+  ]
+}

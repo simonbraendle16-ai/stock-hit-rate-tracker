@@ -154,6 +154,89 @@ Candlesticks) · pnpm via corepack.
   `preTradeAnswered` wird dabei **nicht** auf `true` gesetzt — die Daten sollen nicht
   behaupten, die Fragen seien beantwortet worden. Ein schneller Trade trägt sichtbar das
   Abzeichen `SCHNELL`, damit ihm anzusehen ist, dass kein Gate lief.
+- **Symbolauflösung & Kurs-Sync** (Etappe 9) = der eingetippte Ticker ist **nicht** das
+  Anbieter-Symbol. `stock.ticker` bleibt die Absicht des Nutzers und die Verknüpfung zu den
+  Trades; daneben steht `providerSymbol` — das Symbol, das beim Anbieter nachweislich
+  existiert (`CL1!` → `CL=F`, `ADS` → `ADS.DE`, `DAX` → `^GDAXI`, `BTCUSD` → `BTC-USD`).
+  Migration `0019`. **Nie den Rohticker an einen Anbieter geben** — die Übersetzung läuft
+  ausschließlich über `lookupProviderSymbol` (`lib/market-data/lookup.ts`).
+  **Primärquelle ist Yahoo** (`lib/market-data/yahoo.ts`, kostenlos, ohne Key, Cookie+Crumb
+  holt der Code selbst); Twelve Data und Binance sind nur noch Rückfallebene über
+  `providerChain`. Grund: Twelve Datas Gratis-Tier erlaubt 8 Anfragen/Minute und kennt weder
+  Terminkontrakte noch Indizes noch XETRA/Euronext/HKEX — bei ~90 Instrumenten strukturell
+  nicht bedienbar. Yahoo liefert alles **gebündelt** (ein Request statt 90).
+  **Auflösung** in `lib/market-data/resolve.ts` (rein bis auf die Abrufe, getestet): Kandidaten
+  aus festen Übersetzungen (`symbol-aliases.ts`), Normalisierungsregeln und Suche über Ticker
+  UND Name → **alle** Kandidaten in EINEM Batch gegen echte Kurse prüfen → bewerten →
+  entscheiden. Zwei Fragen bleiben strikt getrennt: **welches Papier** (Punktzahl, `isConfident`,
+  `AMBIGUITY_MARGIN`) und **welche Börse** (`compareVenues`: deterministischer Alias →
+  Karteileiche aussortieren → Tickerwurzel → **Heimatwährung** `currency === financialCurrency`
+  → Volumen). Identität zweier Notierungen über `sameInstrument` = Instrumenten**klasse** +
+  Tickerwurzel + **Bilanzwährung**, nicht über den Namen (dieselbe Aktie heißt an XETRA
+  „Bayerische Motoren Werke AG" und in Zürich „BMW AG"). Status `ok` heißt: für dieses Symbol
+  wurde soeben ein Kurs abgerufen — nie „sieht plausibel aus". Unsicheres wird `ambiguous` und
+  landet sichtbar in der Watchlist, nie still falsch verknüpft. Handauswahl setzt
+  `resolutionPinned`; danach fasst die Automatik das Instrument nicht mehr an.
+  **Kurse kommen aus `quote_snapshot`**, nie direkt vom Anbieter — Schlüssel ist das
+  Anbieter-Symbol, nicht das Instrument (dasselbe Papier in zwei Watchlists = eine Abfrage).
+  `/api/sparklines` liest nur noch aus der DB. Ein Anbieterausfall zeigt den letzten bekannten
+  Kurs mit Zeitstempel statt eines leeren Felds. **Synchronisierung** `runSymbolSync`
+  (`lib/market-data/sync.ts`): Vercel-Cron `/api/cron/sync-symbols` (Header
+  `Authorization: Bearer $CRON_SECRET`), Selbstheilung beim Seitenaufruf über `refreshIfStale`
+  (nötig, weil Vercel-Hobby Cron nur 1×/Tag zulässt), Knopf „Kurse aktualisieren", und
+  `addStock` löst sofort beim Anlegen auf. Jeder Lauf protokolliert in `symbol_sync_run`.
+  Kommandozeile: `node node_modules/.pnpm/tsx@*/node_modules/tsx/dist/cli.mjs
+  scripts/sync-symbols.ts [--dry] [--why] [--force] [--max N] [--ids a,b]`.
+  **Näherungen werden ausgewiesen:** Yahoo führt keinen Edelmetall-Spot (`XAUUSD=X` existiert
+  nicht) — `XAUUSD` löst auf `GC=F` auf und trägt `resolutionApproximate`, die Watchlist zeigt
+  „Näherung".
+- **Instrumentenkarte** (Etappe 10) = Prognosen UND Trades desselben Wertes an einer Stelle.
+  Die beiden Welten lagen bis dahin auf getrennten Seiten (`/analysis` kannte nur Prognosen,
+  `/tracking` nur Trades ohne Instrumentbezug) — damit war die Kernfrage nirgends zu
+  beantworten: **Liegt es an der Analyse oder an der Umsetzung?** Genau diese Differenz ist
+  die `gap` (Prognosequote − Trade-Trefferquote); positiv = die Analyse trifft besser als die
+  Umsetzung, das Problem sitzt im Verhalten. Ein Baustein
+  (`components/instrument-card.tsx`) an **vier** Orten: Analyse (ersetzt die frühere
+  Rangliste, mit deren Bedienelementen als `footer`), Auswertung, Instrument-Detail (als
+  Kopf), Watchlist (Zeile aufklappbar). Ein Ladeweg für alle vier
+  (`getInstrumentCards`) — vier eigene Abfragen wären vier Gelegenheiten, dieselbe Kennzahl
+  verschieden zu rechnen.
+  **Echtgeld und Demo stehen immer getrennt** — eine schöne Quote aus Papertrades ist genau
+  die Selbsttäuschung, gegen die die App gebaut ist; bei Demo bewusst **kein** Geldbetrag,
+  der wäre erfunden. Die Trefferquote steht immer da, unter `MIN_INSTRUMENT_TRADES` (= 5)
+  aber mit ihrer Grundlage darunter: „100 %" aus einem Trade darf nicht aussehen wie aus
+  dreißig. Gerechnet wird über `baseBucket`/`tradeNetPnl` aus `lib/trade-stats.ts` statt neu —
+  nur so bleibt es event-aware (Teilverkäufe zählen korrekt). Je Instrument ist die
+  Trade-Seite heute noch dünn; die belastbare Zahl steht deshalb zusätzlich als
+  **Aggregat über alle Instrumente** auf `/tracking` (`overallGap`,
+  `components/prognosis-gap-row.tsx`).
+- **Trade ↔ Instrument verknüpfen** (`lib/instrument-link.ts`, rein und getestet): zuerst
+  exakte Tickergleichheit, sonst über das **aufgelöste Anbieter-Symbol** aus Etappe 9 — so
+  findet ein als `BTC` erfasster Trade das Instrument `BTCUSD` (beide → `BTC-USD`). Verknüpft
+  wird **nur bei eindeutigem Treffer**, nie geraten. Eingehängt an drei Stellen: `createTrade`,
+  Auffangnetz im Hintergrundlauf (`lib/market-data/sync.ts`) und rückwirkend über
+  `scripts/link-trades.ts --dry`. Trades ohne Instrument sind erlaubt und fallen aus der Karte
+  heraus, statt irgendwo falsch zu landen.
+- **Hebel gilt auch auf Papier** (Etappe 11). Einsatz und Hebel stehen in BEIDEN Handelsarten
+  im Formular — bei Demo als „Papier-Einsatz". Grund: Wer einen gehebelten Echtgeld-Trade übt,
+  übt nur dann etwas Übertragbares, wenn Positionswert und Stückzahl dieselben sind. Deshalb
+  speichert `createTrade` `investedAmount` und die daraus abgeleitete `positionSize` jetzt auch
+  für Demo-Trades. **Übungsgeld bleibt Übungsgeld:** Gebühren fallen auf Papier keine an
+  (`tradeFees`), und jede Geldkennzahl — Bilanz, Equity, Drawdown, Risiko-Guard — filtert
+  unverändert auf `tradedWithMoney`. Das R-Vielfache ist von der Stückzahl unabhängig (Gewinn
+  und Risiko skalieren gleich), Disziplin- und Erwartungswert-Kennzahlen ändern sich dadurch
+  also nicht. Der Einsatz ist optional: Ohne Angabe verhält sich ein Demo-Trade wie bisher.
+- **Kursfrische** (Etappe 11): Kurse kommen aus `quote_snapshot`, gefüllt vom Cron-Lauf — der
+  auf Vercel-Hobby aber nur **einmal täglich** darf. Damit trotzdem nichts veraltet, fragt die
+  offene Seite im Minutentakt nach und der Server holt nach, sobald der Speicher älter als
+  `QUOTE_STALE_MS` (2 Minuten) ist: `refreshQuotesIfStale` in `lib/market-data/sync.ts`,
+  aufgerufen von `/api/sparklines` (Watchlist) und der Serveraktion `refreshQuotes` über
+  `components/quote-auto-refresh.tsx` (Analyse, Auswertung, Instrument-Detail).
+  **Takt ≠ Anbieteranfrage:** Eine Minute Takt heißt „höchstens so alt darf das Angezeigte
+  werden", geholt wird höchstens alle zwei Minuten — und dann alle Symbole in EINER
+  Yahoo-Anfrage. Eine Klammer (`inFlightRefresh`) verhindert parallele Läufe.
+  Im Hintergrundtab pausiert der Takt (`visibilitychange`); der **erste** Abruf läuft immer,
+  sonst stünde eine im Hintergrund geöffnete Seite dauerhaft auf „…".
 - Guards: **Pre-Trade-Gate** (alle 9 = "ja" nötig zum Aktivieren; **entfällt beim schnellen
   Trade**) · **Plan-Lock**
   (Stop/Invalidation verschieben = Regelbruch; **Ausnahme ab Etappe 6:** nach einem Teilverkauf
@@ -225,7 +308,17 @@ Candlesticks) · pnpm via corepack.
   rein visuell: `components/form-frame.tsx` + `components/chart/colors.ts` als neue gemeinsame
   Quellen, Chart-Cockpit von der alten Navy-Palette auf Indigo-Nacht).
   · Etappe 8 „Schneller Trade" (Migration `0018`, Spalte `tradeKind`; zweiter Erfassungsweg
-  ohne Fragen-Gate, `lib/trade-kind.ts`).
+  ohne Fragen-Gate, `lib/trade-kind.ts`)
+  · Etappe 9 „Symbolauflösung und Kurs-Synchronisierung" (Migration `0019`, Auflösungsspalten
+  am `stock` + Tabellen `quote_snapshot` und `symbol_sync_run`; Yahoo als Primärquelle,
+  `lib/market-data/{yahoo,resolve,symbol-aliases,sync,lookup}.ts`, Cron-Route, Reparatur-Dialog
+  in der Watchlist. **Mit Backfill:** alle 93 Instrumente wurden aufgelöst und tragen Kurse)
+  · Etappe 10 „Instrumentenkarte" (Migration `0020`, nur Indizes; `lib/instrument-link.ts`,
+  `lib/instrument-stats.ts`, `lib/link-trades.ts`, `components/instrument-card.tsx` +
+  `-grid.tsx`, `components/prognosis-gap-row.tsx`, `app/actions/instruments.ts`. Die frühere
+  Prognose-Rangliste `components/stock-ranking.tsx` ist damit entfallen)
+  · Etappe 11 „Hebel auf Papier und Kursfrische" (keine Migration; Einsatz/Hebel auch für
+  Demo-Trades, `components/quote-auto-refresh.tsx` + `refreshQuotesIfStale`).
   **Die Roadmap ist damit vollständig** — offen ist nur noch der Ideenvorrat in
   `IDEEN-BACKLOG.md`.
 
@@ -262,3 +355,16 @@ Ergebnissen von codegraph vertrauen, keine Grep-Verifikation hinterherschieben.
   starten. Ein zweiter Start bricht mit „Another next dev server is already running" ab.
 - **ESLint ist nicht installiert**, `pnpm lint` schlägt daher fehl. `pnpm test` (Vitest) und
   `pnpm exec tsc --noEmit` sind die tatsächlichen Prüfungen.
+- **`CRON_SECRET` muss gesetzt sein** (`.env.local` **und** Vercel-Projekt-Einstellungen), sonst
+  antwortet `/api/cron/sync-symbols` mit 500 und die Kurse veralten. Ein fehlendes Geheimnis
+  fällt sonst nirgends auf — die Watchlist zeigt weiter den letzten bekannten Stand.
+- **Vercel-Hobby lässt Cron nur einmal täglich laufen.** `vercel.json` enthält den engeren
+  Zeitplan für Pro; auf Hobby trägt `refreshQuotesIfStale` (Selbstheilung, solange eine Seite
+  offen ist) die Aktualität. Nicht „reparieren", indem der Zeitplan entfernt wird.
+- **Wer `QUOTE_STALE_MS` senkt, senkt nicht den Takt, sondern die Untergrenze.** Der Takt
+  steht in `POLL_MS` (Watchlist-Grid und `quote-auto-refresh.tsx`). Beide zusammen bestimmen,
+  wie oft Yahoo wirklich Verkehr sieht — beim Ändern immer beide anschauen.
+- **Yahoo ist inoffiziell.** Der Batch-Kursendpunkt braucht Cookie + Crumb; bei 401/403 holt
+  `yahoo.ts` beides genau einmal neu. Bricht Yahoo dauerhaft weg, greift `providerChain` auf
+  Twelve Data/Binance zurück — die können aber weder Terminkontrakte noch Indizes noch die
+  Heimatbörsen, also bleiben dort Lücken. Das ist bekannt und bewusst.
