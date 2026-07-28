@@ -365,7 +365,18 @@ function WatchlistRow({
 
     {expanded && card && (
       <div className="px-3 pb-3">
-        <InstrumentCard stats={card} quote={cardQuote} currency={currency} />
+        {/* Der Kurs kommt aus DERSELBEN Quelle wie die Zeile darüber, sobald sie
+            einen hat. Sonst stünden hier zwei Preise für dasselbe Papier drei
+            Pixel untereinander: Die Zeile frischt im Takt nach, die Karte trüge
+            den Stand vom Seitenaufbau. `cardQuote` bleibt der Rückfall, solange
+            der Live-Abruf noch läuft. */}
+        <InstrumentCard
+          stats={card}
+          quote={
+            ok ? { price: ok.last, changePct: ok.changePct, currency: ok.currency } : cardQuote
+          }
+          currency={currency}
+        />
       </div>
     )}
     </div>
