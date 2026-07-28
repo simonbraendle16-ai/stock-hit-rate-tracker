@@ -16,6 +16,7 @@ import { headers } from 'next/headers'
 import { revalidatePath } from 'next/cache'
 import { getCachedQuote } from '@/lib/market-data/quote'
 import { MarketDataError, type Market } from '@/lib/market-data'
+import { createSymbolResolver } from '@/lib/market-data/lookup'
 import {
   candleReachesLevel,
   directionForLevel,
@@ -105,7 +106,10 @@ export async function createAlert(input: CreateAlertInput): Promise<AlertView> {
     throw new Error('Bitte ein gültiges Kurslevel größer als 0 angeben.')
   }
 
-  const quote = await tryQuote(ticker, market)
+  // Ueber das verknuepfte Instrument aufloesen, nicht ueber den Ticker: Ein
+  // Alert auf `BTC` wuerde sonst gegen ein fremdes Papier geprueft.
+  const resolveSymbol = await createSymbolResolver(userId)
+  const quote = await tryQuote(resolveSymbol(ticker, input.stockId ?? null), market)
 
   let direction: AlertDirection
   if (isAlertDirection(input.direction)) {
@@ -171,7 +175,11 @@ export async function createPlanAlerts(tradeId: number): Promise<{ created: numb
     .where(and(eq(trade.id, tradeId), eq(trade.userId, userId)))
   if (!t) throw new Error('Trade nicht gefunden.')
 
-  const quote = await tryQuote(t.ticker, t.market as Market)
+  const resolvePlanSymbol = await createSymbolResolver(userId)
+  const quote = await tryQuote(
+    resolvePlanSymbol(t.ticker, t.stockId),
+    t.market as Market,
+  )
   const reference = quote?.price ?? t.entryPrice
 
   // Bereits gesetzte, noch aktive Plan-Alerts dieses Trades — nicht doppeln.
@@ -267,10 +275,14 @@ export async function checkAlerts(): Promise<AlertView[]> {
     )
   if (open.length === 0) return []
 
-  // Nach Symbol gruppieren — ein Kursabruf je (ticker, market).
+  // Nach ANBIETER-Symbol gruppieren — ein Kursabruf je (Symbol, Markt). Die
+  // Aufloesung geht ueber das verknuepfte Instrument: Ein Alert auf einen
+  // Bitcoin-Trade mit Ticker `BTC` wurde sonst gegen ein fremdes Papier
+  // geprueft und haette bei 28,10 statt 63.533 ausgeloest.
+  const resolveAlertSymbol = await createSymbolResolver(userId)
   const groups = new Map<string, AlertRow[]>()
   for (const a of open) {
-    const key = `${a.ticker}|${a.market}`
+    const key = `${resolveAlertSymbol(a.ticker, a.stockId)}|${a.market}`
     const list = groups.get(key)
     if (list) list.push(a)
     else groups.set(key, [a])
@@ -278,8 +290,8 @@ export async function checkAlerts(): Promise<AlertView[]> {
 
   const triggeredIds: number[] = []
   for (const [key, list] of groups) {
-    const [ticker, market] = key.split('|')
-    const quote = await tryQuote(ticker, market as Market)
+    const [symbol, market] = key.split('|')
+    const quote = await tryQuote(symbol, market as Market)
     if (!quote) continue // Kurs nicht abrufbar → beim nächsten Lauf erneut
     for (const a of list) {
       if (!isAlertDirection(a.direction)) continue
