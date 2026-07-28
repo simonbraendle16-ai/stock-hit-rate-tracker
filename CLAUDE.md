@@ -358,9 +358,17 @@ Ergebnissen von codegraph vertrauen, keine Grep-Verifikation hinterherschieben.
 - **`CRON_SECRET` muss gesetzt sein** (`.env.local` **und** Vercel-Projekt-Einstellungen), sonst
   antwortet `/api/cron/sync-symbols` mit 500 und die Kurse veralten. Ein fehlendes Geheimnis
   fällt sonst nirgends auf — die Watchlist zeigt weiter den letzten bekannten Stand.
-- **Vercel-Hobby lässt Cron nur einmal täglich laufen.** `vercel.json` enthält den engeren
-  Zeitplan für Pro; auf Hobby trägt `refreshQuotesIfStale` (Selbstheilung, solange eine Seite
-  offen ist) die Aktualität. Nicht „reparieren", indem der Zeitplan entfernt wird.
+- **Vercel-Hobby lässt Cron nur einmal täglich laufen — und lehnt sonst das GANZE Deployment
+  ab.** Nicht nur den Cron: Ein `vercel.json` mit `*/15 …` scheitert mit „Deployment failed"
+  (Link führt auf *Cron Jobs · Usage and Pricing*), und die Änderung geht gar nicht erst live.
+  Genau das ist am 28.07.2026 passiert und blieb zwei Tage unbemerkt, weil lokal alles baute.
+  `vercel.json` enthält deshalb **einen** täglichen Lauf (`0 6 * * *`). Wer auf Pro wechselt,
+  darf ihn enger stellen — vorher nicht. Die Aktualität zwischen den Läufen trägt ohnehin
+  `refreshQuotesIfStale` (Selbstheilung, solange eine Seite offen ist).
+- **Nach einem Push prüfen, ob Vercel wirklich gebaut hat** — ein grüner lokaler Build sagt
+  darüber nichts. Schnellster Weg ohne Vercel-Zugang:
+  `gh api repos/<owner>/<repo>/commits/<sha>/status --jq '.statuses[] | "\(.state) \(.description) \(.target_url)"'`.
+  Die `target_url` ist bei Fehlern ein `vercel.link`, das direkt auf die Ursache zeigt.
 - **Wer `QUOTE_STALE_MS` senkt, senkt nicht den Takt, sondern die Untergrenze.** Der Takt
   steht in `POLL_MS` (Watchlist-Grid und `quote-auto-refresh.tsx`). Beide zusammen bestimmen,
   wie oft Yahoo wirklich Verkehr sieht — beim Ändern immer beide anschauen.
