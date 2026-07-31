@@ -17,6 +17,13 @@ import {
 import { createTrade, type TradeInput } from '@/app/actions/trades'
 import { SetupTagsInput } from '@/components/setup-tags-input'
 import {
+  TargetStages,
+  checkTargets,
+  type TargetDraft,
+} from '@/components/target-stages'
+import { PaperBadge } from '@/components/paper-badge'
+import type { PortfolioOption } from '@/lib/portfolio-scope'
+import {
   PreTradeQuestionsDialog,
   PRE_TRADE_QUESTIONS,
   type PreTradeAnswer,
@@ -83,23 +90,42 @@ const inputCls = 'input-ocean h-11 font-mono'
 const selectCls = 'input-ocean h-11 w-full rounded-lg px-2.5 font-mono text-sm'
 
 export function TradeForm({
-  startCapital = 10000,
   maxRiskPct = 2,
   currency = 'EUR',
-  defaultFeeEntry = 9,
-  defaultFeeExit = 9,
+  // Die wählbaren Depots und das vorbelegte (Etappe 12). Startkapital und
+  // Gebühren stehen AM DEPOT — deshalb kommen sie nicht mehr als eigene Werte
+  // herein, sondern hängen an der Auswahl unten.
+  portfolios,
+  defaultPortfolioId = null,
 }: {
-  startCapital?: number
   maxRiskPct?: number
   currency?: string
-  defaultFeeEntry?: number
-  defaultFeeExit?: number
+  portfolios: PortfolioOption[]
+  defaultPortfolioId?: number | null
 }) {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
   const [setupTags, setSetupTags] = useState<string[]>([])
   const [questionsOpen, setQuestionsOpen] = useState(false)
-  const [tradedWithMoney, setTradedWithMoney] = useState(true)
+
+  // Das DEPOT ist die Wahl — nicht mehr die Handelsart.
+  //
+  // Vorher stand hier ein Umschalter „MIT ECHTEM GELD / DEMO", vorbelegt mit
+  // Echtgeld. Ein vergessener Klick hat genügt, damit ein Übungstrade in der
+  // echten Auswertung landete. Jetzt wählt man den Ort, und der Ort bestimmt die
+  // Handelsart — ein Widerspruch ist nicht mehr eingebbar.
+  //
+  // Vorbelegt ist das aktive Depot aus der Kopfzeile. Ist dort das Aggregat
+  // gewählt, bleibt die Auswahl LEER und muss getroffen werden: In eine
+  // Zusammenfassung kann man nicht buchen, und eine stille Ersatzwahl wäre wieder
+  // eine Vorbelegung, die man übersieht.
+  const [portfolioId, setPortfolioId] = useState<number | null>(defaultPortfolioId)
+  const depot = portfolios.find((p) => p.id === portfolioId) ?? null
+  const tradedWithMoney = depot == null || depot.kind !== 'demo'
+  const startCapital = depot?.startCapital ?? 0
+  const defaultFeeEntry = depot?.defaultFeeEntry ?? 0
+  const defaultFeeExit = depot?.defaultFeeExit ?? 0
+
   // Erfassungsweg. Vorbelegt ist der volle Weg — die Abkürzung wählt man
   // bewusst, nicht aus Versehen.
   const [tradeKind, setTradeKind] = useState<TradeKind>(DEFAULT_TRADE_KIND)
@@ -129,8 +155,28 @@ export function TradeForm({
   const set = (k: keyof typeof form, v: string) =>
     setForm((p) => ({ ...p, [k]: v }))
 
+  // Teilziele (Etappe 13). Leer = ein Ziel wie bisher; sobald hier Stufen
+  // stehen, sind SIE der Plan und das Feld „Take-Profit" oben zeigt nur noch
+  // die erste Stufe an.
+  const [targets, setTargets] = useState<TargetDraft[]>([])
+
   // --- live CRV ---
+  //
+  // Mit Stufen der nach Anteilen gewichtete Wert (dieselbe reine Funktion wie
+  // auf dem Server), sonst wie bisher das Verhältnis zum einen Ziel.
+  const zielCheck = useMemo(
+    () =>
+      checkTargets({
+        entry: parseFloat(form.entryPrice),
+        stopLoss: parseFloat(form.stopLoss),
+        direction: form.direction,
+        drafts: targets,
+      }),
+    [form.entryPrice, form.stopLoss, form.direction, targets],
+  )
+
   const rr = useMemo(() => {
+    if (zielCheck.targets.length > 0) return zielCheck.rr
     const entry = parseFloat(form.entryPrice)
     const sl = parseFloat(form.stopLoss)
     const tp = parseFloat(form.takeProfit)
@@ -138,7 +184,7 @@ export function TradeForm({
     const risk = Math.abs(entry - sl)
     if (risk === 0) return null
     return Math.abs(tp - entry) / risk
-  }, [form.entryPrice, form.stopLoss, form.takeProfit])
+  }, [form.entryPrice, form.stopLoss, form.takeProfit, zielCheck])
 
   // --- Geld-/Gebühren-Projektion ---
   //
@@ -151,8 +197,12 @@ export function TradeForm({
     const entry = parseFloat(form.entryPrice)
     if (!invested || !entry) return null
     const sl = parseFloat(form.stopLoss)
-    const tp = parseFloat(form.takeProfit)
-    const sellPct = parseFloat(form.takeProfitPct) || 100
+    // Mit Teilzielen zeigt die Projektion die ERSTE Stufe — das ist der Betrag,
+    // der als Nächstes tatsächlich hereinkommt. Die Gesamtaussage über den Plan
+    // steht daneben im gewichteten CRV.
+    const erste = zielCheck.targets[0]
+    const tp = erste ? erste.price : parseFloat(form.takeProfit)
+    const sellPct = erste ? erste.sharePct : parseFloat(form.takeProfitPct) || 100
     const leverage = parseFloat(form.leverage) || 1
     // Gebühren aus dem Formular — 0 ist ein gültiger Wert (gebührenfreier Broker).
     const feeEntry = form.feeEntry.trim() === '' ? defaultFeeEntry : parseFloat(form.feeEntry)
@@ -186,15 +236,27 @@ export function TradeForm({
     form.direction,
     defaultFeeEntry,
     defaultFeeExit,
+    zielCheck,
   ])
 
-  // --- Risiko-Guard (nur Echtgeld): wie viel % des Kontos riskiert der Stop? ---
+  // --- Risiko-Guard: wie viel % des Depotkapitals riskiert der Stop? ---
+  //
+  // Greift seit Etappe 12 in BEIDEN Depotarten. Vorher war er auf Papier
+  // abgeschaltet („dein echtes Konto steht hier nicht im Feuer") — das war ein
+  // Denkfehler: Wer die Positionsgröße ohne Bremse übt, übt gerade das ein, wovor
+  // die Bremse später schützen soll. Im Demo-Depot misst er gegen das
+  // Papier-Startkapital, und weil das gleich groß gewählt ist wie das echte,
+  // ergibt derselbe Trade dieselbe Prozentzahl.
+  //
+  // Die Schwelle selbst (`maxRiskPct`) bleibt kontoweit: „höchstens 2 % pro
+  // Trade" ist eine Regel über das eigene Verhalten, keine Eigenschaft eines
+  // Kontos — und sie soll in der Übung genauso gelten.
   const risk = useMemo(() => {
-    if (!tradedWithMoney || !money?.sl || !startCapital) return null
+    if (!money?.sl || !startCapital) return null
     const riskEur = Math.abs(money.sl.grossLoss)
     const pct = (riskEur / startCapital) * 100
     return { riskEur, pct, over: pct > maxRiskPct }
-  }, [tradedWithMoney, money, startCapital, maxRiskPct])
+  }, [money, startCapital, maxRiskPct])
 
   // Schritt 1: Pflichtfelder prüfen. Auf dem vollen Weg öffnet das den
   // Fragen-Dialog; der schnelle Trade legt direkt an — genau das ist sein Zweck.
@@ -204,12 +266,26 @@ export function TradeForm({
   // gar kein Plan.
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    // Das Depot zuerst: Ohne es wäre nicht bestimmt, ob echtes Geld im Spiel ist.
+    // Der Server lehnt es ebenfalls ab (`resolveZielDepot`) — hier steht die
+    // Prüfung nur, damit der Hinweis beim Feld erscheint und nicht als Fehler
+    // nach dem Absenden.
+    if (portfolioId == null) {
+      toast.error('Bitte wähle das Depot, in das dieser Trade gebucht wird.')
+      return
+    }
     if (!form.ticker.trim()) {
       toast.error('Ticker ist erforderlich.')
       return
     }
     if (!form.entryPrice.trim() || !form.stopLoss.trim()) {
       toast.error('Einstieg und Stop-Loss sind erforderlich.')
+      return
+    }
+    // Ein unschlüssiger Staffelplan bricht später auf dem Server ab — die
+    // Meldung gehört aber hierher, solange die Felder noch vor einem stehen.
+    if (zielCheck.error) {
+      toast.error(zielCheck.error)
       return
     }
     if (quick) void submitTrade([])
@@ -238,6 +314,10 @@ export function TradeForm({
         feeEntry: quick || form.feeEntry.trim() === '' ? null : parseFloat(form.feeEntry),
         feeExit: quick || form.feeExit.trim() === '' ? null : parseFloat(form.feeExit),
         takeProfitPct: !quick && form.takeProfitPct ? parseFloat(form.takeProfitPct) : 100,
+        // Teilziele (Etappe 13): Sind Stufen gesetzt, leitet der Server
+        // `takeProfit` und `takeProfitPct` aus ihnen ab und überschreibt damit
+        // die beiden Felder oben — eine Quelle, nicht zwei.
+        targets: zielCheck.targets.length > 0 ? zielCheck.targets : null,
         broker: quick ? null : form.broker || null,
         strategy: quick ? null : form.strategy || null,
         setupTags: quick ? [] : setupTags,
@@ -246,7 +326,9 @@ export function TradeForm({
         waveDegree: quick ? null : form.waveDegree || null,
         elliottInvalidation:
           !quick && form.elliottInvalidation ? parseFloat(form.elliottInvalidation) : null,
-        tradedWithMoney,
+        // Das Depot geht mit, die Handelsart NICHT: Der Server leitet sie daraus
+        // ab (`createTrade`). Der Browser kann sie damit nicht mehr behaupten.
+        portfolioId,
         preTradeAnswers: answers,
         tradeKind,
       }
@@ -333,25 +415,50 @@ export function TradeForm({
         hint="Einstieg, Stop und Ziel stehen fest, bevor Geld im Markt ist."
         delay="rise-in-1"
       >
-        <Field label="Handelsart" as="div">
-          <div className="grid grid-cols-2 gap-2">
-            <ChoiceButton
-              active={tradedWithMoney}
-              tone="positive"
-              icon={Banknote}
-              onClick={() => setTradedWithMoney(true)}
-            >
-              MIT ECHTEM GELD
-            </ChoiceButton>
-            <ChoiceButton
-              active={!tradedWithMoney}
-              tone="primary"
-              icon={FlaskConical}
-              onClick={() => setTradedWithMoney(false)}
-            >
-              DEMO · PAPERTRADE
-            </ChoiceButton>
+        {/* Das Depot statt der Handelsart (Etappe 12): Man wählt den Ort, und der
+            Ort bestimmt, ob echtes Geld im Spiel ist. Ein Papier-Trade im
+            Echtgeld-Depot ist damit nicht mehr eingebbar. */}
+        <Field
+          label="Depot *"
+          as="div"
+          hint={
+            depot == null
+              ? 'In welches Depot wird dieser Trade gebucht? Das Depot bestimmt, ob echtes Geld im Spiel ist.'
+              : depot.kind === 'demo'
+                ? 'Übungsdepot: Der Trade zählt in keine Echtgeld-Kennzahl und wird nie mit Freunden geteilt.'
+                : 'Echtgeld: Der Trade zählt in Bilanz, Rendite und die Kennzahlen, die Freunde sehen.'
+          }
+        >
+          <div
+            className={
+              portfolios.length > 2
+                ? 'grid grid-cols-1 gap-2 sm:grid-cols-2'
+                : 'grid grid-cols-2 gap-2'
+            }
+          >
+            {portfolios.map((p) => (
+              <ChoiceButton
+                key={p.id}
+                active={portfolioId === p.id}
+                tone={p.kind === 'demo' ? 'warning' : 'positive'}
+                icon={p.kind === 'demo' ? FlaskConical : Banknote}
+                onClick={() => setPortfolioId(p.id)}
+              >
+                {p.name}
+              </ChoiceButton>
+            ))}
           </div>
+          {depot == null && (
+            <InlineNotice tone="warning" className="mt-2">
+              Bitte ein Depot wählen. In der Kopfzeile ist gerade die Zusammenfassung „Alle
+              Echtgeld-Depots" aktiv — in die lässt sich nicht buchen.
+            </InlineNotice>
+          )}
+          {depot?.kind === 'demo' && (
+            <div className="mt-2">
+              <PaperBadge size="compact" />
+            </div>
+          )}
         </Field>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -409,17 +516,42 @@ export function TradeForm({
               required
             />
           </Field>
-          <Field label="Take-Profit" tone="positive">
+          <Field
+            label="Take-Profit"
+            tone="positive"
+            hint={
+              zielCheck.targets.length > 0
+                ? 'Kommt aus Stufe 1 der Teilziele.'
+                : undefined
+            }
+          >
             <Input
               type="number"
               step="any"
-              value={form.takeProfit}
+              value={
+                zielCheck.targets.length > 0
+                  ? String(zielCheck.targets[0].price)
+                  : form.takeProfit
+              }
               onChange={(e) => set('takeProfit', e.target.value)}
+              disabled={zielCheck.targets.length > 0}
               placeholder="0.00"
               className={inputCls}
             />
           </Field>
         </div>
+
+        {/* Teilziele (Etappe 13) — der gestaffelte Ausstieg, festgelegt bevor
+            die Position steht. Auch auf dem schnellen Weg: Stufen sind ein Teil
+            des vordefinierten Risikos, nicht des Beiwerks. */}
+        <TargetStages
+          entry={parseFloat(form.entryPrice)}
+          stopLoss={parseFloat(form.stopLoss)}
+          direction={form.direction}
+          drafts={targets}
+          onChange={setTargets}
+          disabled={loading}
+        />
 
         {/* CRV */}
         {rr != null && (
@@ -428,19 +560,26 @@ export function TradeForm({
             icon={Waves}
           >
             CRV: <span className="font-bold">1:{rr.toFixed(2)}</span>
+            {zielCheck.targets.length > 1 && (
+              <span className="text-xs text-muted-foreground">
+                gewichtet über {zielCheck.targets.length} Stufen
+              </span>
+            )}
             {rr < 1 && <span className="text-xs">Risiko überwiegt.</span>}
           </InlineNotice>
         )}
 
-        {/* Risiko-Guard (nur Echtgeld) */}
+        {/* Risiko-Guard — greift in beiden Depotarten, im Demo gegen das
+            Papier-Startkapital. */}
         {risk != null && (
           <InlineNotice tone={risk.over ? 'destructive' : 'positive'} icon={Shield}>
-            Konto-Risiko:{' '}
+            {tradedWithMoney ? 'Konto-Risiko:' : 'Papier-Risiko:'}{' '}
             <span className="font-bold">
               {money$(risk.riskEur)} · {risk.pct.toFixed(2)} %
             </span>
             <span className="text-muted-foreground">
-              von {money$(startCapital)} (Schwelle {num(maxRiskPct, 1)} %)
+              von {money$(startCapital)}
+              {!tradedWithMoney && ' Papier-Startkapital'} (Schwelle {num(maxRiskPct, 1)} %)
             </span>
             {risk.over && (
               <span className="w-full text-xs font-bold">
@@ -512,7 +651,7 @@ export function TradeForm({
                 allein dein Stop.{' '}
                 {tradedWithMoney
                   ? 'Prüfe die Risikoschwelle oben.'
-                  : 'Auf Papier greift der Risiko-Guard nicht: Er misst dein echtes Konto, und das steht hier nicht im Feuer.'}
+                  : 'Prüfe die Risikoschwelle oben — sie gilt auf Papier genauso. Wer die Positionsgröße ohne Bremse übt, übt ein, wovor die Bremse später schützen soll.'}
               </p>
             </ResultBlock>
           )}
@@ -543,14 +682,26 @@ export function TradeForm({
                   className={inputCls}
                 />
               </Field>
-              <Field label="Verkaufsanteil beim Take-Profit (%)">
+              <Field
+                label="Verkaufsanteil beim Take-Profit (%)"
+                hint={
+                  zielCheck.targets.length > 0
+                    ? 'Kommt aus Stufe 1 der Teilziele.'
+                    : undefined
+                }
+              >
                 <Input
                   type="number"
                   step="any"
                   min="0"
                   max="100"
-                  value={form.takeProfitPct}
+                  value={
+                    zielCheck.targets.length > 0
+                      ? String(zielCheck.targets[0].sharePct)
+                      : form.takeProfitPct
+                  }
                   onChange={(e) => set('takeProfitPct', e.target.value)}
+                  disabled={zielCheck.targets.length > 0}
                   placeholder="100"
                   className={inputCls}
                 />

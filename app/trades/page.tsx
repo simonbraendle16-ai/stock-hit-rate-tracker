@@ -2,9 +2,11 @@ import { auth } from '@/lib/auth'
 import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
-import { listTrades } from '@/app/actions/trades'
+import { listTargetsForTrades, listTrades } from '@/app/actions/trades'
 import { getSettings } from '@/app/actions/settings'
+import { getScopeContext } from '@/app/actions/portfolios'
 import { CockpitHeader } from '@/components/cockpit-header'
+import { PaperBadge } from '@/components/paper-badge'
 import { TradeCard } from '@/components/trade-card'
 import { Button } from '@/components/ui/button'
 import { Plus } from 'lucide-react'
@@ -13,7 +15,22 @@ export default async function TradesPage() {
   const session = await auth.api.getSession({ headers: await headers() })
   if (!session?.user) redirect('/sign-in')
 
-  const [trades, settings] = await Promise.all([listTrades(), getSettings()])
+  const [trades, settings, kontext] = await Promise.all([
+    listTrades(),
+    getSettings(),
+    getScopeContext(),
+  ])
+
+  // Teilziele (Etappe 13) für die ganze Liste in EINER Abfrage — auf der Karte
+  // steht nur der Fortschritt, ausgeführt wird auf der Detailseite.
+  const stufen = await listTargetsForTrades(trades.map((t) => t.id))
+  const stufenJeTrade = new Map<number, { price: number; sharePct: number; executed: boolean }[]>()
+  for (const s of stufen) {
+    const eintrag = { price: s.price, sharePct: s.sharePct, executed: s.executedAt != null }
+    const bisher = stufenJeTrade.get(s.tradeId)
+    if (bisher) bisher.push(eintrag)
+    else stufenJeTrade.set(s.tradeId, [eintrag])
+  }
 
   return (
     <div className="min-h-svh">
@@ -21,12 +38,21 @@ export default async function TradesPage() {
       <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
         <div className="mb-7 flex items-end justify-between gap-3">
           <div>
-            <p className="eyebrow">Trades</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="eyebrow">Trades</p>
+              <span className="eyebrow text-muted-foreground">
+                · {kontext.active ? kontext.active.name : 'Alle Echtgeld-Depots'}
+              </span>
+              {kontext.isPaper && <PaperBadge size="compact" />}
+            </div>
             <h2 className="mt-1 font-heading text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
               Plane, führe aus, schließe ab.
             </h2>
+            {/* Die Zahl gilt für die aktive Auswahl, nicht für das ganze Konto —
+                sonst würde sie mehr versprechen, als die Liste unten zeigt. */}
             <p className="note mt-1.5">
-              {trades.length} Trade{trades.length === 1 ? '' : 's'} im Journal
+              {trades.length} Trade{trades.length === 1 ? '' : 's'}{' '}
+              {kontext.active ? `in „${kontext.active.name}"` : 'in deinen Echtgeld-Depots'}
             </p>
           </div>
           <Link href="/trades/new">
@@ -57,6 +83,7 @@ export default async function TradesPage() {
                 key={t.id}
                 t={t}
                 currency={settings.currency}
+                targets={stufenJeTrade.get(t.id)}
                 delayMs={Math.min(i, 8) * 45}
               />
             ))}

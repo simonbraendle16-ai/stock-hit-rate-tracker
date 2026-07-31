@@ -29,6 +29,7 @@ import {
   type FriendListEntry,
   type FriendSummary,
 } from '@/lib/friends'
+import { loadRealMoneyScope, tradeScopeWhere } from '@/lib/portfolio-context'
 
 async function getUserId() {
   const session = await auth.api.getSession({ headers: await headers() })
@@ -78,15 +79,36 @@ async function assertCanView(viewerId: string, ownerId: string): Promise<void> {
 
 /** Betragsfreie Disziplin-Zusammenfassung über die abgeschlossenen Trades eines Nutzers. */
 async function summaryFor(ownerId: string): Promise<FriendSummary> {
+  // NUR die Echtgeld-Depots (Etappe 12).
+  //
+  // Das war der stillste Teil des Fehlers: `toFriendSummary` teilt genau die vier
+  // Kennzahlen, die Übung und Ernst gemischt haben — Disziplin, Trefferquote,
+  // Erwartungswert, Streak. Ein Freund sah damit Papier-Trades als Teil einer
+  // echten Disziplin-Bilanz, ohne es erfahren zu können. Eine geteilte Quote mit
+  // Übungstrades darin ist gegenüber anderen keine ehrliche Zahl.
+  //
+  // Bewusst das Echtgeld-Aggregat und NICHT die aktive Auswahl des Betrachters
+  // oder des Besitzers: Sonst hinge die Zahl, die ein Freund sieht, davon ab,
+  // welches Depot gerade irgendwo offen ist.
+  const { portfolioIds } = await loadRealMoneyScope(ownerId)
+  if (portfolioIds.length === 0) {
+    return toFriendSummary(computeDisciplineStats([], 0, []))
+  }
   const rows: TradeRow[] = await db
     .select()
     .from(trade)
-    .where(and(eq(trade.userId, ownerId), eq(trade.status, 'abgeschlossen')))
+    .where(
+      and(
+        tradeScopeWhere(ownerId, portfolioIds),
+        eq(trade.status, 'abgeschlossen'),
+      ),
+    )
     .orderBy(asc(trade.closedAt), asc(trade.id))
   // startCapital/cashflows sind für die geteilten Felder (Disziplin, Quote,
   // Erwartungswert, Streak, Regelbrüche) irrelevant — sie hängen nicht am Geld.
   // Die Geldfelder rechnet computeDisciplineStats zwar, toFriendSummary wirft
-  // sie aber weg, damit keine Kontogröße nach außen gelangt.
+  // sie aber weg, damit keine Kontogröße nach außen gelangt. Beide Filter sind
+  // nötig: dieser hält Beträge draußen, der Scope oben hält Übungstrades draußen.
   return toFriendSummary(computeDisciplineStats(rows, 0, []))
 }
 
@@ -213,11 +235,18 @@ export async function getFriendJournal(friendId: string): Promise<FriendJournal>
   const [u] = await db.select().from(user).where(eq(user.id, friendId))
   if (!u) throw new Error('Diesen Nutzer gibt es nicht mehr.')
 
-  const all: TradeRow[] = await db
-    .select()
-    .from(trade)
-    .where(eq(trade.userId, friendId))
-    .orderBy(desc(trade.createdAt))
+  // Auch die geteilten TRADES kommen nur aus den Echtgeld-Depots (Etappe 12).
+  // Ein geplanter Übungstrade im Journal eines Freundes sähe aus wie eine echte
+  // Absicht — und das Journal soll zeigen, was jemand wirklich vorhat.
+  const { portfolioIds } = await loadRealMoneyScope(friendId)
+  const all: TradeRow[] =
+    portfolioIds.length === 0
+      ? []
+      : await db
+          .select()
+          .from(trade)
+          .where(tradeScopeWhere(friendId, portfolioIds))
+          .orderBy(desc(trade.createdAt))
 
   // computeDisciplineStats erwartet die abgeschlossenen Trades chronologisch
   // (ältester zuerst) für den korrekten Streak.

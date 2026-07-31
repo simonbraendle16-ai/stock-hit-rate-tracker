@@ -4,6 +4,8 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { getDisciplineStats, getUnifiedHitRateTimeline, listTrades } from '@/app/actions/trades'
 import { getSettings } from '@/app/actions/settings'
+import { getScopeContext } from '@/app/actions/portfolios'
+import { PaperBadge, PaperNotice } from '@/components/paper-badge'
 import { listAlerts } from '@/app/actions/alerts'
 import { CockpitHeader } from '@/components/cockpit-header'
 import {
@@ -25,12 +27,14 @@ export default async function CockpitPage() {
   const session = await auth.api.getSession({ headers: await headers() })
   if (!session?.user) redirect('/sign-in')
 
-  const [stats, timeline, trades, settings, alerts] = await Promise.all([
+  const [stats, timeline, trades, settings, alerts, kontext] = await Promise.all([
     getDisciplineStats(),
     getUnifiedHitRateTimeline(),
     listTrades(),
     getSettings(),
     listAlerts(),
+    // Welches Depot ist im Blick? Entscheidet, ob das Cockpit Papiergeld zeigt.
+    getScopeContext(),
   ])
   const recent = trades.slice(0, 6)
   const openPositions = trades.filter((t) => t.status === 'aktiv')
@@ -41,10 +45,22 @@ export default async function CockpitPage() {
       <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
         <div className="mb-7 flex items-end justify-between gap-3">
           <div>
-            <p className="eyebrow">Cockpit</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="eyebrow">Cockpit</p>
+              <span className="eyebrow text-muted-foreground">
+                ·{' '}
+                {kontext.active
+                  ? kontext.active.name
+                  : 'Alle Echtgeld-Depots'}
+              </span>
+              {/* Ohne dieses Abzeichen sähe eine Papier-Bilanz genauso aus wie
+                  eine echte — die Verwechslung, die diese Etappe abschafft. */}
+              {kontext.isPaper && <PaperBadge size="compact" />}
+            </div>
             <h2 className="mt-1.5 font-heading text-xl font-semibold tracking-tight text-foreground">
               Handle deinen Plan, nicht deine Emotion.
             </h2>
+            {kontext.isPaper && <PaperNotice className="mt-1 max-w-xl" />}
           </div>
           <Link href="/trades/new">
             <Button className="btn-teal-glow font-mono text-xs">

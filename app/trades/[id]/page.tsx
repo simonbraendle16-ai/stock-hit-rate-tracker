@@ -2,7 +2,7 @@ import { auth } from '@/lib/auth'
 import { headers } from 'next/headers'
 import { redirect, notFound } from 'next/navigation'
 import Link from 'next/link'
-import { getTrade, listTradeEvents } from '@/app/actions/trades'
+import { getTrade, listTradeEvents, listTradeTargets } from '@/app/actions/trades'
 import { getTradeExcursion } from '@/app/actions/excursion'
 import { getStockChartUrl } from '@/app/actions/stocks'
 import { getSettings } from '@/app/actions/settings'
@@ -12,6 +12,9 @@ import { TradeTimeline } from '@/components/trade-timeline'
 import { TradeReplay } from '@/components/trade-replay'
 import { SetupTagsCard } from '@/components/setup-tags-card'
 import { ExcursionCard } from '@/components/excursion-card'
+import { TradePortfolioCard } from '@/components/trade-portfolio-card'
+import { TradeTargetsCard } from '@/components/trade-targets-card'
+import { getScopeContext } from '@/app/actions/portfolios'
 import { ArrowLeft, LineChart, Lock } from 'lucide-react'
 
 export default async function TradeDetailPage({
@@ -26,13 +29,20 @@ export default async function TradeDetailPage({
   const t = await getTrade(Number(id))
   if (!t) notFound()
 
-  const [chartUrl, settings, events, excursion] = await Promise.all([
+  const [chartUrl, settings, events, targets, excursion, kontext] = await Promise.all([
     t.stockId != null ? getStockChartUrl(t.stockId) : Promise.resolve(null),
     getSettings(),
     listTradeEvents(t.id),
+    // Teilziele (Etappe 13) — leer bei jedem Trade ohne Staffelplan.
+    listTradeTargets(t.id),
     // Holt Kerzen — bricht nie ab: eine Lücke wird als Lücke ausgewiesen
     // (Etappe 7c). Bei nicht entschiedenen Trades gibt es nichts zu messen.
     getTradeExcursion(t.id).catch(() => null),
+    // Für die Depot-Karte. `getTrade` filtert bewusst NICHT auf die aktive
+    // Auswahl — ein Trade muss sich öffnen lassen, auch wenn gerade ein anderes
+    // Depot im Blick ist. Sonst käme man an einen falsch einsortierten Trade
+    // nicht heran, um ihn umzubuchen.
+    getScopeContext(),
   ])
   const locked = t.status === 'aktiv' || t.status === 'abgeschlossen'
   const violations: string[] = t.ruleViolations ? JSON.parse(t.ruleViolations) : []
@@ -50,6 +60,18 @@ export default async function TradeDetailPage({
 
         <div className="grid grid-cols-1 gap-4">
           <TradeCard t={t} currency={settings.currency} events={events} />
+
+          {/* Wo liegt dieser Trade — und wie kommt er woandershin? */}
+          <TradePortfolioCard
+            tradeId={t.id}
+            ticker={t.ticker}
+            portfolioId={t.portfolioId}
+            portfolios={kontext.portfolios}
+          />
+
+          {/* Der Staffelplan und seine Ausführung — direkt unter der Karte, weil
+              die nächste Stufe die nächste Handlung ist. */}
+          <TradeTargetsCard trade={t} targets={targets} events={events} />
 
           <TradeReplay t={t} />
 

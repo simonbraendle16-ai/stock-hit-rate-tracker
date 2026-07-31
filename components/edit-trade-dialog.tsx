@@ -1,9 +1,10 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { TradeRow } from '@/lib/trade-stats'
 import { currencySymbol } from '@/lib/format'
-import { updateTradePlan } from '@/app/actions/trades'
+import { listTradeTargets, updateTradePlan } from '@/app/actions/trades'
+import { TargetStages, checkTargets, type TargetDraft } from '@/components/target-stages'
 import { parseSetupTags } from '@/lib/setups'
 import { SetupTagsInput } from '@/components/setup-tags-input'
 import {
@@ -62,6 +63,41 @@ export function EditTradeDialog({
   const [ackViolation, setAckViolation] = useState(false)
   const [busy, setBusy] = useState(false)
 
+  // Teilziele (Etappe 13). Sie hängen nicht an der Trade-Zeile, sondern in einer
+  // eigenen Tabelle — deshalb werden sie beim Öffnen geladen, so wie der
+  // Teilverkauf-Dialog seine offene Menge lädt.
+  //
+  // Ausgeführte Stufen stehen fest und sind hier gesperrt: Sie sind bereits
+  // abgerechnet, und ein Plan darf keine Geschichte umschreiben. Der Server
+  // lehnt es zusätzlich ab.
+  const [targets, setTargets] = useState<TargetDraft[]>([])
+  const [lockedCount, setLockedCount] = useState(0)
+
+  useEffect(() => {
+    if (!open) return
+    listTradeTargets(trade.id)
+      .then((rows) => {
+        setTargets(rows.map((r) => ({ price: String(r.price), sharePct: String(r.sharePct) })))
+        setLockedCount(rows.filter((r) => r.executedAt != null).length)
+      })
+      .catch(() => {
+        setTargets([])
+        setLockedCount(0)
+      })
+  }, [open, trade.id])
+
+  const zielCheck = useMemo(
+    () =>
+      checkTargets({
+        entry: numOrNull(entryPrice) ?? 0,
+        stopLoss: numOrNull(stopLoss) ?? 0,
+        direction: trade.direction,
+        drafts: targets,
+      }),
+    [entryPrice, stopLoss, trade.direction, targets],
+  )
+  const hatStufen = zielCheck.targets.length > 0
+
   // Bei aktiven Trades ist das Verschieben von Stop/Invalidation ein Regelbruch.
   const movesLocked = useMemo(() => {
     if (!isActive) return false
@@ -77,6 +113,10 @@ export function EditTradeDialog({
       toast.error('Stop/Invalidation eines aktiven Trades: bitte den Regelbruch bestätigen.')
       return
     }
+    if (zielCheck.error) {
+      toast.error(zielCheck.error)
+      return
+    }
     setBusy(true)
     try {
       await updateTradePlan(
@@ -84,7 +124,13 @@ export function EditTradeDialog({
         {
           entryPrice: numOrNull(entryPrice) ?? undefined,
           stopLoss: numOrNull(stopLoss) ?? undefined,
+          // Mit Stufen ist der Take-Profit die Schreibweise von Stufe 1 — der
+          // Server leitet ihn dann selbst ab und ignoriert das Feld hier.
           takeProfit: takeProfit === '' ? null : numOrNull(takeProfit),
+          // Immer mitschicken, auch leer: Eine geleerte Liste ist die Aussage
+          // „keine Stufen mehr", und nur so lässt sich ein Staffelplan wieder
+          // auf ein einzelnes Ziel zurücknehmen.
+          targets: zielCheck.targets,
           investedAmount: investedAmount === '' ? null : numOrNull(investedAmount),
           leverage: numOrNull(leverage) ?? undefined,
           takeProfitPct: numOrNull(takeProfitPct) ?? undefined,
@@ -111,7 +157,7 @@ export function EditTradeDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[85svh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="font-heading tracking-wide">
             {trade.ticker} bearbeiten
@@ -132,8 +178,10 @@ export function EditTradeDialog({
             <Input type="number" step="any" value={stopLoss}
               onChange={(e) => setStopLoss(e.target.value)} className="input-ocean font-mono" />
           </Field>
-          <Field label="Take-Profit">
-            <Input type="number" step="any" value={takeProfit}
+          <Field label={hatStufen ? 'Take-Profit (aus Stufe 1)' : 'Take-Profit'}>
+            <Input type="number" step="any"
+              value={hatStufen ? String(zielCheck.targets[0].price) : takeProfit}
+              disabled={hatStufen}
               onChange={(e) => setTakeProfit(e.target.value)} className="input-ocean font-mono" />
           </Field>
           {/* Einsatz und Hebel gibt es auch auf Papier — sonst ließe sich ein
@@ -153,8 +201,10 @@ export function EditTradeDialog({
               onChange={(e) => setLeverage(e.target.value)} className="input-ocean font-mono" />
           </Field>
           {trade.tradedWithMoney && (
-            <Field label="Verkaufsanteil TP (%)">
-              <Input type="number" step="any" value={takeProfitPct}
+            <Field label={hatStufen ? 'Verkaufsanteil TP (aus Stufe 1)' : 'Verkaufsanteil TP (%)'}>
+              <Input type="number" step="any"
+                value={hatStufen ? String(zielCheck.targets[0].sharePct) : takeProfitPct}
+                disabled={hatStufen}
                 onChange={(e) => setTakeProfitPct(e.target.value)} className="input-ocean font-mono" />
             </Field>
           )}
@@ -162,6 +212,20 @@ export function EditTradeDialog({
             <Input type="number" step="any" value={elliottInvalidation}
               onChange={(e) => setElliottInvalidation(e.target.value)} className="input-ocean font-mono" />
           </Field>
+        </div>
+
+        {/* Teilziele (Etappe 13). Ausgeführte Stufen bleiben gesperrt stehen —
+            sie sind abgerechnet. */}
+        <div className="mt-1">
+          <TargetStages
+            entry={numOrNull(entryPrice) ?? 0}
+            stopLoss={numOrNull(stopLoss) ?? 0}
+            direction={trade.direction}
+            drafts={targets}
+            onChange={setTargets}
+            disabled={busy}
+            lockedCount={lockedCount}
+          />
         </div>
 
         <div className="mt-1 space-y-3">

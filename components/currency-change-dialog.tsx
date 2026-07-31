@@ -36,12 +36,15 @@ export function CurrencyChangeDialog({
   onOpenChange: (v: boolean) => void
   from: string
   to: string
+  /**
+   * Die übrigen kontoweiten Einstellungen, die beim Umstellen mitgespeichert
+   * werden. Startkapital und Gebühren stehen seit Etappe 12 an den Depots und
+   * werden serverseitig über ALLE Depots umgerechnet (`changeCurrency`) — sie
+   * müssen deshalb nicht mehr durch dieses Formular gereicht werden.
+   */
   otherSettings: {
-    startCapital: number
     defaultRiskPct: number
     maxRiskPct: number
-    defaultFeeEntry: number
-    defaultFeeExit: number
   }
 }) {
   const router = useRouter()
@@ -120,8 +123,8 @@ export function CurrencyChangeDialog({
             >
               <span className="block font-bold uppercase">Umrechnen</span>
               <span className="mt-1 block text-[10px] leading-snug opacity-80">
-                Kapitaleinsätze, Gebühren, Startkapital und Cashflows werden mit deinem Kurs
-                umgerechnet.
+                Kapitaleinsätze, Gebühren, Cashflows und das Startkapital ALLER Depots werden
+                mit deinem Kurs umgerechnet — auch das Papier-Startkapital.
               </span>
             </button>
             <button

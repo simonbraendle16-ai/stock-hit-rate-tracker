@@ -3,7 +3,7 @@ import { headers } from 'next/headers'
 import { redirect, notFound } from 'next/navigation'
 import Link from 'next/link'
 import { getStockDetail } from '@/app/actions/stocks'
-import { getInstrumentTrades } from '@/app/actions/trades'
+import { getInstrumentTrades, listTargetsForTrades } from '@/app/actions/trades'
 import { getDrawings } from '@/app/actions/drawings'
 import { getInstrumentCard } from '@/app/actions/instruments'
 import { getSettings } from '@/app/actions/settings'
@@ -46,6 +46,18 @@ export default async function StockDetailPage({
 
   // Plan-Overlay: Linien aus offenen Trades (geplant/aktiv), richtungsabhängig beschriftet.
   const openTrades = trades.filter((t) => t.status === 'geplant' || t.status === 'aktiv')
+
+  // Teilziele (Etappe 13) in EINER Abfrage für alle offenen Trades — jede Stufe
+  // bekommt ihre eigene Linie. Ein Staffelplan, von dem nur die erste Stufe im
+  // Chart steht, wäre die halbe Wahrheit über den eigenen Plan.
+  const alleStufen = await listTargetsForTrades(openTrades.map((t) => t.id))
+  const stufenJeTrade = new Map<number, typeof alleStufen>()
+  for (const s of alleStufen) {
+    const bisher = stufenJeTrade.get(s.tradeId)
+    if (bisher) bisher.push(s)
+    else stufenJeTrade.set(s.tradeId, [s])
+  }
+
   const planLines: PlanLine[] = openTrades.flatMap((t) => {
     const dir = t.direction === 'long' ? 'Long' : 'Short'
     // Dieselben vier Farben wie die Plan-Leiste unter dem Chart — eine Quelle.
@@ -53,7 +65,19 @@ export default async function StockDetailPage({
       { price: t.entryPrice, color: PLAN_COLORS.entry, title: `Entry ${dir}` },
       { price: t.stopLoss, color: PLAN_COLORS.stop, title: `Stop ${dir}` },
     ]
-    if (t.takeProfit != null) {
+    const stufen = stufenJeTrade.get(t.id) ?? []
+    if (stufen.length > 0) {
+      for (const s of stufen) {
+        lines.push({
+          price: s.price,
+          color: PLAN_COLORS.target,
+          title: `Ziel ${s.sortOrder + 1} ${dir} (${s.sharePct} %)`,
+          // Erreichte Stufen bleiben sichtbar, aber gestrichelt: Sie sind
+          // Geschichte, keine offene Marke.
+          dashed: s.executedAt != null,
+        })
+      }
+    } else if (t.takeProfit != null) {
       lines.push({ price: t.takeProfit, color: PLAN_COLORS.target, title: `Target ${dir}` })
     }
     if (t.elliottInvalidation != null) {
@@ -150,6 +174,11 @@ export default async function StockDetailPage({
               takeProfit: t.takeProfit,
               elliottInvalidation: t.elliottInvalidation,
               riskRewardRatio: t.riskRewardRatio,
+              targets: (stufenJeTrade.get(t.id) ?? []).map((s) => ({
+                price: s.price,
+                sharePct: s.sharePct,
+                executed: s.executedAt != null,
+              })),
             }))}
           />
         </div>

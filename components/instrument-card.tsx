@@ -13,6 +13,12 @@
 //   * Die Trefferquote wird immer gezeigt, aber unter der Belastbarkeitsschwelle
 //     mit ihrer Grundlage darunter. „100 %" aus einem einzigen Trade darf nicht
 //     aussehen wie „100 %" aus dreißig.
+//
+// Geändert in Etappe 12: Die Demo-Zeile zeigt jetzt auch einen Geldbetrag. Vorher
+// war er unterdrückt, weil er ohne Bezugsgröße erfunden gewesen wäre; seit jedes
+// Übungsdepot ein Papier-Startkapital hat, stammt er nachvollziehbar von dort.
+// Er steht im Goldton, nicht in Grün/Rot — Papiergeld darf nie aussehen wie ein
+// echter Gewinn. Die TRENNUNG der beiden Zeilen bleibt unverändert.
 
 import Link from 'next/link'
 import type { InstrumentStats } from '@/lib/instrument-stats'
@@ -212,7 +218,19 @@ export function InstrumentCard({
               <div className="flex items-center gap-3 font-mono text-[10px]">
                 <span className="w-14 shrink-0 text-muted-foreground">Demo</span>
                 <span className="w-6 shrink-0 text-foreground">{t.demo.trades}</span>
-                {/* Bei Demo bewusst KEIN Geldbetrag — der wäre erfunden. */}
+                {/* Seit Etappe 12 steht hier auch ein Betrag. Bis dahin war er
+                    bewusst unterdrückt („der wäre erfunden") — und das war
+                    richtig, solange Demo-Trades gegen kein eigenes Kapital
+                    rechneten. Jetzt hat jedes Übungsdepot ein
+                    Papier-Startkapital, der Betrag stammt also nachvollziehbar
+                    von dort. Damit er nicht mit echtem Geld verwechselt wird,
+                    trägt er den Goldton statt Grün/Rot — dieselbe Farbe wie das
+                    PAPIERGELD-Abzeichen. */}
+                {t.demo.decided > 0 && (
+                  <span className="text-[var(--warning)]">
+                    {formatMoney(t.demo.netPnl, currency, { signed: true })}
+                  </span>
+                )}
                 <span className="text-muted-foreground">
                   {t.demo.decided > 0 ? rValue(t.demo.expectancy) : 'noch offen'}
                 </span>

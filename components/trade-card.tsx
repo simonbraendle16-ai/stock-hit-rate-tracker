@@ -92,11 +92,15 @@ export function TradeCard({
   t,
   currency = 'EUR',
   events,
+  targets,
   delayMs = 0,
 }: {
   t: TradeRow
   currency?: string
   events?: TradeEventRow[]
+  /** Teilziele (Etappe 13) — nur zur Anzeige „x von y erreicht"; die Stufen
+   *  selbst werden auf der Detailseite ausgeführt. */
+  targets?: { price: number; sharePct: number; executed: boolean }[]
   /** Versatz für den gestaffelten Aufbau in Listen. */
   delayMs?: number
 }) {
@@ -180,12 +184,16 @@ export function TradeCard({
           >
             {statusLabel[t.status] ?? t.status}
           </span>
+          {/* Seit Etappe 12 im Goldton statt im Akzentblau, und „Papiergeld"
+              statt „Demo" — dieselbe Farbe und dasselbe Wort wie überall sonst
+              (`PaperBadge`). Ein Übungstrade soll in jeder Ansicht gleich
+              aussehen, sonst muss man das Signal zweimal lernen. */}
           <span
             className={cn(
               'flex items-center gap-1 rounded-md border px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest',
               t.tradedWithMoney
                 ? 'border-positive/40 bg-positive/10 text-positive'
-                : 'border-primary/40 bg-primary/10 text-primary',
+                : 'border-[color-mix(in_oklab,var(--warning)_40%,transparent)] bg-[color-mix(in_oklab,var(--warning)_12%,transparent)] text-[var(--warning)]',
             )}
           >
             {t.tradedWithMoney ? (
@@ -194,7 +202,7 @@ export function TradeCard({
               </>
             ) : (
               <>
-                <FlaskConical className="size-3" /> Demo
+                <FlaskConical className="size-3" /> Papiergeld
               </>
             )}
           </span>
@@ -215,8 +223,24 @@ export function TradeCard({
       <div className="mt-3 grid grid-cols-3 gap-2 font-mono text-xs">
         <Stat label="Entry" value={t.entryPrice} />
         <Stat label="Stop" value={t.stopLoss} tone="neg" />
-        <Stat label="Ziel" value={t.takeProfit} tone="pos" />
+        <Stat label={targets && targets.length > 1 ? 'Ziel 1' : 'Ziel'} value={t.takeProfit} tone="pos" />
       </div>
+
+      {/* Teilziele (Etappe 13): Auf der Karte steht nur, wie weit der Staffelplan
+          abgearbeitet ist — ausgeführt wird er auf der Detailseite. */}
+      {targets && targets.length > 1 && (
+        <p className="mt-2 flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
+          <Target className="size-3 text-positive" />
+          {targets.filter((z) => z.executed).length} von {targets.length} Teilzielen erreicht
+          <span className="opacity-70">
+            (
+            {targets
+              .map((z) => `${num(z.price)}·${num(z.sharePct)} %`)
+              .join(' · ')}
+            )
+          </span>
+        </p>
+      )}
 
       <MoneyPanel t={t} currency={currency} />
 
@@ -716,22 +740,37 @@ function NoTradeDialog({
   )
 }
 
-function CloseDialog({
+/**
+ * Der vollständige Ausstieg — hier hängen die Douglas-Guards dran (bewusste
+ * Verlustannahme, Plan-Treue, Emotions-Check-in). Deshalb läuft auch die letzte
+ * Teilziel-Stufe (Etappe 13) hier durch und nicht über `executeTarget`: Sie
+ * schließt die Position, und ein vollständiger Ausstieg soll nie an den Guards
+ * vorbeigehen, nur weil er geplant war. Exportiert, damit die Teilziel-Karte
+ * denselben Dialog benutzt statt eines zweiten daneben.
+ */
+export function CloseDialog({
   trade,
   open,
   onOpenChange,
   onDone,
+  // Vorbelegter Ausstiegskurs und die Stufe, die damit abgetragen wird.
+  prefillExit = null,
+  targetId = null,
 }: {
   trade: TradeRow
   open: boolean
   onOpenChange: (v: boolean) => void
   onDone: () => void
+  prefillExit?: number | null
+  targetId?: number | null
 }) {
   const [result, setResult] = useState<'gewinn' | 'verlust' | 'breakeven'>('gewinn')
   const [exit, setExit] = useState('')
   const [followed, setFollowed] = useState(true)
   const [accepted, setAccepted] = useState(false)
-  const [money, setMoney] = useState(trade.tradedWithMoney)
+  // Nur noch zum Anzeigen und zum Ein-/Ausblenden der Gebührenfelder — die
+  // Handelsart ist seit Etappe 12 nicht mehr im Abschluss-Dialog änderbar.
+  const money = trade.tradedWithMoney
   const [feeEntry, setFeeEntry] = useState(String(trade.feeEntry ?? DEFAULT_ORDER_FEE))
   const [feeExit, setFeeExit] = useState(String(trade.feeExit ?? DEFAULT_ORDER_FEE))
   const [mood, setMood] = useState<MoodDraft>(emptyMoodDraft)
@@ -740,8 +779,13 @@ function CloseDialog({
   // Der Check-in gehört in den Moment des Abschließens, nicht in einen alten
   // Entwurf aus einem vorher geöffneten und wieder geschlossenen Dialog.
   useEffect(() => {
-    if (open) setMood(emptyMoodDraft())
-  }, [open])
+    if (open) {
+      setMood(emptyMoodDraft())
+      // Kommt der Abschluss aus einer geplanten Stufe, steht deren Kurs schon
+      // im Feld — überschreibbar, denn der tatsächliche Fill zählt.
+      if (prefillExit != null) setExit(String(prefillExit))
+    }
+  }, [open, prefillExit])
 
   const submit = async () => {
     if (result === 'verlust' && !accepted) {
@@ -767,10 +811,15 @@ function CloseDialog({
         actualExitPrice: exit ? parseFloat(exit) : null,
         followedPlan: followed,
         lossAccepted: accepted,
-        tradedWithMoney: money,
+        // Die Handelsart wird beim Abschließen NICHT mehr mitgeschickt (Etappe 12):
+        // Sie gehört zum Depot. Ein Umschalter hier hätte den Trade nach dem
+        // Abrechnen in die andere Bilanz springen lassen, ohne dass es irgendwo
+        // sichtbar war. Umbuchen geht über das Depot (`moveTrade`).
         feeEntry: feeEntry.trim() === '' ? null : parseFloat(feeEntry),
         feeExit: feeExit.trim() === '' ? null : parseFloat(feeExit),
         mood,
+        // Trägt die Stufe ab, aus der der Abschluss ausgelöst wurde (Etappe 13).
+        targetId,
       })
       toast.success('Trade abgeschlossen.')
       onOpenChange(false)
@@ -907,36 +956,36 @@ function CloseDialog({
             </div>
           </div>
 
+          {/* Die Handelsart ist hier eine ANZEIGE, keine Wahl (Etappe 12).
+              Vorher standen an dieser Stelle zwei Knöpfe — damit ließ sich ein
+              Trade beim Abrechnen von echt auf Demo umstellen und verschwand
+              stillschweigend aus der Bilanz. Sie gehört zum Depot; ändern geht
+              nur durch Umbuchen, und das zeigt seine Folgen an. */}
           <div className="space-y-2">
             <Label className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-              Mit echtem Geld gehandelt?
+              Handelsart
             </Label>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => setMoney(true)}
-                className={cn(
-                  'flex items-center justify-center gap-1.5 rounded-lg border py-2 font-mono text-xs uppercase',
-                  money
-                    ? 'border-positive/40 bg-positive/15 text-positive'
-                    : 'border-border text-muted-foreground',
-                )}
-              >
-                <Banknote className="size-3" /> Echtgeld
-              </button>
-              <button
-                type="button"
-                onClick={() => setMoney(false)}
-                className={cn(
-                  'flex items-center justify-center gap-1.5 rounded-lg border py-2 font-mono text-xs uppercase',
-                  !money
-                    ? 'border-primary/40 bg-primary/15 text-primary'
-                    : 'border-border text-muted-foreground',
-                )}
-              >
-                <FlaskConical className="size-3" /> Demo
-              </button>
+            <div
+              className={cn(
+                'flex items-center gap-1.5 rounded-lg border px-3 py-2 font-mono text-xs uppercase',
+                money
+                  ? 'border-positive/40 bg-positive/10 text-positive'
+                  : 'border-[color-mix(in_oklab,var(--warning)_40%,transparent)] bg-[color-mix(in_oklab,var(--warning)_10%,transparent)] text-[var(--warning)]',
+              )}
+            >
+              {money ? (
+                <>
+                  <Banknote className="size-3" /> Echtgeld
+                </>
+              ) : (
+                <>
+                  <FlaskConical className="size-3" /> Papiergeld
+                </>
+              )}
             </div>
+            <p className="note">
+              Ergibt sich aus dem Depot des Trades. Zum Ändern den Trade umbuchen.
+            </p>
           </div>
 
           {result === 'verlust' && (

@@ -4,7 +4,7 @@ import { redirect } from 'next/navigation'
 import {
   getDisciplineStats,
   getEquityStats,
-  getMoneyVsPaperStats,
+  getPortfolioComparison,
   getMonteCarloStats,
   getMoodStats,
   getSetupStats,
@@ -15,8 +15,13 @@ import {
 import type { TradeRow } from '@/lib/trade-stats'
 import { CockpitHeader } from '@/components/cockpit-header'
 import { DisciplineBar, CockpitStats } from '@/components/discipline-overview'
-import { MoneyHitRateChart } from '@/components/money-hitrate-chart'
-import { MoneyProfitChart } from '@/components/money-profit-chart'
+import {
+  PortfolioHitRateChart,
+  PortfolioProfitChart,
+} from '@/components/portfolio-comparison-charts'
+import { PaperBadge, PaperNotice } from '@/components/paper-badge'
+import { PortfolioSwitcher } from '@/components/portfolio-switcher'
+import { getScopeContext } from '@/app/actions/portfolios'
 import { EquityChart } from '@/components/equity-chart'
 import { ExportTradesButton } from '@/components/export-trades-button'
 import { MoodStatsPanel } from '@/components/mood-stats'
@@ -46,7 +51,7 @@ export default async function TrackingPage() {
   const [
     stats,
     trades,
-    moneyStats,
+    depotVergleich,
     zoneStats,
     equity,
     moodStats,
@@ -56,11 +61,13 @@ export default async function TrackingPage() {
     botTwin,
     settings,
     instruments,
+    // Die aktive Auswahl: entscheidet, ob diese Seite Papiergeld zeigt.
+    kontext,
   ] =
     await Promise.all([
       getDisciplineStats(),
       listTrades(),
-      getMoneyVsPaperStats(),
+      getPortfolioComparison(),
       getZoneStats(),
       getEquityStats(),
       getMoodStats(),
@@ -72,6 +79,7 @@ export default async function TrackingPage() {
       getBotTwinStats(),
       getSettings(),
       getInstrumentCards(),
+      getScopeContext(),
     ])
   const completed = trades.filter((t) => t.status === 'abgeschlossen')
 
@@ -110,12 +118,21 @@ export default async function TrackingPage() {
       <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
         <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h2 className="font-heading text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-              Auswertung
-            </h2>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="font-heading text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+                Auswertung
+              </h2>
+              {/* Im Übungsdepot trägt der Seitenkopf das Abzeichen — jede Zahl
+                  darunter ist Papiergeld, und das muss man auf den ersten Blick
+                  sehen, nicht erst am einzelnen Panel. */}
+              {kontext.isPaper && <PaperBadge />}
+            </div>
             <p className="mt-1 font-mono text-xs text-muted-foreground">
-              Dein statistischer Vorteil über viele Trades — wie ein Casino.
+              {kontext.active
+                ? `Depot „${kontext.active.name}" — dein statistischer Vorteil über viele Trades.`
+                : 'Alle Echtgeld-Depots zusammen — dein statistischer Vorteil über viele Trades.'}
             </p>
+            {kontext.isPaper && <PaperNotice className="mt-1 max-w-xl" />}
           </div>
           <ExportTradesButton />
         </div>
@@ -211,10 +228,16 @@ export default async function TrackingPage() {
           <TimeHeatmapPanel stats={timeStats} />
         </div>
 
-        {/* Echtgeld vs. Demo — Trefferquote & Ø Gewinn */}
-        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <MoneyHitRateChart stats={moneyStats} />
-          <MoneyProfitChart stats={moneyStats} />
+        {/* Depot-Vergleich — Trefferquote & Ø Gewinn je Depot.
+            Der einzige Block dieser Seite, der über die aktive Auswahl
+            hinwegschaut: Vergleichen ist sein Zweck. Jeder Balken trägt seinen
+            Namen, Übungsdepots sind in Gold — vermischt wird nichts. */}
+        <div className="mt-4">
+          <SectionLabel>Depot-Vergleich</SectionLabel>
+        </div>
+        <div className="mt-2 grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <PortfolioHitRateChart groups={depotVergleich} />
+          <PortfolioProfitChart groups={depotVergleich} />
         </div>
 
         {/* Zonen-Trefferquote — laufen die geplanten Zonen überhaupt an? */}

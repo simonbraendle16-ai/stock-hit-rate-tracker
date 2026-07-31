@@ -2,8 +2,19 @@ import Link from 'next/link'
 import { Activity } from 'lucide-react'
 import { CockpitNav } from '@/components/cockpit-nav'
 import { SignOutButton } from '@/components/sign-out-button'
+import { PortfolioSwitcher } from '@/components/portfolio-switcher'
+import { getScopeContext } from '@/app/actions/portfolios'
 
-export function CockpitHeader({ userLabel }: { userLabel?: string | null }) {
+/**
+ * Die Kopfzeile ist eine Server-Komponente und lädt den Depot-Kontext selbst
+ * (Etappe 12) — deshalb steht der Umschalter auf JEDER Seite, die diesen Kopf
+ * benutzt, ohne dass jede Seite ihn durchreichen muss.
+ *
+ * Er gehört hierher und nicht auf die Auswertungsseite: Er bestimmt nicht nur,
+ * welche Zahlen man sieht, sondern auch, wohin ein neuer Trade gebucht wird.
+ */
+export async function CockpitHeader({ userLabel }: { userLabel?: string | null }) {
+  const { portfolios, scope } = await getScopeContext()
   return (
     // Deckendes Panel statt `backdrop-blur`: Weichzeichnen ist ein Glas-Signal,
     // das der Designbrief („kein Glas, kein Glow") ausschließt.
@@ -22,8 +33,9 @@ export function CockpitHeader({ userLabel }: { userLabel?: string | null }) {
         </Link>
         <CockpitNav />
         <div className="flex items-center gap-2">
+          <PortfolioSwitcher portfolios={portfolios} scope={scope} />
           {userLabel && (
-            <span className="hidden font-mono text-xs text-muted-foreground md:inline">
+            <span className="hidden font-mono text-xs text-muted-foreground lg:inline">
               {userLabel}
             </span>
           )}

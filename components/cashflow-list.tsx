@@ -10,6 +10,8 @@ import { formatMoney } from '@/lib/format'
 import { ArrowDownToLine, ArrowUpFromLine, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { PaperBadge } from '@/components/paper-badge'
+import { normalizePortfolioKind, type PortfolioRow } from '@/lib/portfolio-scope'
 
 function isoDate(d: Date | string): string {
   return new Date(d).toISOString().slice(0, 10)
@@ -18,13 +20,21 @@ function isoDate(d: Date | string): string {
 /**
  * Ein- und Auszahlungen. Ohne sie rechnet die Rendite gegen ein fixes
  * Startkapital und wird ab der ersten Nachzahlung falsch.
+ *
+ * Seit Etappe 12 gehört jede Zahlung zu genau EINEM Depot. Ohne diese Zuordnung
+ * würde eine Einzahlung die Rendite aller Depots gleichzeitig verfälschen — und
+ * ein Papier-Startkapital wäre plötzlich durch echtes Geld größer.
  */
 export function CashflowList({
   items,
   currency = 'EUR',
+  portfolios,
+  activePortfolioId = null,
 }: {
   items: Cashflow[]
   currency?: string
+  portfolios: PortfolioRow[]
+  activePortfolioId?: number | null
 }) {
   const router = useRouter()
   const [busy, setBusy] = useState(false)
@@ -32,6 +42,12 @@ export function CashflowList({
   const [amount, setAmount] = useState('')
   const [date, setDate] = useState(isoDate(new Date()))
   const [note, setNote] = useState('')
+  const [portfolioId, setPortfolioId] = useState<number | null>(activePortfolioId)
+
+  const waehlbar = portfolios.filter((p) => p.archivedAt == null)
+  const depotName = new Map(portfolios.map((p) => [p.id, p.name]))
+  const istDemoDepot = (id: number) =>
+    normalizePortfolioKind(portfolios.find((p) => p.id === id)?.kind ?? '') === 'demo'
 
   const net = items.reduce(
     (acc, c) => acc + (c.kind === 'auszahlung' ? -c.amount : c.amount),
@@ -40,9 +56,21 @@ export function CashflowList({
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
+    // Ohne Depot wäre nicht bestimmt, welches Konto das Geld bekommt. Der Server
+    // lehnt es ebenso ab — hier nur früher und mit dem Hinweis am Feld.
+    if (portfolioId == null) {
+      toast.error('Bitte das Depot wählen, zu dem diese Zahlung gehört.')
+      return
+    }
     setBusy(true)
     try {
-      await addCashflow({ amount: parseFloat(amount), kind, occurredAt: date, note })
+      await addCashflow({
+        amount: parseFloat(amount),
+        kind,
+        occurredAt: date,
+        note,
+        portfolioId,
+      })
       setAmount('')
       setNote('')
       toast.success(kind === 'einzahlung' ? 'Einzahlung erfasst.' : 'Auszahlung erfasst.')
@@ -83,6 +111,32 @@ export function CashflowList({
       className="sheen"
     >
       <form onSubmit={submit} className="space-y-3">
+        {/* Das Depot zuerst — eine Zahlung ohne Konto ist keine Zahlung. */}
+        <Field
+          label="Depot *"
+          as="div"
+          hint={
+            portfolioId != null && istDemoDepot(portfolioId)
+              ? 'Übungsdepot: Diese Zahlung verändert nur das Papierkapital.'
+              : 'Bestimmt, welches Konto das Geld erhält bzw. abgibt.'
+          }
+        >
+          <select
+            value={portfolioId ?? ''}
+            onChange={(e) => setPortfolioId(e.target.value ? Number(e.target.value) : null)}
+            className="input-ocean h-11 w-full rounded-lg px-2.5 font-mono text-sm"
+            required
+          >
+            <option value="">— Depot wählen —</option>
+            {waehlbar.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+                {normalizePortfolioKind(p.kind) === 'demo' ? ' (Papiergeld)' : ''}
+              </option>
+            ))}
+          </select>
+        </Field>
+
         <div className="grid grid-cols-2 gap-2">
           {(['einzahlung', 'auszahlung'] as const).map((k) => (
             <ChoiceButton
@@ -162,6 +216,12 @@ export function CashflowList({
                 <span className="text-muted-foreground">
                   {new Date(c.occurredAt).toLocaleDateString('de-DE')}
                 </span>
+                {/* Das Depot steht an jeder Zeile: Bei mehreren Depots ist eine
+                    Zahlung ohne Konto nicht einzuordnen. */}
+                <span className="text-muted-foreground/70">
+                  · {depotName.get(c.portfolioId) ?? '—'}
+                </span>
+                {istDemoDepot(c.portfolioId) && <PaperBadge size="compact" />}
                 {c.note && <span className="text-muted-foreground/70">· {c.note}</span>}
               </span>
               <button

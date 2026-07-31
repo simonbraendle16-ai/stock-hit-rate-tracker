@@ -2,7 +2,7 @@
 
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
-import { cashflow, trade, userSettings } from '@/lib/db/schema'
+import { cashflow, portfolio, trade, userSettings } from '@/lib/db/schema'
 import { eq, sql } from 'drizzle-orm'
 import { headers } from 'next/headers'
 import { revalidatePath } from 'next/cache'
@@ -26,13 +26,20 @@ async function getUserId() {
 }
 
 export type UserSettings = {
+  /**
+   * @deprecated Seit Etappe 12 steht das Startkapital am DEPOT
+   * (`portfolio.startCapital`). Der Wert hier ist der Altbestand und wird von
+   * keiner Kennzahl mehr gelesen — die Auswahl liefert ihn über
+   * `loadScopeContext().startCapital`. Nicht für neue Rechnungen verwenden.
+   */
   startCapital: number
   defaultRiskPct: number
   maxRiskPct: number
-  /** Kontowährung — reine Anzeigeebene, Kurse werden nicht umgerechnet. */
+  /** Kontowährung — reine Anzeigeebene, Kurse werden nicht umgerechnet. Global. */
   currency: string
-  /** Vorbelegung der Ordergebühren im Trade-Formular. */
+  /** @deprecated Seit Etappe 12 am Depot (`portfolio.defaultFeeEntry`). */
   defaultFeeEntry: number
+  /** @deprecated Seit Etappe 12 am Depot (`portfolio.defaultFeeExit`). */
   defaultFeeExit: number
 }
 
@@ -99,26 +106,31 @@ function clampCurrency(v: string | undefined, fallback: string): string {
   return SUPPORTED_CURRENCIES.includes(code) ? code : fallback
 }
 
-/** Einstellungen speichern (Upsert). */
+/**
+ * Die kontoweiten Einstellungen speichern (Upsert).
+ *
+ * Seit Etappe 12 sind das nur noch drei: Risiko-Vorgaben und Währung. Startkapital
+ * und Standardgebühren gehören zum DEPOT und werden über `updatePortfolioMoney`
+ * (`app/actions/portfolios.ts`) gepflegt — sie hier weiterhin zu schreiben würde
+ * einen zweiten, veralteten Wert erzeugen, den irgendwann jemand ausliest.
+ *
+ * Die Risiko-Prozente bleiben bewusst kontoweit: „höchstens 2 % pro Trade" ist
+ * eine Regel über das eigene Verhalten, keine Eigenschaft eines Kontos — und sie
+ * soll in der Übung genauso gelten wie im Ernst.
+ */
 export async function updateSettings(input: {
-  startCapital: number
   defaultRiskPct: number
   maxRiskPct: number
   currency?: string
-  defaultFeeEntry?: number
-  defaultFeeExit?: number
 }): Promise<void> {
   const userId = await getUserId()
   const current = await getSettings()
   const values = {
-    startCapital: clampPositive(input.startCapital, DEFAULTS.startCapital),
     defaultRiskPct: clampPct(input.defaultRiskPct, DEFAULTS.defaultRiskPct),
     maxRiskPct: clampPct(input.maxRiskPct, DEFAULTS.maxRiskPct),
     // Die Währung ändert NUR die Anzeige. Bestehende Beträge werden hier nicht
     // angefasst — dafür gibt es den ausdrücklichen Umrechnungs-Vorgang.
     currency: clampCurrency(input.currency, current.currency),
-    defaultFeeEntry: clampFee(input.defaultFeeEntry ?? current.defaultFeeEntry, DEFAULTS.defaultFeeEntry),
-    defaultFeeExit: clampFee(input.defaultFeeExit ?? current.defaultFeeExit, DEFAULTS.defaultFeeExit),
   }
 
   await db
@@ -143,11 +155,8 @@ export async function updateSettings(input: {
 export async function changeCurrency(input: {
   currency: string
   rate: number | null
-  startCapital: number
   defaultRiskPct: number
   maxRiskPct: number
-  defaultFeeEntry: number
-  defaultFeeExit: number
 }): Promise<{ converted: number }> {
   const userId = await getUserId()
   const current = await getSettings()
@@ -183,24 +192,29 @@ export async function changeCurrency(input: {
     } catch {
       // Migration 0010 noch nicht angewendet → es gibt schlicht keine Cashflows.
     }
+
+    // Seit Etappe 12 stehen Startkapital und Gebühren an den DEPOTS — sie müssen
+    // deshalb hier mit umgerechnet werden. Ohne das stünde nach einem
+    // Währungswechsel ein Startkapital in der alten Währung neben Trades in der
+    // neuen, und jede Rendite wäre still falsch. Umgerechnet werden ALLE Depots,
+    // auch archivierte und das Demo-Depot: Das Papier-Startkapital ist zwar
+    // Übungsgeld, notiert aber in derselben Kontowährung.
+    const depotResult = await db
+      .update(portfolio)
+      .set({
+        startCapital: sql`${portfolio.startCapital} * ${rate}`,
+        defaultFeeEntry: sql`${portfolio.defaultFeeEntry} * ${rate}`,
+        defaultFeeExit: sql`${portfolio.defaultFeeExit} * ${rate}`,
+      })
+      .where(eq(portfolio.userId, userId))
+      .returning({ id: portfolio.id })
+    converted += depotResult.length
   }
 
   const values = {
-    startCapital: clampPositive(
-      rate != null ? input.startCapital * rate : input.startCapital,
-      DEFAULTS.startCapital,
-    ),
     defaultRiskPct: clampPct(input.defaultRiskPct, DEFAULTS.defaultRiskPct),
     maxRiskPct: clampPct(input.maxRiskPct, DEFAULTS.maxRiskPct),
     currency: target,
-    defaultFeeEntry: clampFee(
-      rate != null ? input.defaultFeeEntry * rate : input.defaultFeeEntry,
-      DEFAULTS.defaultFeeEntry,
-    ),
-    defaultFeeExit: clampFee(
-      rate != null ? input.defaultFeeExit * rate : input.defaultFeeExit,
-      DEFAULTS.defaultFeeExit,
-    ),
   }
 
   await db

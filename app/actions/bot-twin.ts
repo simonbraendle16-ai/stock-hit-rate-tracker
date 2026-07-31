@@ -56,6 +56,7 @@ import {
   type BotTwinStats,
   type MissedEntry,
 } from '@/lib/bot-twin'
+import { loadScopeContext, tradeScopeWhere } from '@/lib/portfolio-context'
 
 // ---------------------------------------------------------------------------
 // Grundlagen
@@ -260,10 +261,15 @@ async function runWithFallback(
 export async function getBotTwinStats(): Promise<BotTwinStats & { excursion: ExcursionStats }> {
   const userId = await getUserId()
 
+  // Nur die aktive Auswahl (Etappe 12): „Was kostet mich mein Eingreifen?" ist
+  // eine Frage über ein Konto. Ein Übungstrade in derselben Differenz würde die
+  // Antwort verwässern — und obendrein Kerzen kosten, denn dieser Block ist der
+  // einzige, der ans Netz geht.
+  const { portfolioIds } = await loadScopeContext(userId)
   const rows = await db
     .select()
     .from(trade)
-    .where(eq(trade.userId, userId))
+    .where(tradeScopeWhere(userId, portfolioIds))
     .orderBy(asc(trade.closedAt), asc(trade.id))
 
   const closed = rows.filter((t) => t.status === 'abgeschlossen')

@@ -9,6 +9,7 @@ import {
   INVITE_CODE_LENGTH,
   INVITE_TTL_MS,
 } from './friends'
+import { computeDisciplineStats } from './trade-stats'
 import type { DisciplineStats, TradeRow } from './trade-stats'
 
 /** Minimaler abgeschlossener Gewinn-Trade; Felder je Test überschreiben. */
@@ -203,5 +204,69 @@ describe('toFriendSummary', () => {
     for (const forbidden of ['totalPnL', 'startCapital', 'currentBalance', 'returnPct']) {
       expect(forbidden in s).toBe(false)
     }
+  })
+})
+
+describe('geteilte Kennzahlen: nur Echtgeld (Etappe 12)', () => {
+  // Der stillste Teil des Depot-Fehlers saß hier. `toFriendSummary` hält Beträge
+  // draußen — aber die vier Felder, die es durchlässt (Disziplin, Trefferquote,
+  // Erwartungswert, Streak), rechnete `computeDisciplineStats` über ALLE
+  // abgeschlossenen Trades. Ein Freund sah damit Übungstrades als Teil einer
+  // echten Disziplin-Bilanz, ohne es erfahren zu können.
+  //
+  // Gefiltert wird seither beim Laden (`loadRealMoneyScope` + `tradeScopeWhere`
+  // in `app/actions/friends.ts`), nicht in der Rechnung. Diese Tests halten die
+  // ANFORDERUNG fest: Kommen Demo-Zeilen herein, ändern sich die geteilten
+  // Zahlen nachweisbar — wer den Filter entfernt, sieht es hier.
+
+  /** Ein Echtgeld-Verlust mit Planbruch, ein Demo-Gewinn nach Plan. */
+  const echtVerlust = makeTrade({
+    id: 1,
+    portfolioId: 1,
+    tradedWithMoney: true,
+    result: 'verlust',
+    actualExitPrice: 90,
+    followedPlan: false,
+  })
+  const demoGewinn = makeTrade({
+    id: 2,
+    portfolioId: 2,
+    tradedWithMoney: false,
+    result: 'gewinn',
+    actualExitPrice: 120,
+    followedPlan: true,
+  })
+
+  it('zählt einen Demo-Trade nicht in Trefferquote und Disziplin', () => {
+    const nurEcht = toFriendSummary(computeDisciplineStats([echtVerlust], 0, []))
+    expect(nurEcht.completed).toBe(1)
+    expect(nurEcht.winRate).toBe(0)
+    expect(nurEcht.disciplineScore).toBe(0)
+  })
+
+  it('würde mit Demo-Zeilen andere Zahlen liefern — deshalb der Filter', () => {
+    const gemischt = toFriendSummary(
+      computeDisciplineStats([echtVerlust, demoGewinn], 0, []),
+    )
+    // Genau die Verfälschung, die früher nach außen ging: aus 0 % Trefferquote
+    // werden 50 %, aus 0 % Plantreue 50 %.
+    expect(gemischt.completed).toBe(2)
+    expect(gemischt.winRate).toBe(50)
+    expect(gemischt.disciplineScore).toBe(50)
+
+    const nurEcht = toFriendSummary(computeDisciplineStats([echtVerlust], 0, []))
+    expect(gemischt.winRate).not.toBe(nurEcht.winRate)
+    expect(gemischt.disciplineScore).not.toBe(nurEcht.disciplineScore)
+  })
+
+  it('liefert für ein Konto ohne Echtgeld-Trades leere, aber gültige Zahlen', () => {
+    // Der Fall, den `summaryFor` mit einer leeren Liste bedient: Wer nur übt,
+    // teilt keine Quote — und keinen Fehler.
+    const leer = toFriendSummary(computeDisciplineStats([], 0, []))
+    expect(leer.completed).toBe(0)
+    expect(leer.winRate).toBe(0)
+    expect(leer.expectancy).toBe(0)
+    expect(leer.streak).toBe(0)
+    expect(leer.ruleViolations).toBe(0)
   })
 })

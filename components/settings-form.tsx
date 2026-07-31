@@ -14,14 +14,22 @@ import { Field, FormSection } from '@/components/form-frame'
 
 const inputCls = 'input-ocean h-11 font-mono'
 
+/**
+ * Die KONTOWEITEN Einstellungen (Etappe 12): Währung und Risiko-Vorgaben.
+ *
+ * Startkapital und Standardgebühren sind hier bewusst nicht mehr zu finden — sie
+ * stehen am Depot und werden in `PortfolioManager` gepflegt. Sie an zwei Orten
+ * einstellbar zu lassen hätte einen zweiten, veralteten Wert erzeugt, den
+ * irgendwann jemand ausliest.
+ *
+ * Die Währung bleibt global: Ein Aggregat über Depots verschiedener Währung wäre
+ * keine gültige Summe, weil die App bewusst nicht umrechnet.
+ */
 export function SettingsForm({ initial }: { initial: UserSettings }) {
   const router = useRouter()
-  const [startCapital, setStartCapital] = useState(String(initial.startCapital))
   const [defaultRiskPct, setDefaultRiskPct] = useState(String(initial.defaultRiskPct))
   const [maxRiskPct, setMaxRiskPct] = useState(String(initial.maxRiskPct))
   const [currency, setCurrency] = useState(initial.currency)
-  const [feeEntry, setFeeEntry] = useState(String(initial.defaultFeeEntry))
-  const [feeExit, setFeeExit] = useState(String(initial.defaultFeeExit))
   const [currencyDialogOpen, setCurrencyDialogOpen] = useState(false)
   const [loading, setLoading] = useState(false)
 
@@ -36,12 +44,9 @@ export function SettingsForm({ initial }: { initial: UserSettings }) {
     setLoading(true)
     try {
       await updateSettings({
-        startCapital: parseFloat(startCapital),
         defaultRiskPct: parseFloat(defaultRiskPct),
         maxRiskPct: parseFloat(maxRiskPct),
         currency,
-        defaultFeeEntry: parseFloat(feeEntry),
-        defaultFeeExit: parseFloat(feeExit),
       })
       toast.success('Einstellungen gespeichert')
       router.refresh()
@@ -56,21 +61,10 @@ export function SettingsForm({ initial }: { initial: UserSettings }) {
     <form onSubmit={submit} className="space-y-5">
       <FormSection
         icon={Wallet}
-        title="Konto"
-        hint="Basis für Bilanz und Rendite. Nur Echtgeld-Trades verändern den Kontostand."
+        title="Währung"
+        hint="Gilt für alle Depots gemeinsam — nur so bleibt eine Summe über Depots gültig."
       >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field label={`Startkapital (${currencySymbol(currency)})`}>
-            <Input
-              type="number"
-              step="any"
-              min="0"
-              value={startCapital}
-              onChange={(e) => setStartCapital(e.target.value)}
-              className={inputCls}
-              required
-            />
-          </Field>
           <Field label="Kontowährung">
             <select
               value={currency}
@@ -87,6 +81,7 @@ export function SettingsForm({ initial }: { initial: UserSettings }) {
         </div>
         <p className="note">
           Kurse (Einstieg, Stop, Ziel) notieren weiterhin in der Währung des Instruments.
+          Startkapital und Gebühren stehen bei den Depots weiter unten.
         </p>
       </FormSection>
 
@@ -123,44 +118,10 @@ export function SettingsForm({ initial }: { initial: UserSettings }) {
           </Field>
         </div>
         <p className="note">
-          Beim Planen eines Echtgeld-Trades zeigt das Formular, wie viel Prozent des Kontos der
-          Stop-Loss riskiert — und warnt oberhalb der Schwelle.
-        </p>
-      </FormSection>
-
-      <FormSection
-        icon={Coins}
-        title="Standard-Gebühren"
-        hint="Vorbelegung im Trade-Formular — dort pro Trade änderbar."
-        delay="rise-in-2"
-      >
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field label={`Gebühr Kauf (${currencySymbol(currency)})`}>
-            <Input
-              type="number"
-              step="any"
-              min="0"
-              value={feeEntry}
-              onChange={(e) => setFeeEntry(e.target.value)}
-              className={inputCls}
-              required
-            />
-          </Field>
-          <Field label={`Gebühr Verkauf (${currencySymbol(currency)})`}>
-            <Input
-              type="number"
-              step="any"
-              min="0"
-              value={feeExit}
-              onChange={(e) => setFeeExit(e.target.value)}
-              className={inputCls}
-              required
-            />
-          </Field>
-        </div>
-        <p className="note">
-          Beim Abschluss wird die tatsächlich gezahlte Gebühr auf dem Trade festgeschrieben;
-          eine spätere Änderung hier verschiebt deine Historie also nicht mehr.
+          Beim Planen eines Trades zeigt das Formular, wie viel Prozent des Depotkapitals der
+          Stop-Loss riskiert — und warnt oberhalb der Schwelle. Das gilt auch im Übungsdepot,
+          gemessen an seinem Papier-Startkapital: Wer die Positionsgröße ohne Bremse übt, übt
+          ein, wovor die Bremse später schützen soll.
         </p>
       </FormSection>
 
@@ -182,11 +143,8 @@ export function SettingsForm({ initial }: { initial: UserSettings }) {
         from={initial.currency}
         to={currency}
         otherSettings={{
-          startCapital: parseFloat(startCapital),
           defaultRiskPct: parseFloat(defaultRiskPct),
           maxRiskPct: parseFloat(maxRiskPct),
-          defaultFeeEntry: parseFloat(feeEntry),
-          defaultFeeExit: parseFloat(feeExit),
         }}
       />
     </form>

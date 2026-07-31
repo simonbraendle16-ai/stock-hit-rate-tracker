@@ -140,6 +140,26 @@ Candlesticks) · pnpm via corepack.
   weiter, als du sie gehalten hast"), er ordnet nichts an. Panel
   `components/excursion-panel.tsx` auf `/tracking`, Karte `components/excursion-card.tsx` auf
   `/trades/[id]`.
+- **Teilziele** (Etappe 13) = mehrere Take-Profits je Trade, geplant **vor** dem Einstieg und
+  einzeln ausführbar (Migration `0023`, Tabelle `trade_target`). Ein Staffel-Ausstieg ist
+  Douglas-konform, solange die Stufen vorher feststehen — genau deshalb sind sie ein Teil des
+  Plans und keine Entscheidung im laufenden Trade. Höchstens `MAX_TARGETS` = 4 Stufen, je Kurs +
+  Anteil der **Anfangs**position; die Summe darf unter 100 % bleiben, der Rest läuft dann bis zur
+  letzten Stufe (und wird beim gewichteten CRV auch dort gerechnet). Reine Logik in
+  `lib/trade-targets.ts` (`normalizeTargets` · `effectiveTargets` · `blendedRiskReward` ·
+  `plannedQty` · `targetProgress`, getestet) — Formular und Server prüfen über **dieselbe**
+  Funktion. `trade.takeProfit`/`takeProfitPct` sind ab hier die **abgeleitete Schreibweise der
+  ersten Stufe** (wie `tradedWithMoney` die von `portfolio.kind` ist), geschrieben nur in
+  `createTrade` und `updateTradePlan`; dadurch bleiben alle reinen Rechenfunktionen und der
+  gesamte Altbestand unverändert gültig. **Kein Backfill:** Ein Trade ohne Zeilen wird über
+  `effectiveTargets` als eine implizite Stufe gelesen. Das gespeicherte `riskRewardRatio` ist bei
+  Stufen das **gewichtete** CRV (bei genau einer Stufe identisch mit `computeRiskReward`).
+  Ausgeführt wird über `executeTarget` (ein `teilverkauf`-Event, die Stufe zeigt per `eventId`
+  darauf); die **letzte** Stufe, die die Position schließt, läuft bewusst über `closeTrade`
+  (`targetId`) — an einem vollständigen Ausstieg hängen Verlust-Annahme, Plan-Treue und Check-in.
+  Ausgeführte Stufen sind unveränderlich. Oberfläche: `components/target-stages.tsx` (Eingabe,
+  gemeinsam für Formular und Bearbeiten-Dialog) und `components/trade-targets-card.tsx`
+  (Anzeige + Ausführen) auf `/trades/[id]`; je Stufe ein Kurs-Alert und eine Chart-Linie.
 - **Emotions-Check-in** = zwei Momentaufnahmen je Trade (Aktivieren + Abschließen):
   Skala 1–5 (ruhig ↔ aufgewühlt) + Tags aus fester Liste. **Skala ist Pflicht**, Tags/Notiz
   freiwillig. Auswertung „Zustand & Ergebnis" auf `/tracking`; unter 10 Trades je Gruppe
@@ -333,7 +353,14 @@ Candlesticks) · pnpm via corepack.
   `-grid.tsx`, `components/prognosis-gap-row.tsx`, `app/actions/instruments.ts`. Die frühere
   Prognose-Rangliste `components/stock-ranking.tsx` ist damit entfallen)
   · Etappe 11 „Hebel auf Papier und Kursfrische" (keine Migration; Einsatz/Hebel auch für
-  Demo-Trades, `components/quote-auto-refresh.tsx` + `refreshQuotesIfStale`).
+  Demo-Trades, `components/quote-auto-refresh.tsx` + `refreshQuotesIfStale`)
+  · Etappe 12 „Depots" (Migration `0022`, Tabelle `portfolio` + `portfolioId` an `trade`/
+  `cashflow` + `activeScope` an `user_settings`; Echtgeld und Übung strikt getrennt,
+  `lib/portfolio-scope.ts` + `lib/portfolio-context.ts` + `app/actions/portfolios.ts`.
+  **Mit Backfill:** je Nutzer ein Hauptdepot und ein Demo-Depot, Trades nach
+  `tradedWithMoney` verteilt)
+  · Etappe 13 „Teilziele" (Migration `0023`, Tabelle `trade_target`; mehrere Take-Profits je
+  Trade, vorher geplant und einzeln ausführbar, `lib/trade-targets.ts`. **Ohne Backfill**).
   **Die Roadmap ist damit vollständig** — offen ist nur noch der Ideenvorrat in
   `IDEEN-BACKLOG.md`.
 

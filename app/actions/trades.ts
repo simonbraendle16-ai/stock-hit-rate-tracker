@@ -2,8 +2,8 @@
 
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
-import { trade, tradeEvent, assessment, stock } from '@/lib/db/schema'
-import { and, asc, desc, eq } from 'drizzle-orm'
+import { trade, tradeEvent, tradeTarget, assessment, stock } from '@/lib/db/schema'
+import { and, asc, desc, eq, inArray } from 'drizzle-orm'
 import { headers } from 'next/headers'
 import { revalidatePath } from 'next/cache'
 import { PRE_TRADE_QUESTIONS, type PreTradeAnswer } from '@/lib/pre-trade-questions'
@@ -36,6 +36,7 @@ import {
   type TimeStats,
   type TradeRow,
   type TradeEventsByTrade,
+  type CashflowRow,
 } from '@/lib/trade-stats'
 import { parseSetupTags, rankSetupTags, serializeSetupTags } from '@/lib/setups'
 import {
@@ -52,9 +53,25 @@ import {
   isRiskReducingStop,
   type TradeEventRow,
 } from '@/lib/trade-events'
+import {
+  blendedRiskReward,
+  effectiveTargets,
+  normalizeTargets,
+  plannedQty,
+  type TargetPlanInput,
+  type TradeTargetRow,
+} from '@/lib/trade-targets'
 import { getSettings } from '@/app/actions/settings'
-import { listCashflows } from '@/app/actions/cashflows'
 import { createPlanAlerts } from '@/app/actions/alerts'
+import {
+  ensurePortfolios,
+  kindOf,
+  loadOwnedPortfolio,
+  loadScopeContext,
+  loadScopedCashflows,
+  tradeScopeWhere,
+} from '@/lib/portfolio-context'
+import { scopePortfolioIds, type PortfolioRow } from '@/lib/portfolio-scope'
 
 async function getUserId() {
   const session = await auth.api.getSession({ headers: await headers() })
@@ -89,6 +106,13 @@ export type TradeInput = {
   feeExit?: number | null
   // Verkaufsanteil beim Take-Profit in Prozent (Teilverkauf-Projektion).
   takeProfitPct?: number | null
+  // Teilziele (Etappe 13): mehrere Ausstiegsstufen statt eines einzelnen Ziels.
+  // Optional — ohne Angabe bleibt es beim Feld `takeProfit` wie bisher.
+  //
+  // Ist die Liste gesetzt, ist SIE der Plan: `takeProfit`/`takeProfitPct` werden
+  // aus der ersten Stufe abgeleitet und nicht mehr aus der Eingabe übernommen.
+  // Geprüft und sortiert wird ausschließlich in `lib/trade-targets.ts`.
+  targets?: TargetPlanInput[] | null
   strategy?: string | null
   // Setup-Tags (Etappe 7b): die auswertbare Schublade neben dem Freitext.
   // Gesäubert wird in `lib/setups.ts` — der Client darf hier alles schicken.
@@ -99,8 +123,13 @@ export type TradeInput = {
   elliottWaveCount?: string | null
   waveDegree?: string | null
   elliottInvalidation?: number | null
-  // mit echtem Geld vs. Demo/Papertrade
-  tradedWithMoney?: boolean
+  // Das Depot, in das gebucht wird (Etappe 12). Ohne Angabe nimmt der Server die
+  // aktive Auswahl — aber nur, wenn das ein einzelnes Depot ist.
+  //
+  // Die Handelsart (`tradedWithMoney`) wird daraus ABGELEITET und ist deshalb
+  // absichtlich kein Eingabefeld mehr: Sie war eine Vorbelegung, die man
+  // übersieht, und genau daran ist ein Papier-Trade in der echten Bilanz gelandet.
+  portfolioId?: number | null
   // die 4 Douglas-Antworten (Gate = alle 'ja')
   preTradeAnswers?: PreTradeAnswer[]
   // Erfassungsweg: 'langfristig' (voller Weg) oder 'schnell' (ohne Fragen-Gate).
@@ -109,6 +138,29 @@ export type TradeInput = {
 }
 
 const COOLDOWN_MIN = 60 // Revenge-Guard window
+
+/**
+ * Das Depot, in das ein neuer Trade gebucht wird.
+ *
+ * Mit ausdrücklicher Angabe: genau dieses, nach Prüfung der Eigentümerschaft.
+ * Ohne Angabe: die aktive Auswahl — sofern sie ein einzelnes Depot ist. Das
+ * Echtgeld-Aggregat ist bewusst KEIN Ziel; in eine Zusammenfassung kann man nicht
+ * buchen, und stillschweigend „irgendein Echtgeld-Depot" zu wählen wäre wieder
+ * eine Vorbelegung, die man übersieht. Deshalb wird hier nachgefragt statt geraten.
+ */
+async function resolveZielDepot(
+  userId: string,
+  portfolioId: number | null | undefined,
+): Promise<PortfolioRow> {
+  if (portfolioId != null) return loadOwnedPortfolio(userId, portfolioId)
+
+  const { active } = await loadScopeContext(userId)
+  if (active) return active
+
+  throw new Error(
+    'Bitte wähle das Depot, in das dieser Trade gebucht werden soll — in die Zusammenfassung „Alle Echtgeld-Depots" kann nicht gebucht werden.',
+  )
+}
 
 /** Hebel auf einen sinnvollen Bereich begrenzen; 1 = ungehebelt. */
 function normalizeLeverage(v: number | null | undefined): number {
@@ -167,6 +219,90 @@ function moodForKind(
 // ---------------------------------------------------------------------------
 
 /**
+ * Der Zielplan eines Trades: geprüfte Stufen plus die daraus ABGELEITETEN Felder
+ * der Trade-Zeile.
+ *
+ * Sind Teilziele angegeben, sind sie der Plan — `takeProfit` und `takeProfitPct`
+ * werden dann aus der ersten Stufe geschrieben und nicht mehr aus der Eingabe
+ * übernommen (dieselbe Haltung wie bei `tradedWithMoney` seit Etappe 12: eine
+ * Quelle, alles andere ist ihre Schreibweise). Das Chance-Risiko-Verhältnis ist
+ * in diesem Fall der nach Anteilen gewichtete Wert — die erste Stufe allein wäre
+ * eine zu kleine, die letzte eine zu große Aussage über denselben Plan.
+ *
+ * Ohne Teilziele bleibt alles exakt wie vorher: ein Ziel, ein R:R, keine Zeilen
+ * in `trade_target`.
+ */
+function resolveTargetPlan(input: {
+  entryPrice: number
+  stopLoss: number
+  direction: string
+  takeProfit?: number | null
+  takeProfitPct?: number | null
+  targets?: TargetPlanInput[] | null
+}): {
+  targets: TargetPlanInput[]
+  takeProfit: number | null
+  takeProfitPct: number
+  riskRewardRatio: number | null
+} {
+  const gestaffelt = normalizeTargets({
+    entry: input.entryPrice,
+    stopLoss: input.stopLoss,
+    direction: input.direction,
+    targets: input.targets ?? [],
+  })
+
+  if (gestaffelt.length > 0) {
+    return {
+      targets: gestaffelt,
+      takeProfit: gestaffelt[0].price,
+      takeProfitPct: gestaffelt[0].sharePct,
+      riskRewardRatio: blendedRiskReward({
+        entry: input.entryPrice,
+        stopLoss: input.stopLoss,
+        targets: gestaffelt,
+      }),
+    }
+  }
+
+  return {
+    targets: [],
+    takeProfit: input.takeProfit ?? null,
+    takeProfitPct: input.takeProfitPct != null ? input.takeProfitPct : 100,
+    riskRewardRatio: computeRiskReward(
+      input.entryPrice,
+      input.stopLoss,
+      input.takeProfit ?? null,
+    ),
+  }
+}
+
+/** Zeilen für `trade_target` aus dem geprüften Plan. Reihenfolge = Plan-Reihenfolge. */
+function targetRows(
+  tradeId: number,
+  userId: string,
+  targets: TargetPlanInput[],
+): (typeof tradeTarget.$inferInsert)[] {
+  return targets.map((t, i) => ({
+    tradeId,
+    userId,
+    sortOrder: i,
+    price: t.price,
+    sharePct: t.sharePct,
+    note: t.note ?? null,
+  }))
+}
+
+/** Alle Stufen eines Trades, in Reihenfolge (owner-gefiltert). */
+async function loadTradeTargets(userId: string, tradeId: number): Promise<TradeTargetRow[]> {
+  return db
+    .select()
+    .from(tradeTarget)
+    .where(and(eq(tradeTarget.tradeId, tradeId), eq(tradeTarget.userId, userId)))
+    .orderBy(asc(tradeTarget.sortOrder), asc(tradeTarget.id))
+}
+
+/**
  * Create a planned trade. Enforces the Douglas "4 Fragen" gate: a trade is only
  * fully planned (preTradeAnswered) when wave count, entry, stop and a
  * target/invalidation are all present.
@@ -196,6 +332,11 @@ export async function createTrade(input: TradeInput): Promise<{ id: number }> {
       throw new Error('Bei Short muss der Take-Profit unter dem Einstieg liegen.')
     }
   }
+
+  // Teilziele (Etappe 13): geprüft, sortiert und in die abgeleiteten Felder
+  // übersetzt — VOR jedem Schreibzugriff, damit ein unmöglicher Staffelplan gar
+  // nicht erst zu einem halben Trade führt.
+  const zielPlan = resolveTargetPlan(input)
 
   // Optional link to an instrument in the watchlist (shared hit-rate key).
   //
@@ -246,12 +387,9 @@ export async function createTrade(input: TradeInput): Promise<{ id: number }> {
     answers.length === PRE_TRADE_QUESTIONS.length &&
     answers.every((a) => a.answer === 'ja')
 
-  // live CRV
-  const riskRewardRatio = computeRiskReward(
-    input.entryPrice,
-    input.stopLoss,
-    input.takeProfit ?? null,
-  )
+  // Live-CRV — bei Teilzielen der nach Anteilen gewichtete Wert (siehe
+  // `resolveTargetPlan`), sonst wie bisher das Verhältnis zum einen Ziel.
+  const riskRewardRatio = zielPlan.riskRewardRatio
 
   // Stückzahl aus Einsatz und Hebel ableiten (Basis der P&L-Rechnung). Der Hebel
   // steckt danach in positionSize und wirkt dadurch automatisch in Risiko, Guard
@@ -264,53 +402,77 @@ export async function createTrade(input: TradeInput): Promise<{ id: number }> {
   // `tradedWithMoney`, und Gebühren fallen auf Papier keine an. Das
   // R-Vielfache ist von der Stückzahl unabhängig (Gewinn und Risiko skalieren
   // gleich), Disziplin- und Erwartungswert-Kennzahlen ändern sich dadurch nicht.
-  const withMoney = input.tradedWithMoney ?? true
+  // Das Depot bestimmt die Handelsart — nicht der Browser (Etappe 12).
+  //
+  // Vorher stand hier `input.tradedWithMoney ?? true`: ein Formularwert mit
+  // Vorbelegung „Echtgeld". Ein vergessener Klick, und ein Papier-Trade zählte
+  // als echt. Genau das ist passiert, und es hat die ganze Auswertung verdorben.
+  // Ab jetzt ist die Handelsart die Schreibweise von `portfolio.kind`; ein
+  // Papier-Trade in einem Echtgeld-Depot ist strukturell unmöglich.
+  //
+  // `loadOwnedPortfolio` wirft bei fremdem oder unbekanntem Depot: Eine
+  // `portfolioId` aus dem Browser ist eine Behauptung, keine Tatsache.
+  const zielDepot = await resolveZielDepot(userId, input.portfolioId)
+  const withMoney = kindOf(zielDepot) === 'echtgeld'
+
   const investedAmount = input.investedAmount ?? null
   const leverage = normalizeLeverage(input.leverage)
   const positionSize =
     investedAmount != null
       ? computeShares(investedAmount, input.entryPrice, leverage)
       : (input.positionSize ?? null)
-  const takeProfitPct = input.takeProfitPct != null ? input.takeProfitPct : 100
+  const takeProfitPct = zielPlan.takeProfitPct
 
-  // Geplante Gebühren: Vorgabe aus den Einstellungen, im Formular überschreibbar.
-  // Bei Demo-Trades fallen keine an.
-  const settings = await getSettings()
-  const feeEntry = withMoney ? normalizeFee(input.feeEntry, settings.defaultFeeEntry) : 0
-  const feeExit = withMoney ? normalizeFee(input.feeExit, settings.defaultFeeExit) : 0
+  // Geplante Gebühren: Vorbelegung aus dem DEPOT (verschiedene Broker kosten
+  // verschieden), im Formular überschreibbar. Bei Demo fallen keine an.
+  const feeEntry = withMoney ? normalizeFee(input.feeEntry, zielDepot.defaultFeeEntry) : 0
+  const feeExit = withMoney ? normalizeFee(input.feeExit, zielDepot.defaultFeeExit) : 0
 
-  const [row] = await db
-    .insert(trade)
-    .values({
-      userId,
-      stockId,
-      ticker,
-      market: input.market ?? 'aktien',
-      tradeKind,
-      direction: input.direction,
-      entryPrice: input.entryPrice,
-      stopLoss: input.stopLoss,
-      takeProfit: input.takeProfit ?? null,
-      positionSize,
-      investedAmount,
-      leverage,
-      feeEntry,
-      feeExit,
-      takeProfitPct,
-      strategy: input.strategy?.trim() || null,
-      setupTags: serializeSetupTags(input.setupTags),
-      broker: input.broker?.trim() || null,
-      riskRewardRatio,
-      notes: input.notes?.trim() || null,
-      status: 'geplant',
-      elliottWaveCount: input.elliottWaveCount?.trim() || null,
-      waveDegree: input.waveDegree?.trim() || null,
-      elliottInvalidation: input.elliottInvalidation ?? null,
-      preTradeAnswered,
-      preTradeAnswers: answers.length ? JSON.stringify(answers) : null,
-      tradedWithMoney: input.tradedWithMoney ?? true,
-    })
-    .returning({ id: trade.id })
+  const [row] = await db.transaction(async (tx) => {
+    const [angelegt] = await tx
+      .insert(trade)
+      .values({
+        userId,
+        portfolioId: zielDepot.id,
+        stockId,
+        ticker,
+        market: input.market ?? 'aktien',
+        tradeKind,
+        direction: input.direction,
+        entryPrice: input.entryPrice,
+        stopLoss: input.stopLoss,
+        // Abgeleitet: bei Teilzielen der Kurs der ersten Stufe (siehe `resolveTargetPlan`).
+        takeProfit: zielPlan.takeProfit,
+        positionSize,
+        investedAmount,
+        leverage,
+        feeEntry,
+        feeExit,
+        takeProfitPct,
+        strategy: input.strategy?.trim() || null,
+        setupTags: serializeSetupTags(input.setupTags),
+        broker: input.broker?.trim() || null,
+        riskRewardRatio,
+        notes: input.notes?.trim() || null,
+        status: 'geplant',
+        elliottWaveCount: input.elliottWaveCount?.trim() || null,
+        waveDegree: input.waveDegree?.trim() || null,
+        elliottInvalidation: input.elliottInvalidation ?? null,
+        preTradeAnswered,
+        preTradeAnswers: answers.length ? JSON.stringify(answers) : null,
+        // Abgeleitet aus dem Depot, siehe oben. Einer von genau zwei Orten, an
+        // denen diese Spalte geschrieben wird (der andere ist `moveTrade`).
+        tradedWithMoney: withMoney,
+      })
+      .returning({ id: trade.id })
+
+    // Die Stufen gehören in dieselbe Transaktion wie der Trade: ein Trade, dessen
+    // Staffelplan nur halb geschrieben wurde, wäre ein Plan, den niemand gefasst hat.
+    if (zielPlan.targets.length > 0) {
+      await tx.insert(tradeTarget).values(targetRows(angelegt.id, userId, zielPlan.targets))
+    }
+    return [angelegt]
+  })
 
   revalidatePath('/')
   revalidatePath('/trades')
@@ -406,10 +568,22 @@ export async function activateTrade(
   const checkIn = moodForKind(t.tradeKind, mood, 'entry')
 
   // Revenge-Guard: any loss closed within the cooldown window?
+  //
+  // Seit Etappe 12 nur Verluste im SELBEN Depot. Sonst hinge einem echten Trade
+  // der Regelbruch `revenge` an, weil eine Stunde vorher ein Übungstrade im
+  // Demo-Depot ins Minus lief — eine Übung würde die echte Disziplin-Bilanz
+  // belasten, also genau der Fehler, den diese Etappe behebt. Umgekehrt gilt es
+  // genauso: Ein realer Verlust markiert keinen Papier-Trade.
   const [lastLoss] = await db
     .select({ closedAt: trade.closedAt })
     .from(trade)
-    .where(and(eq(trade.userId, userId), eq(trade.result, 'verlust')))
+    .where(
+      and(
+        eq(trade.userId, userId),
+        eq(trade.portfolioId, t.portfolioId),
+        eq(trade.result, 'verlust'),
+      ),
+    )
     .orderBy(desc(trade.closedAt))
     .limit(1)
 
@@ -487,6 +661,63 @@ export async function updateTradePlan(
     throw new Error('Abgeschlossene Trades können nicht mehr geändert werden.')
   }
 
+  // --- Teilziele (Etappe 13) ------------------------------------------------
+  //
+  // Ausgeführte Stufen sind unveränderlich: Sie sind bereits als Teilverkauf
+  // abgerechnet, und ein Plan darf keine Geschichte umschreiben. Sie wandern
+  // deshalb unverändert in den neuen Plan zurück und werden mitgeprüft — sonst
+  // ließe sich über eine Planänderung mehr als 100 % der Position verplanen.
+  const bestehendeZiele = await loadTradeTargets(userId, id)
+  const ausgefuehrt = bestehendeZiele.filter((z) => z.executedAt != null)
+  const nextDirection = t.direction
+  const zielEntry = patch.entryPrice ?? t.entryPrice
+  const zielStop = patch.stopLoss ?? t.stopLoss
+
+  let neuerZielPlan: TargetPlanInput[] | null = null // null = Stufen bleiben, wie sie sind
+  if (patch.targets !== undefined) {
+    neuerZielPlan = normalizeTargets({
+      entry: zielEntry,
+      stopLoss: zielStop,
+      direction: nextDirection,
+      targets: [
+        ...ausgefuehrt.map((z) => ({ price: z.price, sharePct: z.sharePct, note: z.note })),
+        ...(patch.targets ?? []).filter(
+          (n) => !ausgefuehrt.some((z) => Math.abs(z.price - n.price) < 1e-9),
+        ),
+      ],
+    })
+  } else if (bestehendeZiele.length > 0 && patch.takeProfit !== undefined) {
+    // `takeProfit` ist an einem gestaffelten Trade die Schreibweise der ersten
+    // Stufe, kein eigenes Feld. Es allein zu setzen würde die beiden Wahrheiten
+    // auseinanderlaufen lassen — deshalb hier lieber laut abbrechen.
+    throw new Error(
+      'Dieser Trade hat Teilziele — der Take-Profit wird aus ihnen abgeleitet. ' +
+        'Bitte die Stufen selbst ändern.',
+    )
+  } else if (bestehendeZiele.length > 0 && (patch.entryPrice != null || patch.stopLoss != null)) {
+    // Einstieg oder Stop verschoben: Die Stufen bleiben stehen, aber das
+    // gewichtete R:R gilt jetzt gegen ein anderes Risiko und wird nachgezogen.
+    neuerZielPlan = bestehendeZiele.map((z) => ({
+      price: z.price,
+      sharePct: z.sharePct,
+      note: z.note,
+    }))
+  }
+
+  // Die abgeleiteten Felder der Trade-Zeile — nur wenn es Stufen gibt.
+  const zielAbleitung =
+    neuerZielPlan && neuerZielPlan.length > 0
+      ? {
+          takeProfit: neuerZielPlan[0].price,
+          takeProfitPct: neuerZielPlan[0].sharePct,
+          riskRewardRatio: blendedRiskReward({
+            entry: zielEntry,
+            stopLoss: zielStop,
+            targets: neuerZielPlan,
+          }),
+        }
+      : null
+
   const violations = parseViolations(t.ruleViolations)
   const levelEvents: TradeEventInsert[] = []
   if (t.status === 'aktiv') {
@@ -495,7 +726,16 @@ export async function updateTradePlan(
     const movesStop = patch.stopLoss != null && patch.stopLoss !== t.stopLoss
     const movesInval =
       patch.elliottInvalidation != null && patch.elliottInvalidation !== t.elliottInvalidation
-    const movesTarget = patch.takeProfit != null && patch.takeProfit !== t.takeProfit
+    // Ein Ziel ist verschoben, wenn das Feld selbst wandert ODER wenn die
+    // Staffel neu geplant wurde (dann ist die erste Stufe das neue Ziel).
+    const zielVorher = t.takeProfit
+    const zielNachher = zielAbleitung ? zielAbleitung.takeProfit : patch.takeProfit
+    const staffelGeaendert =
+      patch.targets !== undefined &&
+      JSON.stringify((neuerZielPlan ?? []).map((z) => [z.price, z.sharePct])) !==
+        JSON.stringify(bestehendeZiele.map((z) => [z.price, z.sharePct]))
+    const movesTarget =
+      (zielNachher != null && zielNachher !== zielVorher) || staffelGeaendert
 
     // Nach einem Teilverkauf ist risiko-REDUZIERENDES Stop-Nachziehen (Long höher /
     // Short tiefer, auch in den Profit) erlaubt und KEIN Regelbruch — der
@@ -537,7 +777,10 @@ export async function updateTradePlan(
         userId,
         type: 'ziel_geaendert',
         at: new Date(),
-        payload: JSON.stringify({ from: t.takeProfit, to: patch.takeProfit }),
+        payload: JSON.stringify({ from: zielVorher, to: zielNachher }),
+        note: staffelGeaendert
+          ? `Teilziele neu geplant (${(neuerZielPlan ?? []).length} Stufen)`
+          : null,
       })
     }
     if (movesInval) {
@@ -566,12 +809,38 @@ export async function updateTradePlan(
       .set({
         ...(patch.entryPrice != null ? { entryPrice: patch.entryPrice } : {}),
         ...(patch.stopLoss != null ? { stopLoss: patch.stopLoss } : {}),
-        ...(patch.takeProfit !== undefined ? { takeProfit: patch.takeProfit } : {}),
+        // Mit Stufen kommen Ziel, Anteil und R:R aus dem Staffelplan; ohne
+        // Stufen bleibt das Einzelfeld die Quelle wie bisher.
+        ...(zielAbleitung
+          ? {
+              takeProfit: zielAbleitung.takeProfit,
+              takeProfitPct: zielAbleitung.takeProfitPct,
+              riskRewardRatio: zielAbleitung.riskRewardRatio,
+            }
+          : patch.takeProfit !== undefined
+            ? { takeProfit: patch.takeProfit }
+            : {}),
         ...(patch.investedAmount !== undefined ? { investedAmount: patch.investedAmount } : {}),
         ...(patch.leverage !== undefined ? { leverage: nextLeverage } : {}),
         ...(patch.feeEntry !== undefined ? { feeEntry: normalizeFee(patch.feeEntry, 0) } : {}),
         ...(patch.feeExit !== undefined ? { feeExit: normalizeFee(patch.feeExit, 0) } : {}),
-        ...(patch.takeProfitPct !== undefined ? { takeProfitPct: patch.takeProfitPct } : {}),
+        ...(!zielAbleitung && patch.takeProfitPct !== undefined
+          ? { takeProfitPct: patch.takeProfitPct }
+          : {}),
+        // Ohne Stufen wird das R:R hier nachgezogen, sobald sich einer seiner
+        // drei Bestandteile bewegt. Vorher blieb der beim Anlegen gespeicherte
+        // Wert stehen — nach einer Planänderung stand damit eine Zahl in der
+        // Karte, die zum Plan nicht mehr passte.
+        ...(!zielAbleitung &&
+        (patch.entryPrice != null || patch.stopLoss != null || patch.takeProfit !== undefined)
+          ? {
+              riskRewardRatio: computeRiskReward(
+                zielEntry,
+                zielStop,
+                patch.takeProfit !== undefined ? patch.takeProfit : t.takeProfit,
+              ),
+            }
+          : {}),
         ...(derivedSize !== undefined
           ? { positionSize: derivedSize }
           : patch.positionSize !== undefined
@@ -588,12 +857,45 @@ export async function updateTradePlan(
         ...(patch.elliottInvalidation !== undefined
           ? { elliottInvalidation: patch.elliottInvalidation }
           : {}),
-        ...(patch.tradedWithMoney !== undefined
-          ? { tradedWithMoney: patch.tradedWithMoney }
-          : {}),
+        // Die Handelsart wird hier NICHT mehr gesetzt (Etappe 12): Sie gehört zum
+        // Depot, nicht zum Plan. Wer sie ändern will, bucht den Trade um
+        // (`moveTrade`) — dann ist sichtbar, welche zwei Bilanzen sich bewegen,
+        // statt dass eine Planänderung stillschweigend die Bilanz verschiebt.
         ruleViolations: JSON.stringify(violations),
       })
       .where(and(eq(trade.id, id), eq(trade.userId, userId)))
+
+    // Stufen neu schreiben: die ausgeführten bleiben stehen (nur ihre Position in
+    // der Reihenfolge wird nachgezogen), die offenen werden ersetzt. Gelöscht wird
+    // ausschließlich Ungenutztes — eine abgerechnete Stufe verschwindet nie.
+    if (neuerZielPlan) {
+      for (const z of bestehendeZiele) {
+        if (z.executedAt != null) continue
+        await tx.delete(tradeTarget).where(
+          and(eq(tradeTarget.id, z.id), eq(tradeTarget.userId, userId)),
+        )
+      }
+      const neu: (typeof tradeTarget.$inferInsert)[] = []
+      for (const [i, z] of neuerZielPlan.entries()) {
+        const alt = ausgefuehrt.find((a) => Math.abs(a.price - z.price) < 1e-9)
+        if (alt) {
+          await tx
+            .update(tradeTarget)
+            .set({ sortOrder: i })
+            .where(and(eq(tradeTarget.id, alt.id), eq(tradeTarget.userId, userId)))
+        } else {
+          neu.push({
+            tradeId: id,
+            userId,
+            sortOrder: i,
+            price: z.price,
+            sharePct: z.sharePct,
+            note: z.note ?? null,
+          })
+        }
+      }
+      if (neu.length) await tx.insert(tradeTarget).values(neu)
+    }
 
     if (levelEvents.length) await tx.insert(tradeEvent).values(levelEvents)
   })
@@ -613,13 +915,16 @@ export async function closeTrade(
     actualExitPrice?: number | null
     followedPlan: boolean
     lossAccepted?: boolean
-    tradedWithMoney?: boolean
     // Letzte Gelegenheit, die tatsächlich gezahlten Gebühren zu korrigieren —
     // danach sind sie eingefroren.
     feeEntry?: number | null
     feeExit?: number | null
     // Emotions-Check-in beim Ausstieg (Etappe 4) — Pflicht.
     mood: MoodCheckInput
+    // Teilziel (Etappe 13), das mit diesem Abschluss abgetragen wird: die letzte
+    // Stufe schließt die Position, und der vollständige Ausstieg gehört hierher,
+    // damit die Guards greifen. Optional — ein Abschluss von Hand hat keine Stufe.
+    targetId?: number | null
   },
 ): Promise<void> {
   const userId = await getUserId()
@@ -642,7 +947,11 @@ export async function closeTrade(
     )
   }
 
-  const withMoney = data.tradedWithMoney ?? t.tradedWithMoney
+  // Die Handelsart steht am Depot und wird beim Abschluss NICHT mehr geändert
+  // (Etappe 12). Vorher konnte der Abschluss-Dialog sie umschalten — damit wäre
+  // ein Trade nach dem Abrechnen in die andere Bilanz gesprungen, ohne dass es
+  // irgendwo sichtbar war. Umbuchen geht ausschließlich über `moveTrade`.
+  const withMoney = t.tradedWithMoney
   const frozenFeeEntry = withMoney ? normalizeFee(data.feeEntry, t.feeEntry ?? 0) : 0
   const frozenFeeExit = withMoney ? normalizeFee(data.feeExit, t.feeExit ?? 0) : 0
 
@@ -664,9 +973,6 @@ export async function closeTrade(
         actualExitPrice: data.actualExitPrice ?? null,
         followedPlan: data.followedPlan,
         lossAccepted: data.result === 'verlust' ? true : t.lossAccepted,
-        ...(data.tradedWithMoney !== undefined
-          ? { tradedWithMoney: data.tradedWithMoney }
-          : {}),
         // Gebühren hier festschreiben: ab jetzt verändert keine spätere
         // Einstellungsänderung mehr die Bilanz dieses Trades.
         feeEntry: frozenFeeEntry,
@@ -697,16 +1003,41 @@ export async function closeTrade(
     }
 
     // Abschluss-Event: schließt die Restmenge zum tatsächlichen Ausstiegskurs.
-    await tx.insert(tradeEvent).values({
-      tradeId: id,
-      userId,
-      type: 'geschlossen',
-      at: closedAt,
-      quantity: remaining,
-      price: data.actualExitPrice ?? null,
-      fee: frozenFeeExit,
-      note: `Geschlossen (${data.result})`,
-    })
+    const [abschluss] = await tx
+      .insert(tradeEvent)
+      .values({
+        tradeId: id,
+        userId,
+        type: 'geschlossen',
+        at: closedAt,
+        quantity: remaining,
+        price: data.actualExitPrice ?? null,
+        fee: frozenFeeExit,
+        note: `Geschlossen (${data.result})`,
+      })
+      .returning({ id: tradeEvent.id })
+
+    // Wurde der Abschluss über eine geplante Stufe ausgelöst, wird sie hier
+    // abgetragen — mit dem TATSÄCHLICHEN Ausstiegskurs, nicht mit dem geplanten.
+    // Die übrigen offenen Stufen bleiben offen: Sie wurden nicht erreicht, und
+    // das soll im Plan sichtbar bleiben, statt nachträglich geglättet zu werden.
+    if (data.targetId != null) {
+      await tx
+        .update(tradeTarget)
+        .set({
+          executedAt: closedAt,
+          executedPrice: data.actualExitPrice ?? null,
+          executedQty: remaining,
+          eventId: abschluss.id,
+        })
+        .where(
+          and(
+            eq(tradeTarget.id, data.targetId),
+            eq(tradeTarget.tradeId, id),
+            eq(tradeTarget.userId, userId),
+          ),
+        )
+    }
   })
 
   revalidatePath('/')
@@ -817,6 +1148,137 @@ export async function addToPosition(
   revalidatePath('/tracking')
 }
 
+// ---------------------------------------------------------------------------
+// Teilziele (Etappe 13)
+// ---------------------------------------------------------------------------
+
+/** Alle Stufen eines Trades, in Plan-Reihenfolge (owner-gefiltert). */
+export async function listTradeTargets(id: number): Promise<TradeTargetRow[]> {
+  const userId = await getUserId()
+  await loadOwnedTrade(userId, id) // Autorisierung
+  return loadTradeTargets(userId, id)
+}
+
+/**
+ * Die Stufen MEHRERER Trades in einem Zug — für Ansichten, die viele Pläne
+ * nebeneinander zeigen (Chart-Overlay, Plan-Leiste). Eine Abfrage je Trade wäre
+ * dort eine Abfrage je Chartlinie.
+ */
+export async function listTargetsForTrades(tradeIds: number[]): Promise<TradeTargetRow[]> {
+  const userId = await getUserId()
+  if (tradeIds.length === 0) return []
+  return db
+    .select()
+    .from(tradeTarget)
+    .where(and(eq(tradeTarget.userId, userId), inArray(tradeTarget.tradeId, tradeIds)))
+    .orderBy(asc(tradeTarget.tradeId), asc(tradeTarget.sortOrder))
+}
+
+/**
+ * Die Anfangsposition eines Trades — Bezugsgröße für die Anteile der Stufen.
+ *
+ * Bewusst die Menge des eröffnenden Ereignisses und nicht die aktuelle: Der
+ * Staffelplan wurde auf der Anfangsposition gemacht, nur so ergeben 50/30/20
+ * zusammen wieder die ganze Position. Ein späterer Nachkauf verschiebt die
+ * Stufen nicht — er vergrößert den Rest, der über die letzte Stufe hinausläuft.
+ */
+function basisQuantity(t: TradeRow, events: TradeEventRow[]): number {
+  const opened = events.find((e) => e.type === 'eroeffnet')
+  return opened?.quantity ?? t.positionSize ?? 0
+}
+
+/**
+ * Eine geplante Zielstufe ausführen (Etappe 13) — der Teilverkauf, der schon vor
+ * dem Einstieg beschlossen war. Er läuft über denselben Weg wie `partialClose`
+ * (ein `teilverkauf`-Event), trägt aber zusätzlich seine Stufe ab, damit der Plan
+ * sichtbar abgearbeitet wird statt im Log zu verschwinden.
+ *
+ * Die LETZTE Stufe, die die Position vollständig schließen würde, läuft bewusst
+ * NICHT hier durch: Am vollständigen Ausstieg hängen die Douglas-Guards
+ * (bewusste Verlustannahme, Emotions-Check-in, Plan-Treue). Sie gehört über
+ * `closeTrade` — die Oberfläche öffnet dafür den Abschluss-Dialog mit dem Kurs
+ * dieser Stufe und reicht `targetId` mit.
+ */
+export async function executeTarget(
+  tradeId: number,
+  targetId: number,
+  data: { price?: number | null; fee?: number | null; note?: string | null } = {},
+): Promise<{ quantity: number; price: number }> {
+  const userId = await getUserId()
+  const t = await loadOwnedTrade(userId, tradeId)
+  if (t.status !== 'aktiv') {
+    throw new Error('Ein Teilziel lässt sich nur an einem aktiven Trade ausführen.')
+  }
+
+  const ziele = await loadTradeTargets(userId, tradeId)
+  const ziel = ziele.find((z) => z.id === targetId)
+  if (!ziel) throw new Error('Teilziel nicht gefunden.')
+  if (ziel.executedAt != null) throw new Error('Dieses Teilziel ist bereits ausgeführt.')
+
+  const events = await loadTradeEvents(userId, tradeId)
+  const settle = settlePosition(t, events)
+  const basis = basisQuantity(t, events)
+  if (!(basis > 0)) {
+    throw new Error(
+      'Ohne Positionsgröße lässt sich der Anteil einer Stufe nicht in eine Stückzahl übersetzen. ' +
+        'Bitte Einsatz oder Stückzahl am Trade nachtragen.',
+    )
+  }
+
+  const geplant = plannedQty(basis, ziel.sharePct)
+  // Mehr als offen ist, lässt sich nicht verkaufen — etwa nach einem Teilverkauf
+  // von Hand. Die Stufe gibt dann eben nur noch den Rest ab.
+  const menge = Math.min(geplant, settle.openQty)
+  if (!(menge > 0)) {
+    throw new Error('Es ist keine Position mehr offen, die diese Stufe abgeben könnte.')
+  }
+  if (menge >= settle.openQty - 1e-9) {
+    throw new Error(
+      'Diese Stufe schließt die Position vollständig. Sie läuft über „Abschließen" — ' +
+        'dort greifen Verlust-Annahme, Plan-Treue und Check-in.',
+    )
+  }
+
+  const kurs = data.price != null && data.price > 0 ? data.price : ziel.price
+  const jetzt = new Date()
+
+  await db.transaction(async (tx) => {
+    // Alt-Trade ohne Eröffnungs-Event: nachziehen, sonst fehlt dem Settlement
+    // der Anker (dieselbe Nachsorge wie in `partialClose`).
+    if (!events.some((e) => e.type === 'eroeffnet')) {
+      await tx.insert(tradeEvent).values(openedEventValues(t, userId, { note: 'Eröffnet' }))
+    }
+    const [ereignis] = await tx
+      .insert(tradeEvent)
+      .values({
+        tradeId,
+        userId,
+        type: 'teilverkauf',
+        at: jetzt,
+        quantity: menge,
+        price: kurs,
+        fee: t.tradedWithMoney ? normalizeFee(data.fee, 0) : 0,
+        note: data.note?.trim() || `Teilziel ${ziel.sortOrder + 1} erreicht`,
+      })
+      .returning({ id: tradeEvent.id })
+
+    await tx
+      .update(tradeTarget)
+      .set({
+        executedAt: jetzt,
+        executedPrice: kurs,
+        executedQty: menge,
+        eventId: ereignis.id,
+      })
+      .where(and(eq(tradeTarget.id, ziel.id), eq(tradeTarget.userId, userId)))
+  })
+
+  revalidatePath('/')
+  revalidatePath('/trades')
+  revalidatePath('/tracking')
+  return { quantity: menge, price: kurs }
+}
+
 /** Alle Events eines Trades für die Timeline (owner-gefiltert, chronologisch). */
 export async function listTradeEvents(id: number): Promise<TradeEventRow[]> {
   const userId = await getUserId()
@@ -886,8 +1348,9 @@ export async function abortTrade(id: number): Promise<void> {
 export async function deleteTrade(id: number): Promise<void> {
   const userId = await getUserId()
   await db.transaction(async (tx) => {
-    // Events zuerst entfernen — sonst blieben verwaiste Zeilen im Log stehen.
+    // Events und Stufen zuerst entfernen — sonst blieben verwaiste Zeilen stehen.
     await tx.delete(tradeEvent).where(and(eq(tradeEvent.tradeId, id), eq(tradeEvent.userId, userId)))
+    await tx.delete(tradeTarget).where(and(eq(tradeTarget.tradeId, id), eq(tradeTarget.userId, userId)))
     await tx.delete(trade).where(and(eq(trade.id, id), eq(trade.userId, userId)))
   })
   revalidatePath('/')
@@ -898,22 +1361,72 @@ export async function deleteTrade(id: number): Promise<void> {
 // Queries
 // ---------------------------------------------------------------------------
 
+/**
+ * Der gemeinsame Ladeweg JEDER Kennzahl (Etappe 12).
+ *
+ * Vorher stand in acht Loadern dieselbe Abfrage — und alle acht zogen jeden
+ * abgeschlossenen Trade des Nutzers, egal ob echtes Geld oder Übung. Nur die
+ * Geldsummen filterten danach noch; Trefferquote, Erwartungswert, Disziplin,
+ * Monte-Carlo, Setups, Zeit und Zustand nicht. Dass es acht Kopien gab, war
+ * nicht der Auslöser des Fehlers, aber der Grund, warum er so lange unbemerkt
+ * blieb: Man hätte ihn achtmal bemerken müssen.
+ *
+ * Deshalb gibt es ihn jetzt einmal. Wer eine neue Auswertung baut, holt Zeilen
+ * hier — Startkapital und Zahlungen kommen aus derselben Auswahl wie die Trades,
+ * sonst würde eine Rendite gegen fremdes Kapital gemessen.
+ */
+type ScopedStats = {
+  rows: TradeRow[]
+  eventsByTrade: TradeEventsByTrade
+  cashflows: CashflowRow[]
+  startCapital: number
+}
+
+async function loadScopedStats(
+  userId: string,
+  opts: { onlyCompleted?: boolean; startCapitalOverride?: number } = {},
+): Promise<ScopedStats> {
+  const { portfolioIds, startCapital } = await loadScopeContext(userId)
+  const scope = tradeScopeWhere(userId, portfolioIds)
+
+  const rows = await db
+    .select()
+    .from(trade)
+    .where(opts.onlyCompleted ? and(scope, eq(trade.status, 'abgeschlossen')) : scope)
+    .orderBy(asc(trade.closedAt), asc(trade.id))
+
+  return {
+    rows,
+    eventsByTrade: await loadEventsByTrade(userId),
+    cashflows: await loadScopedCashflows(userId, portfolioIds),
+    startCapital: opts.startCapitalOverride ?? startCapital,
+  }
+}
+
 export async function listTrades(): Promise<TradeRow[]> {
   const userId = await getUserId()
+  const { portfolioIds } = await loadScopeContext(userId)
   return db
     .select()
     .from(trade)
-    .where(eq(trade.userId, userId))
+    .where(tradeScopeWhere(userId, portfolioIds))
     .orderBy(desc(trade.createdAt))
 }
 
-/** All trades linked to a given instrument (by stockId), newest first. */
+/**
+ * All trades linked to a given instrument (by stockId), newest first.
+ *
+ * Gefiltert wird auch hier auf die aktive Auswahl: Die Instrumentenkarte trennt
+ * Echtgeld und Demo zwar in getrennte Spalten, aber ein Demo-Trade aus einem
+ * Depot, das gerade nicht angeschaut wird, gehört nicht in die Karte.
+ */
 export async function getInstrumentTrades(stockId: number): Promise<TradeRow[]> {
   const userId = await getUserId()
+  const { portfolioIds } = await loadScopeContext(userId)
   return db
     .select()
     .from(trade)
-    .where(and(eq(trade.userId, userId), eq(trade.stockId, stockId)))
+    .where(and(tradeScopeWhere(userId, portfolioIds), eq(trade.stockId, stockId)))
     .orderBy(desc(trade.createdAt))
 }
 
@@ -927,25 +1440,20 @@ export async function getTrade(id: number): Promise<TradeRow | null> {
 }
 
 /**
- * Douglas discipline + expectancy stats over all completed trades.
- * Startkapital kommt aus den User-Einstellungen (optionaler Override für Tests).
+ * Douglas discipline + expectancy stats über die abgeschlossenen Trades
+ * DER AKTIVEN AUSWAHL.
+ *
+ * Startkapital kommt aus dem Depot (optionaler Override für Tests). Bis Etappe 12
+ * mischten Disziplin-Score, Trefferquote, Erwartungswert und Plan-Streak hier
+ * Echtgeld und Übung — nur die Geldsummen filterten.
  */
 export async function getDisciplineStats(startCapitalOverride?: number): Promise<DisciplineStats> {
   const userId = await getUserId()
-  const startCapital =
-    startCapitalOverride ?? (await getSettings()).startCapital
-  const rows = await db
-    .select()
-    .from(trade)
-    .where(and(eq(trade.userId, userId), eq(trade.status, 'abgeschlossen')))
-    .orderBy(asc(trade.closedAt), asc(trade.id))
-
-  return computeDisciplineStats(
-    rows,
-    startCapital,
-    await listCashflows(),
-    await loadEventsByTrade(userId),
-  )
+  const { rows, startCapital, cashflows, eventsByTrade } = await loadScopedStats(userId, {
+    onlyCompleted: true,
+    startCapitalOverride,
+  })
+  return computeDisciplineStats(rows, startCapital, cashflows, eventsByTrade)
 }
 
 export type GroupStats = {
@@ -957,14 +1465,33 @@ export type GroupStats = {
   totalPnL: number
 }
 
-export type MoneyVsPaper = { money: GroupStats; paper: GroupStats }
+/** Eine Zeile des Depot-Vergleichs. */
+export type PortfolioGroup = {
+  portfolioId: number
+  name: string
+  /** 'echtgeld' | 'demo' — steuert die PAPIERGELD-Kennzeichnung. */
+  kind: string
+  archived: boolean
+  stats: GroupStats
+}
 
 /**
- * Trefferquote und Ø Gewinn je Trade, getrennt nach echtem Geld vs. Demo.
- * Grundlage für die beiden Auswertungs-Charts.
+ * Trefferquote und Ø Gewinn je Trade — eine Zeile JE DEPOT.
+ *
+ * Nachfolger von `getMoneyVsPaperStats`. Der alte Zuschnitt „Echtgeld vs. Demo"
+ * war die einzige Trennung, die es gab, und deshalb zwangsläufig zweispaltig.
+ * Mit echten Depots ist die interessante Frage eine andere: Wie schlägt sich
+ * Broker A gegen Broker B, und wie das Übungsdepot gegen beide?
+ *
+ * **Dieser Block ignoriert die aktive Auswahl bewusst** — er ist der eine Ort,
+ * der über die Depots hinwegschaut, denn Vergleichen ist sein Zweck. Das ist
+ * kein Rückfall in den alten Fehler: Jede Zeile trägt ihren Namen und ihre Art,
+ * es wird nichts zu einer einzigen Zahl vermischt.
  */
-export async function getMoneyVsPaperStats(): Promise<MoneyVsPaper> {
+export async function getPortfolioComparison(): Promise<PortfolioGroup[]> {
   const userId = await getUserId()
+  const portfolios = await ensurePortfolios(userId)
+
   const rows = await db
     .select()
     .from(trade)
@@ -991,10 +1518,13 @@ export async function getMoneyVsPaperStats(): Promise<MoneyVsPaper> {
     }
   }
 
-  return {
-    money: group(rows.filter((t) => t.tradedWithMoney)),
-    paper: group(rows.filter((t) => !t.tradedWithMoney)),
-  }
+  return portfolios.map((p) => ({
+    portfolioId: p.id,
+    name: p.name,
+    kind: p.kind,
+    archived: p.archivedAt != null,
+    stats: group(rows.filter((t) => t.portfolioId === p.id)),
+  }))
 }
 
 export type ZoneStats = {
@@ -1013,10 +1543,13 @@ export type ZoneStats = {
  */
 export async function getZoneStats(): Promise<ZoneStats> {
   const userId = await getUserId()
+  const { portfolioIds } = await loadScopeContext(userId)
+  // Prognosen (`assessment`) bleiben kontoweit — sie hängen an keinem Depot, weil
+  // in ihnen kein Geld steckt. Die Trade-Seite folgt der Auswahl.
   const tradeRows = await db
     .select({ openedAt: trade.openedAt, status: trade.status })
     .from(trade)
-    .where(eq(trade.userId, userId))
+    .where(tradeScopeWhere(userId, portfolioIds))
   const analysisRows = await db
     .select({ zoneNotReached: assessment.zoneNotReached })
     .from(assessment)
@@ -1058,10 +1591,13 @@ export async function getUnifiedHitRateTimeline(): Promise<UnifiedPoint[]> {
     .from(assessment)
     .where(eq(assessment.userId, userId))
 
+  // Nur die Trades der aktiven Auswahl: Diese Kurve mischt bereits Prognosen und
+  // Trades — sie darf nicht zusätzlich Übung und Ernst mischen.
+  const { portfolioIds } = await loadScopeContext(userId)
   const trades = await db
     .select()
     .from(trade)
-    .where(and(eq(trade.userId, userId), eq(trade.status, 'abgeschlossen')))
+    .where(and(tradeScopeWhere(userId, portfolioIds), eq(trade.status, 'abgeschlossen')))
 
   type Ev = { at: number; correct: boolean }
   const events: Ev[] = []
@@ -1097,21 +1633,20 @@ export async function getUnifiedHitRateTimeline(): Promise<UnifiedPoint[]> {
 }
 
 /**
- * Equity-Kurve, Max-Drawdown und Verlust-Serien — NUR Echtgeld-Trades,
+ * Equity-Kurve, Max-Drawdown und Verlust-Serien der aktiven Auswahl,
  * chronologisch nach Abschluss. Ein- und Auszahlungen erscheinen als eigene
  * Punkte und zählen nicht in den Drawdown (eine Auszahlung ist kein Verlust).
+ *
+ * Im Demo-Depot rechnet dieselbe Kurve gegen das PAPIER-Startkapital — deshalb
+ * hat die Übung jetzt eine eigene Bilanz statt gar keiner. Dass es Papiergeld
+ * ist, sagt die Kennzeichnung in der Oberfläche, nicht eine andere Rechnung.
  */
 export async function getEquityStats(): Promise<EquityStats> {
   const userId = await getUserId()
-  const startCapital = (await getSettings()).startCapital
-
-  const rows = await db
-    .select()
-    .from(trade)
-    .where(and(eq(trade.userId, userId), eq(trade.status, 'abgeschlossen')))
-    .orderBy(asc(trade.closedAt), asc(trade.id))
-
-  return computeEquityStats(rows, startCapital, await listCashflows(), await loadEventsByTrade(userId))
+  const { rows, startCapital, cashflows, eventsByTrade } = await loadScopedStats(userId, {
+    onlyCompleted: true,
+  })
+  return computeEquityStats(rows, startCapital, cashflows, eventsByTrade)
 }
 
 /**
@@ -1123,13 +1658,8 @@ export async function getEquityStats(): Promise<EquityStats> {
  */
 export async function getMoodStats(): Promise<MoodStats> {
   const userId = await getUserId()
-  const rows = await db
-    .select()
-    .from(trade)
-    .where(and(eq(trade.userId, userId), eq(trade.status, 'abgeschlossen')))
-    .orderBy(asc(trade.closedAt), asc(trade.id))
-
-  return computeMoodStats(rows, await loadEventsByTrade(userId))
+  const { rows, eventsByTrade } = await loadScopedStats(userId, { onlyCompleted: true })
+  return computeMoodStats(rows, eventsByTrade)
 }
 
 /**
@@ -1144,16 +1674,9 @@ export async function getMoodStats(): Promise<MoodStats> {
  */
 export async function getMonteCarloStats(): Promise<MonteCarloStats> {
   const userId = await getUserId()
-  const startCapital = (await getSettings()).startCapital
-
-  const rows = await db
-    .select()
-    .from(trade)
-    .where(and(eq(trade.userId, userId), eq(trade.status, 'abgeschlossen')))
-    .orderBy(asc(trade.closedAt), asc(trade.id))
-
-  const eventsByTrade = await loadEventsByTrade(userId)
-  const cashflows = await listCashflows()
+  const { rows, startCapital, cashflows, eventsByTrade } = await loadScopedStats(userId, {
+    onlyCompleted: true,
+  })
   const invested = startCapital + netCashflow(cashflows)
 
   return simulateFuture({
@@ -1175,13 +1698,8 @@ export async function getMonteCarloStats(): Promise<MonteCarloStats> {
  */
 export async function getSetupStats(): Promise<SetupStats> {
   const userId = await getUserId()
-  const rows = await db
-    .select()
-    .from(trade)
-    .where(and(eq(trade.userId, userId), eq(trade.status, 'abgeschlossen')))
-    .orderBy(asc(trade.closedAt), asc(trade.id))
-
-  return computeSetupStats(rows, await loadEventsByTrade(userId))
+  const { rows, eventsByTrade } = await loadScopedStats(userId, { onlyCompleted: true })
+  return computeSetupStats(rows, eventsByTrade)
 }
 
 /**
@@ -1194,13 +1712,8 @@ export async function getSetupStats(): Promise<SetupStats> {
  */
 export async function getTimeStats(): Promise<TimeStats> {
   const userId = await getUserId()
-  const rows = await db
-    .select()
-    .from(trade)
-    .where(and(eq(trade.userId, userId), eq(trade.status, 'abgeschlossen')))
-    .orderBy(asc(trade.closedAt), asc(trade.id))
-
-  return computeTimeStats(rows, await loadEventsByTrade(userId))
+  const { rows, eventsByTrade } = await loadScopedStats(userId, { onlyCompleted: true })
+  return computeTimeStats(rows, eventsByTrade)
 }
 
 /**
@@ -1214,6 +1727,10 @@ export async function getTimeStats(): Promise<TimeStats> {
  */
 export async function listSetupTagOptions(): Promise<string[]> {
   const userId = await getUserId()
+  // Bewusst KONTOWEIT und nicht je Depot: Das ist der persönliche Wortschatz des
+  // Nutzers, keine Kennzahl. Ein „Breakout" heißt im Übungsdepot genauso wie im
+  // echten, und eine je Depot getrennte Vorschlagsliste würde genau die
+  // Tippfehler-Zwillinge erzeugen, gegen die die Tags erfunden wurden.
   const rows = await db
     .select({ setupTags: trade.setupTags })
     .from(trade)
@@ -1252,18 +1769,27 @@ export async function updateTradeSetupTags(id: number, tags: string[]): Promise<
 // CSV-Export
 // ---------------------------------------------------------------------------
 
-/** Trade-Journal als CSV (Semikolon-getrennt, für Excel/DE-Locale). */
+/**
+ * Trade-Journal als CSV (Semikolon-getrennt, für Excel/DE-Locale).
+ *
+ * Exportiert wird die AKTIVE AUSWAHL — wer das Demo-Depot ansieht, bekommt das
+ * Demo-Depot. Die Spalte `depot` steht neben `echtgeld`: Letztere bleibt für die
+ * Vergleichbarkeit mit älteren Exporten erhalten, die Depot-Spalte sagt, woraus
+ * sie sich ergibt.
+ */
 export async function exportTradesCsv(): Promise<string> {
   const userId = await getUserId()
+  const { portfolioIds, portfolios } = await loadScopeContext(userId)
   const rows = await db
     .select()
     .from(trade)
-    .where(eq(trade.userId, userId))
+    .where(tradeScopeWhere(userId, portfolioIds))
     .orderBy(asc(trade.createdAt), asc(trade.id))
   const eventsByTrade = await loadEventsByTrade(userId)
+  const depotName = new Map(portfolios.map((p) => [p.id, p.name]))
 
   const headerCols = [
-    'id', 'ticker', 'markt', 'richtung', 'status', 'echtgeld',
+    'id', 'ticker', 'markt', 'richtung', 'status', 'depot', 'echtgeld',
     'einstieg', 'stop', 'ziel', 'stueckzahl', 'kapitaleinsatz',
     'hebel', 'gebuehr_kauf', 'gebuehr_verkauf',
     'ergebnis', 'ausstieg', 'netto_pnl', 'plan_befolgt', 'regelbrueche',
@@ -1292,6 +1818,7 @@ export async function exportTradesCsv(): Promise<string> {
         t.market,
         t.direction,
         t.status,
+        depotName.get(t.portfolioId) ?? '',
         t.tradedWithMoney ? 'ja' : 'nein',
         t.entryPrice,
         t.stopLoss,

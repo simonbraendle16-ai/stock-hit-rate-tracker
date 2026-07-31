@@ -1399,3 +1399,124 @@ Nutzer, damit bleiben app-weit die drei Ebenen `.panel` / `.panel-raised` / `.pa
   greift erst, wenn jemand das Theme umstellt.
 - Die Umstellung ist rein visuell und deshalb **nicht testgedeckt** — Vitest prüft Logik, kein
   Aussehen. Die Sichtprüfung oben ist der Beleg.
+
+---
+
+# Etappe 13 — Teilziele ✅ ERLEDIGT (31.07.2026)
+
+Mehrere Take-Profits je Trade: vor dem Einstieg geplant, einzeln ausführbar.
+
+## Der Befund, der das ausgelöst hat
+
+Zwei Dinge auf einmal.
+
+**Erstens ein Fehler, der das Anlegen von Trades unmöglich machte.** Migration `0022`
+(Etappe 12, Depots) lag bereits auf der Datenbank — `trade."portfolioId"` ist dort `NOT NULL`.
+Der veröffentlichte Stand (`cf8134b`) kannte die Spalte aber nicht und schrieb sie nicht mit.
+Jedes `INSERT` scheiterte serverseitig mit `23502 null value in column "portfolioId" … violates
+not-null constraint`; im Browser kam davon nur die anonyme Meldung „An error occurred in the
+Server Components render" an. Der Code von Etappe 12 lag vollständig, aber **unversioniert** im
+Arbeitsverzeichnis: Datenbank und veröffentlichter Code waren auseinandergelaufen. Behoben ist
+das nicht durch eine Reparatur, sondern dadurch, dass beide Etappen jetzt zusammen live gehen.
+
+**Zweitens die eigentliche Lücke.** Am Trade stand genau EIN Ziel (`takeProfit`) und ein
+Verkaufsanteil dazu (`takeProfitPct`, seit `0005`). Wer in Stufen aussteigt — die halbe Position
+bei 1 R, der Rest läuft —, konnte das nur im Kopf planen. Den Teilverkauf gab es seit `0014`,
+aber ohne vorher festgelegtes Level: Man entschied **mitten im Trade**, wie viel man bei welchem
+Kurs abgibt. Genau diese Entscheidung soll die App aus dem laufenden Trade heraushalten.
+
+## Datenmodell
+
+Migration `0023_trade_targets.sql`, Tabelle `trade_target` (`tradeId`, `userId`, `sortOrder`,
+`price`, `sharePct`, `executedAt`/`executedPrice`/`executedQty`, `eventId`, `note`). Additiv,
+idempotent, **ohne Backfill**.
+
+- **Warum eine Tabelle und keine JSON-Spalte:** Anders als die Setup-Tags (`0016`, reine
+  Einordnung) trägt eine Stufe einen ZUSTAND — erreicht oder nicht, zu welchem Kurs, mit welchem
+  Ereignis verbunden. Die Ausführung einer Stufe IST ein `teilverkauf`-Event; die Zeile zeigt
+  über `eventId` nur darauf, statt dasselbe ein zweites Mal zu behaupten.
+- **`trade.takeProfit`/`takeProfitPct` bleiben** und sind ab hier die *abgeleitete Schreibweise
+  der ersten Stufe* — dieselbe Bauart wie `tradedWithMoney` seit `0022`. Dadurch bleiben alle
+  reinen Funktionen in `lib/` (trade-stats, trade-events, bot-twin, excursion, instrument-stats)
+  und jede bestehende Anzeige unverändert gültig: Das Stufenmodell wirkt über die Daten, nicht
+  über neue Rechenwege.
+- Ein Trade **ohne** Zeilen verhält sich exakt wie vorher; sein `takeProfit` wird über
+  `effectiveTargets` als eine implizite Stufe gelesen. Der gesamte Altbestand ist unberührt.
+
+## Regeln (alle in `lib/trade-targets.ts`, rein und getestet)
+
+- Höchstens `MAX_TARGETS` = **4** Stufen. Jede auf der Gewinnseite des Einstiegs, Anteil > 0 %,
+  Summe ≤ 100 %, keine zwei Stufen auf demselben Kurs.
+- **Sortiert wird nach Abstand zum Einstieg**, nicht nach Eingabereihenfolge — die Reihenfolge im
+  Formular ist Eingabe, keine Aussage.
+- Eine Summe **unter** 100 % ist erlaubt: Wer einen Rest laufen lassen will, plant das
+  ausdrücklich. Der Rest wird bis zur **letzten** Stufe gehalten und dort auch gerechnet.
+- Das gespeicherte `riskRewardRatio` ist bei Stufen das **nach Anteilen gewichtete** CRV. Bei
+  genau einer Stufe kommt exakt `computeRiskReward` heraus — für Trades mit einem Ziel ändert
+  sich also nichts.
+- **Ausgeführte Stufen sind unveränderlich.** Eine Planänderung darf keine Geschichte
+  umschreiben; sie wandern unverändert in den neuen Plan zurück und werden mitgeprüft.
+- Bezug der Anteile ist die **Anfangsposition** — nur so ergeben 50/30/20 wieder die ganze
+  Position. Ein späterer Nachkauf verschiebt die Stufen nicht.
+
+## Warum die letzte Stufe NICHT über `executeTarget` läuft
+
+Sie schließt die Position, und am vollständigen Ausstieg hängen die Douglas-Guards: bewusste
+Verlustannahme, Plan-Treue, Emotions-Check-in. Ein geplanter Ausstieg darf daran nicht
+vorbeigehen, nur weil er geplant war. `executeTarget` lehnt eine Stufe, die alles schließen
+würde, deshalb ab; die Karte schaltet den Knopf automatisch auf „Abschließen" um und öffnet den
+Abschluss-Dialog mit dem Kurs dieser Stufe (`closeTrade(…, { targetId })`). Nicht erreichte
+Stufen bleiben nach dem Abschluss offen — sie werden nicht nachträglich geglättet.
+
+## Dateien
+
+- `lib/trade-targets.ts` + `lib/trade-targets.test.ts` (28 Tests)
+- `drizzle/0023_trade_targets.sql`, `lib/db/schema.ts` (`tradeTarget`)
+- `app/actions/trades.ts`: `resolveTargetPlan` · `listTradeTargets` · `listTargetsForTrades` ·
+  `executeTarget`, Einbau in `createTrade`/`updateTradePlan`/`closeTrade`/`deleteTrade`
+- `app/actions/alerts.ts`: ein Kurs-Alert **je Stufe** (Dubletten jetzt über Art UND Level)
+- `components/target-stages.tsx` (Eingabe, gemeinsam für Formular und Bearbeiten-Dialog),
+  `components/trade-targets-card.tsx` (Anzeige + Ausführen)
+- `components/trade-form.tsx`, `components/edit-trade-dialog.tsx`, `components/trade-card.tsx`
+  (Fortschritt in der Liste), `components/chart/plan-bar.tsx`, `app/stock/[id]/page.tsx`
+  (eine Chart-Linie je Stufe), `app/trades/[id]/page.tsx`, `app/trades/page.tsx`
+
+## Nebenbefund, mitbehoben
+
+`updateTradePlan` hat das `riskRewardRatio` nie nachgezogen. Nach einer Planänderung stand
+deshalb eine Zahl in der Karte, die zum Plan nicht mehr passte. Es wird jetzt neu gerechnet,
+sobald Einstieg, Stop oder Ziel sich bewegen.
+
+## Nachweis
+
+- `node node_modules/typescript/bin/tsc --noEmit` — sauber.
+- `node node_modules/vitest/vitest.mjs run` — 429 Tests in 17 Dateien grün (28 davon neu).
+- `node node_modules/next/dist/bin/next build` — vollständig gebaut.
+- **Datenbestand unberührt:** `.baseline-0023-vorher` gegen `.baseline-0023-nachher` — Trades
+  und Settings byteweise identisch (einziger Unterschied ist der Zeitstempel des Dumps selbst).
+  `trade_target` danach: 12 Spalten, beide CHECK-Constraints, vier Indizes, **0 Zeilen**.
+- **Klick-Test im echten Browser** (Sandbox-Konto, Dev-Server): Trade AAPL long, Einstieg 200,
+  Stop 190, Einsatz 5.000 € → 25 Stück. Drei Stufen bewusst UNSORTIERT eingegeben
+  (210/50 %, 250/20 %, 230/30 %).
+  - Gespeichert wurde sortiert: 210·50 %, 230·30 %, 250·20 %; `takeProfit` = 210,
+    `takeProfitPct` = 50, `riskRewardRatio` = **2,4** (= 0,5·1 R + 0,3·3 R + 0,2·5 R). Das
+    Formular zeigte denselben Wert live an.
+  - Aktivieren mit Plan-Alerts: **5 Alerts** (Einstieg, Stop, drei Ziele) statt bisher drei.
+  - Stufe 1 ausgeführt mit abweichendem Fill 209,5 → 12,5 Stück, realisiert +118,75 € /
+    +0,48 R. Stufe 2 → 7,5 Stück, zusammen +343,75 € / +1,38 R, Rest offen 5 von 25.
+  - Stufe 3 schaltete daraufhin von selbst auf **„Abschließen"** um und öffnete den
+    Abschluss-Dialog mit vorbelegtem Kurs 250 samt Verlust-Annahme, Plan-Treue und Check-in.
+  - Endstand in der Datenbank: Events `eroeffnet 25 → teilverkauf 12,5 → teilverkauf 7,5 →
+    geschlossen 5` (Summe 25), jede Stufe mit ihrem `eventId` verknüpft.
+
+## Offen / bewusst nicht dabei
+
+- **Keine Automatik.** Eine erreichte Stufe wird nicht selbsttätig gebucht — die App hat keinen
+  Broker-Zugang, und ein Verkauf, den sie nur vermutet, wäre eine erfundene Bilanz. Der Alert
+  meldet, gebucht wird von Hand.
+- **Kein Backfill.** Bestehende Trades bekommen keine erfundene Stufe.
+- **Der Bot-Zwilling rechnet weiter gegen EIN Ziel** (die erste Stufe). Ein gestaffelter
+  Vergleich wäre eine eigene Etappe — und er beantwortet eine andere Frage.
+- **Browser-MCP auf `/trades/[id]`:** Die Detailseite eines aktiven Trades erreicht wegen des
+  Minutentakts der Kursaktualisierung nie `document_idle`; die Automatisierung muss deshalb
+  unmittelbar nach dem Laden zugreifen. Für die Bedienung von Hand ist das folgenlos.

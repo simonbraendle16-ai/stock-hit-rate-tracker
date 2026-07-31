@@ -13,6 +13,8 @@ export interface PlanBarTrade {
   takeProfit: number | null
   elliottInvalidation: number | null
   riskRewardRatio: number | null
+  /** Teilziele (Etappe 13) — leer bei einem Trade mit nur einem Ziel. */
+  targets?: { price: number; sharePct: number; executed: boolean }[]
 }
 
 function fmt(n: number): string {
@@ -54,11 +56,24 @@ export function PlanBar({ trades }: { trades: PlanBarTrade[] }) {
               <span className="tabular" style={{ color: PLAN_COLORS.stop }}>
                 Stop {fmt(t.stopLoss)}
               </span>
-              {t.takeProfit != null && (
-                <span className="tabular" style={{ color: PLAN_COLORS.target }}>
-                  Target {fmt(t.takeProfit)}
-                </span>
-              )}
+              {/* Mit Teilzielen steht jede Stufe da — sonst sähe ein gestaffelter
+                  Plan aus wie ein einfacher. Erreichte sind durchgestrichen. */}
+              {t.targets && t.targets.length > 0
+                ? t.targets.map((z, i) => (
+                    <span
+                      key={`${t.id}-${z.price}`}
+                      className={`tabular ${z.executed ? 'line-through opacity-60' : ''}`}
+                      style={{ color: PLAN_COLORS.target }}
+                    >
+                      Ziel {i + 1} {fmt(z.price)}
+                      <span className="opacity-70"> ({fmt(z.sharePct)} %)</span>
+                    </span>
+                  ))
+                : t.takeProfit != null && (
+                    <span className="tabular" style={{ color: PLAN_COLORS.target }}>
+                      Target {fmt(t.takeProfit)}
+                    </span>
+                  )}
               {t.elliottInvalidation != null && (
                 <span className="tabular" style={{ color: PLAN_COLORS.invalidation }}>
                   Invalidation {fmt(t.elliottInvalidation)}

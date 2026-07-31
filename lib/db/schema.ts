@@ -64,26 +64,75 @@ export const verification = pgTable('verification', {
 
 // --- App tables ------------------------------------------------------------
 
-// Pro-User-Einstellungen: Startkapital & Risiko-Vorgaben. Grundlage für die
-// echten Geld-Kennzahlen (Bilanz, Rendite) und den Risiko-Guard im Formular.
+// Depot (Etappe 12). Der Ort, in den gebucht wird — und die Quelle der
+// Handelsart: `kind` bestimmt, ob die Trades darin echtes Geld bewegen.
+//
+// Warum ein Ort und kein Formularfeld: Die Handelsart war bis hierher ein
+// Umschalter mit Vorbelegung „Echtgeld". Ein vergessener Klick, und ein
+// Papier-Trade zählte als echt — genau das ist passiert. Ein Depot weiß, was es
+// ist; `trade.tradedWithMoney` ist ab jetzt nur noch die abgeleitete
+// Schreibweise davon (gesetzt ausschließlich in `createTrade` und `moveTrade`).
+//
+// Heißt `portfolio` und nicht `account`, weil `account` Better Auth gehört.
+// In der Oberfläche durchgehend „Depot".
+export const portfolio = pgTable('portfolio', {
+  id: serial('id').primaryKey(),
+  userId: text('userId').notNull(),
+  name: text('name').notNull(),
+  // echtgeld | demo — unveränderlich, sobald Trades daranhängen (das würde die
+  // Bilanz rückwirkend umschreiben). Regel in `lib/portfolio-scope.ts`.
+  kind: text('kind').notNull().default('echtgeld'),
+  // Eigenes Startkapital je Depot; beim Demo-Depot das Papier-Startkapital.
+  // Nur damit hat die Übung eine eigene Bilanz — und nur dann sind
+  // Prozentzahlen zwischen Übung und Ernst vergleichbar.
+  startCapital: doublePrecision('startCapital').notNull().default(10000),
+  // Gebühren-Vorbelegung je Depot (verschiedene Broker kosten verschieden);
+  // im Demo-Depot 0, denn Papier kostet nichts (siehe `tradeFees`).
+  defaultFeeEntry: doublePrecision('defaultFeeEntry').notNull().default(9),
+  defaultFeeExit: doublePrecision('defaultFeeExit').notNull().default(9),
+  sortOrder: integer('sortOrder').notNull().default(0),
+  // Stillgelegt: fällt aus Umschalter und Echtgeld-Aggregat, Historie bleibt
+  // lesbar. Ein befülltes Depot wird nie gelöscht, nur archiviert.
+  archivedAt: timestamp('archivedAt'),
+  createdAt: timestamp('createdAt').notNull().defaultNow(),
+})
+
+// Pro-User-Einstellungen: Risiko-Vorgaben, Währung und die aktive Depot-Auswahl.
+//
+// `startCapital` und `defaultFee*` stehen seit Etappe 12 am DEPOT und werden
+// hier nicht mehr gelesen. Die Spalten bleiben absichtlich stehen (die Migration
+// ist additiv und damit umkehrbar) — wer sie ausliest, bekommt einen veralteten
+// Wert. Quelle ist `portfolio`.
 export const userSettings = pgTable('user_settings', {
   userId: text('userId').primaryKey(),
+  /** @deprecated seit Etappe 12 — steht am Depot (`portfolio.startCapital`). */
   startCapital: doublePrecision('startCapital').notNull().default(10000),
   defaultRiskPct: doublePrecision('defaultRiskPct').notNull().default(1),
   maxRiskPct: doublePrecision('maxRiskPct').notNull().default(2),
   // Kontowährung — reine Anzeige-/Formatierungsebene. Kurse notieren weiterhin
-  // in der Währung des Instruments und werden NICHT umgerechnet.
+  // in der Währung des Instruments und werden NICHT umgerechnet. Bleibt
+  // bewusst GLOBAL: Ein Aggregat über Depots verschiedener Währung wäre keine
+  // gültige Summe, weil die App nicht umrechnet.
   currency: text('currency').notNull().default('EUR'),
-  // Vorbelegung der Ordergebühr im Trade-Formular; pro Trade überschreibbar.
+  /** @deprecated seit Etappe 12 — steht am Depot (`portfolio.defaultFeeEntry`). */
   defaultFeeEntry: doublePrecision('defaultFeeEntry').notNull().default(9),
+  /** @deprecated seit Etappe 12 — steht am Depot (`portfolio.defaultFeeExit`). */
   defaultFeeExit: doublePrecision('defaultFeeExit').notNull().default(9),
+  // Aktive Auswahl: 'echtgeld' (Aggregat über alle nicht archivierten
+  // Echtgeld-Depots) oder 'depot:<id>'. Format und Auflösung ausschließlich in
+  // `lib/portfolio-scope.ts`. In der DB und nicht im Cookie, damit
+  // Server-Komponenten sie ohne Client-Zustand lesen.
+  activeScope: text('activeScope').notNull().default('echtgeld'),
 })
 
-// Ein- und Auszahlungen aufs Handelskonto. Ohne sie rechnet die Rendite gegen
+// Ein- und Auszahlungen auf ein DEPOT. Ohne sie rechnet die Rendite gegen
 // ein fixes Startkapital und wird ab der ersten Nachzahlung falsch.
 export const cashflow = pgTable('cashflow', {
   id: serial('id').primaryKey(),
   userId: text('userId').notNull(),
+  // Seit Etappe 12 Pflicht: eine Einzahlung gehört in genau ein Depot, sonst
+  // verfälschte sie die Rendite aller Depots gleichzeitig.
+  portfolioId: integer('portfolioId').notNull(),
   // immer positiv; die Richtung steckt in `kind`
   amount: doublePrecision('amount').notNull(),
   kind: text('kind').notNull().default('einzahlung'), // einzahlung | auszahlung
@@ -203,6 +252,11 @@ export const assessment = pgTable('assessment', {
 export const trade = pgTable('trade', {
   id: serial('id').primaryKey(),
   userId: text('userId').notNull(),
+  // Das Depot, in das dieser Trade gebucht ist (Etappe 12). Pflicht — und die
+  // QUELLE der Handelsart: `tradedWithMoney` weiter unten ist nur die
+  // abgeleitete Schreibweise von `portfolio.kind`. Jede Auswertung filtert
+  // zuerst hierüber; ein Trade ohne Depot fiele stumm aus allen Kennzahlen.
+  portfolioId: integer('portfolioId').notNull(),
   // optional link to an instrument in the watchlist (shared hit-rate key)
   stockId: integer('stockId'),
   ticker: text('ticker').notNull(),
@@ -251,7 +305,14 @@ export const trade = pgTable('trade', {
   preTradeAnswered: boolean('preTradeAnswered').notNull().default(false), // 4-Fragen-Gate (= alle 4 = ja)
   // JSON array der 4 Antworten: [{ key, question, answer: 'ja'|'nein', note }]
   preTradeAnswers: text('preTradeAnswers'),
-  // mit echtem Geld gehandelt vs. Demo/Papertrade
+  // Mit echtem Geld gehandelt vs. Demo/Papertrade.
+  //
+  // ABGELEITET, KEINE EINGABE (seit Etappe 12): Der Wert kommt aus
+  // `portfolio.kind` des Depots in `portfolioId` und wird ausschließlich in
+  // `createTrade` und `moveTrade` geschrieben — nirgends sonst. Die Spalte
+  // bleibt bestehen, damit die reinen Rechenfunktionen in lib/ (trade-stats,
+  // trade-events, instrument-stats, excursion) unverändert gültig bleiben: Das
+  // Depot-Modell wirkt über die Auswahl der Zeilen, nicht über neue Rechenwege.
   tradedWithMoney: boolean('tradedWithMoney').notNull().default(true),
   followedPlan: boolean('followedPlan'),
   // JSON array of flags: stop_moved | invalidation_ignored | revenge
@@ -369,6 +430,43 @@ export const tradeEvent = pgTable('trade_event', {
   fee: doublePrecision('fee'),
   // JSON für Level-Ereignisse: { from, to }
   payload: text('payload'),
+  note: text('note'),
+  createdAt: timestamp('createdAt').notNull().defaultNow(),
+})
+
+// Teilziele (Etappe 13): die geplanten Ausstiegsstufen eines Trades. Ein Trade
+// darf mehrere Take-Profits tragen — „die halbe Position bei 1 R, der Rest
+// läuft" ist ab hier ein festgeschriebener Teil des Plans und keine Entscheidung
+// mitten im Trade.
+//
+// `trade.takeProfit` bleibt bestehen und ist ab jetzt die abgeleitete
+// Schreibweise der ERSTEN Stufe (wie `tradedWithMoney` die Schreibweise von
+// `portfolio.kind` ist) — dadurch bleiben alle reinen Rechenfunktionen und jede
+// bestehende Anzeige unverändert gültig. Ein Trade ohne Zeilen hier verhält sich
+// exakt wie vorher; sein `takeProfit` wird als eine implizite Stufe gelesen
+// (`effectiveTargets` in lib/trade-targets.ts). Kein Backfill.
+//
+// Die Ausführung einer Stufe IST ein `teilverkauf`/`geschlossen`-Event; diese
+// Zeile rechnet nichts nach, sie zeigt über `eventId` darauf.
+export const tradeTarget = pgTable('trade_target', {
+  id: serial('id').primaryKey(),
+  tradeId: integer('tradeId').notNull(),
+  // Eigenständig neben tradeId (wie bei trade_event) — die Abfrage kommt ohne
+  // Join auf "trade" aus und filtert trotzdem hart auf den Eigentümer.
+  userId: text('userId').notNull(),
+  // 0-basiert, aufsteigend nach Abstand zum Einstieg (Stufe 1 = am nächsten).
+  // Hergestellt beim Speichern, nicht vom Formular erwartet.
+  sortOrder: integer('sortOrder').notNull().default(0),
+  price: doublePrecision('price').notNull(),
+  // Anteil der ANFANGSposition auf dieser Stufe (0..100]. Die Summe darf unter
+  // 100 bleiben — der Rest läuft dann bis zur letzten Stufe.
+  sharePct: doublePrecision('sharePct').notNull(),
+  // Ausführung: alle drei zusammen gesetzt oder alle drei leer.
+  executedAt: timestamp('executedAt'),
+  executedPrice: doublePrecision('executedPrice'),
+  executedQty: doublePrecision('executedQty'),
+  // Das Ereignis, mit dem diese Stufe abgerechnet wurde.
+  eventId: integer('eventId'),
   note: text('note'),
   createdAt: timestamp('createdAt').notNull().defaultNow(),
 })

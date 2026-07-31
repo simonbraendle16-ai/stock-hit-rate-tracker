@@ -15,6 +15,7 @@ import type { TradeEventsByTrade } from '@/lib/trade-stats'
 import type { TradeEventRow } from '@/lib/trade-events'
 import { asc, eq } from 'drizzle-orm'
 import { headers } from 'next/headers'
+import { loadScopeContext, tradeScopeWhere } from '@/lib/portfolio-context'
 
 async function getUserId() {
   const session = await auth.api.getSession({ headers: await headers() })
@@ -34,6 +35,7 @@ export async function getInstrumentCards(): Promise<{
   overall: ReturnType<typeof overallGap>
 }> {
   const userId = await getUserId()
+  const { portfolioIds: scopePortfolioIds } = await loadScopeContext(userId)
 
   const [instruments, assessments, trades, events, quotes] = await Promise.all([
     db
@@ -53,7 +55,12 @@ export async function getInstrumentCards(): Promise<{
       })
       .from(assessment)
       .where(eq(assessment.userId, userId)),
-    db.select().from(trade).where(eq(trade.userId, userId)),
+    // Nur die Trades der aktiven Auswahl (Etappe 12). Die Karte trennt Echtgeld
+    // und Demo ohnehin in zwei Zeilen — aber ein Trade aus einem Depot, das
+    // gerade nicht angeschaut wird, gehört auch in keine der beiden. Die
+    // PROGNOSEN darüber bleiben kontoweit: in ihnen steckt kein Geld, sie hängen
+    // an keinem Depot.
+    db.select().from(trade).where(tradeScopeWhere(userId, scopePortfolioIds)),
     db
       .select()
       .from(tradeEvent)

@@ -10,8 +10,8 @@
 
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
-import { priceAlert, trade } from '@/lib/db/schema'
-import { and, desc, eq, inArray, isNull } from 'drizzle-orm'
+import { priceAlert, trade, tradeTarget } from '@/lib/db/schema'
+import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm'
 import { headers } from 'next/headers'
 import { revalidatePath } from 'next/cache'
 import { getCachedQuote } from '@/lib/market-data/quote'
@@ -156,9 +156,15 @@ export async function createAlert(input: CreateAlertInput): Promise<AlertView> {
 }
 
 /**
- * Aus einem Trade-Plan bis zu drei Alerts ableiten: Stop erreicht, Ziel erreicht
+ * Aus einem Trade-Plan die Alerts ableiten: Stop erreicht, jedes Ziel erreicht
  * und — sofern ein aktueller Kurs vorliegt — Einstieg erreicht. Genau die Punkte,
  * an denen ein disziplinierter Trader etwas tun muss.
+ *
+ * Hat der Trade Teilziele (Etappe 13), bekommt JEDE Stufe ihren eigenen Alert.
+ * Genau dafür sind sie da: Die Stufe steht fest, also soll man sie nicht
+ * bewachen müssen — „setzen und weggehen". Doppelte werden dabei über das
+ * Preis-Level erkannt, nicht mehr allein über die Art; sonst hätte ein Trade
+ * weiterhin nur einen einzigen Ziel-Alert.
  *
  * Richtung je Level aus der Geometrie: Bezug ist der aktuelle Kurs, ersatzweise
  * der Einstieg. Ohne Kurs ist die Einstiegs-Richtung nicht bestimmbar (Level ==
@@ -184,7 +190,7 @@ export async function createPlanAlerts(tradeId: number): Promise<{ created: numb
 
   // Bereits gesetzte, noch aktive Plan-Alerts dieses Trades — nicht doppeln.
   const existing = await db
-    .select({ kind: priceAlert.kind })
+    .select({ kind: priceAlert.kind, price: priceAlert.price })
     .from(priceAlert)
     .where(
       and(
@@ -193,17 +199,34 @@ export async function createPlanAlerts(tradeId: number): Promise<{ created: numb
         eq(priceAlert.active, true),
       ),
     )
-  const already = new Set(existing.map((e) => e.kind))
+  // Schlüssel ist Art UND Level: Ein Trade mit drei Zielstufen hat drei
+  // Ziel-Alerts, und keiner davon darf den anderen als „schon da" verdrängen.
+  const already = new Set(existing.map((e) => `${e.kind}@${e.price}`))
+
+  // Teilziele lösen den einen Ziel-Alert ab; ohne sie bleibt es beim Feld.
+  const stufen = await db
+    .select({ price: tradeTarget.price, executedAt: tradeTarget.executedAt })
+    .from(tradeTarget)
+    .where(and(eq(tradeTarget.tradeId, tradeId), eq(tradeTarget.userId, userId)))
+    .orderBy(asc(tradeTarget.sortOrder))
+
+  const ziele =
+    stufen.length > 0
+      ? // Erreichte Stufen brauchen keinen Wecker mehr.
+        stufen.filter((s) => s.executedAt == null).map((s) => s.price)
+      : t.takeProfit != null
+        ? [t.takeProfit]
+        : []
 
   const levels: { kind: AlertKind; level: number | null }[] = [
     { kind: 'einstieg', level: t.entryPrice },
     { kind: 'stop', level: t.stopLoss },
-    { kind: 'ziel', level: t.takeProfit },
+    ...ziele.map((p) => ({ kind: 'ziel' as AlertKind, level: p })),
   ]
 
   const rows: (typeof priceAlert.$inferInsert)[] = []
   for (const { kind, level } of levels) {
-    if (level == null || already.has(kind)) continue
+    if (level == null || already.has(`${kind}@${level}`)) continue
     const direction = directionForLevel(level, reference)
     if (!direction) continue // Level == Bezug (z. B. Einstieg ohne Kurs) → auslassen
     // Schon erfüllt? Dann wäre der Alert sofort ausgelöst — überspringen.
