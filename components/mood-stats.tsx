@@ -123,7 +123,7 @@ function BucketTable({
       {shown.length === 0 ? (
         <p className="font-mono text-xs text-muted-foreground">{emptyHint}</p>
       ) : (
-        <div className="overflow-x-auto">
+        <div className="min-w-0 overflow-x-auto">
           <table className="w-full min-w-[26rem] border-collapse font-mono text-xs">
             <thead>
               <tr className="text-[9px] uppercase tracking-widest text-muted-foreground">

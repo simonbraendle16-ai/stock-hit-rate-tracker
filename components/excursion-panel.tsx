@@ -40,7 +40,7 @@ export function ExcursionPanel({ stats }: { stats: ExcursionStats }) {
         <EmptyState stats={stats} />
       ) : (
         <div className="mt-4 space-y-4">
-          <div className="overflow-x-auto">
+          <div className="min-w-0 overflow-x-auto">
             <table className="w-full min-w-[30rem] border-collapse font-mono text-xs">
               <thead>
                 <tr className="text-[9px] uppercase tracking-widest text-muted-foreground">

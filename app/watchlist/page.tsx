@@ -39,6 +39,7 @@ export default async function WatchlistPage() {
           stocks={stocks}
           cards={instruments.cards}
           cardQuotes={instruments.quotes}
+          entries={instruments.entries}
           currency={settings.currency}
         />
       </main>

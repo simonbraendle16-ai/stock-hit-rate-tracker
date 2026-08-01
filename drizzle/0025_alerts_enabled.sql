@@ -1,0 +1,38 @@
+-- Etappe 14, Abschnitt 3 — der Wecker stellt sich von selbst.
+--
+-- AUSGANGSLAGE, und sie ist der eigentliche Fehler
+-- Plan-Alerts entstanden bis hier ausschließlich beim AKTIVIEREN, und auch dann
+-- nur, wenn im Dialog das Häkchen „Kurs-Alerts aus dem Plan setzen" gesetzt war.
+-- Beides zusammen heißt: Ein Trade, der geplant ist und auf seinen Einstieg
+-- wartet, hatte **nie** einen Einstiegs-Wecker. Gerade der ist aber der einzige,
+-- der zählt, solange man noch nicht drin ist — und der Grund, aus dem diese
+-- ganze Etappe gebaut wird.
+--
+-- Ab hier gilt:
+--   * beim Anlegen eines geplanten Trades → Wecker auf den EINSTIEG
+--   * beim Aktivieren → zusätzlich Stop und Ziel(e)
+-- Stop und Ziele bewusst erst dann: Ein „Stop erreicht" für eine Position, die
+-- es noch gar nicht gibt, wäre eine Meldung über nichts — und ein Warnsystem
+-- verliert seine Wirkung genau in dem Moment, in dem es anfängt, Belangloses zu
+-- melden.
+--
+-- WARUM EINE SPALTE UND KEIN „HÄKCHEN BEIM AKTIVIEREN"
+-- Das Häkchen war eine Entscheidung im falschen Augenblick: Man trifft sie beim
+-- Aktivieren, während man an den Einstieg denkt, und ein einziges Übersehen
+-- kostet das Signal für die nächsten Wochen. `alertsEnabled` steht dagegen am
+-- Trade, gilt für seine ganze Lebensdauer und ist jederzeit umschaltbar.
+--
+-- Vorgabe `true`: Der Normalfall ist, dass man vom eigenen Plan erfahren will.
+-- Ein Wecker zu viel ist eine Meldung, die man wegräumt; einer zu wenig ist ein
+-- verpasster Einstieg.
+--
+-- KEIN BACKFILL AN DEN ALERTS. Bestehende geplante Trades bekommen ihre Wecker
+-- nicht stillschweigend beim nächsten Seitenaufruf, sondern nur auf ausdrücklichen
+-- Knopfdruck („Wecker für alle offenen Pläne stellen"). Ein Schwung Alerts, den
+-- niemand gesetzt hat, wäre dasselbe Ärgernis wie die Mail-Lawine aus 0024 —
+-- nur eine Ebene früher.
+--
+-- Additiv und idempotent, mehrfach ausführbar.
+
+ALTER TABLE "trade"
+  ADD COLUMN IF NOT EXISTS "alertsEnabled" boolean NOT NULL DEFAULT true;

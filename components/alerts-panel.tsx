@@ -6,9 +6,10 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { dismissAlert, deleteAlert } from '@/app/actions/alerts'
+import Link from 'next/link'
+import { createMissingPlanAlerts, dismissAlert, deleteAlert } from '@/app/actions/alerts'
 import { alertKindLabel, directionVerb, type AlertView } from '@/lib/alerts'
-import { Bell, BellRing, Check, Trash2 } from 'lucide-react'
+import { Bell, BellPlus, BellRing, Check, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -39,6 +40,27 @@ export function AlertsPanel({ alerts }: { alerts: AlertView[] }) {
     }
   }
 
+  const [nachruestBusy, setNachruestBusy] = useState(false)
+
+  const nachruesten = async () => {
+    setNachruestBusy(true)
+    try {
+      const { trades, created } = await createMissingPlanAlerts()
+      if (created === 0) {
+        toast.success('Alles schon gesetzt — es fehlte kein Wecker.')
+      } else {
+        toast.success(
+          `${created} Wecker für ${trades} Trade${trades === 1 ? '' : 's'} gesetzt.`,
+        )
+      }
+      router.refresh()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Fehler')
+    } finally {
+      setNachruestBusy(false)
+    }
+  }
+
   const act = async (id: number, fn: () => Promise<void>, ok: string) => {
     setBusyId(id)
     try {
@@ -57,7 +79,9 @@ export function AlertsPanel({ alerts }: { alerts: AlertView[] }) {
 
   return (
     <div className="panel sheen p-4">
-      <div className="mb-3 flex items-center justify-between gap-2">
+      {/* `flex-wrap`: In der schmalen Cockpit-Spalte passen die beiden Knöpfe
+          nicht neben die Überschrift — ohne Umbruch wird der rechte abgeschnitten. */}
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <p className="flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
           <Bell className="size-3.5" /> Kurs-Alerts
           {pending.length > 0 && (
@@ -66,16 +90,32 @@ export function AlertsPanel({ alerts }: { alerts: AlertView[] }) {
             </span>
           )}
         </p>
-        {permission !== 'granted' && permission !== 'unsupported' && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {/* Etappe 14: für den Altbestand. Trades, die vor dieser Etappe geplant
+              wurden, haben keinen Einstiegs-Wecker — nachgerüstet wird nur auf
+              Knopfdruck, nie stillschweigend im Hintergrund. */}
           <Button
             size="sm"
             variant="outline"
-            onClick={requestPermission}
+            onClick={nachruesten}
+            disabled={nachruestBusy}
             className="h-7 gap-1 font-mono text-[10px]"
+            title="Setzt fehlende Wecker für alle geplanten und laufenden Trades"
           >
-            <BellRing className="size-3" /> Benachrichtigungen erlauben
+            <BellPlus className="size-3" />
+            {nachruestBusy ? 'Wird gesetzt …' : 'Wecker nachrüsten'}
           </Button>
-        )}
+          {permission !== 'granted' && permission !== 'unsupported' && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={requestPermission}
+              className="h-7 gap-1 font-mono text-[10px]"
+            >
+              <BellRing className="size-3" /> Benachrichtigungen erlauben
+            </Button>
+          )}
+        </div>
       </div>
 
       {alerts.length === 0 ? (
@@ -187,6 +227,18 @@ function AlertRow({
         )}
       </div>
       <div className="flex shrink-0 items-center gap-1">
+        {/* Etappe 14: Ein erreichter Einstieg ist der einzige Alert, an dem
+            unmittelbar eine Entscheidung hängt — er führt deshalb direkt in die
+            Einstiegs-Ansicht statt nur in die Trade-Übersicht. Stop und Ziel
+            gehören zu einem laufenden Trade und brauchen diesen Weg nicht. */}
+        {fired && a.kind === 'einstieg' && a.tradeId != null && (
+          <Link
+            href={`/trades/${a.tradeId}/einstieg`}
+            className="rounded border border-primary/40 bg-primary/10 px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-wider text-primary hover:bg-primary/20"
+          >
+            Einstieg
+          </Link>
+        )}
         {fired && (
           <Button
             size="sm"

@@ -81,7 +81,11 @@ function StatRow({
   extra?: React.ReactNode
 }) {
   return (
-    <div className="flex items-center gap-3">
+    // `flex-wrap`: Der Zusatz rechts („1× Zone nicht erreicht") trug `shrink-0`
+    // und weigerte sich damit zu schrumpfen — auf einem 390er Display schob er
+    // die ganze Seite 75 Pixel nach rechts. Jetzt rutscht er in die nächste
+    // Zeile, statt die Seite mitzunehmen.
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
       <span className="w-20 shrink-0 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
         {label}
       </span>
@@ -100,7 +104,7 @@ function StatRow({
           <RateBar value={rate} tone={rate >= 50 ? 'gut' : 'schlecht'} />
         </span>
       )}
-      {extra && <span className="shrink-0 font-mono text-xs text-muted-foreground">{extra}</span>}
+      {extra && <span className="font-mono text-xs text-muted-foreground">{extra}</span>}
     </div>
   )
 }

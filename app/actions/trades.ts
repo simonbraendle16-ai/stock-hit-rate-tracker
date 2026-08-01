@@ -2,8 +2,8 @@
 
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
-import { trade, tradeEvent, tradeTarget, assessment, stock } from '@/lib/db/schema'
-import { and, asc, desc, eq, inArray } from 'drizzle-orm'
+import { priceAlert, trade, tradeEvent, tradeTarget, assessment, stock } from '@/lib/db/schema'
+import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm'
 import { headers } from 'next/headers'
 import { revalidatePath } from 'next/cache'
 import { PRE_TRADE_QUESTIONS, type PreTradeAnswer } from '@/lib/pre-trade-questions'
@@ -63,6 +63,7 @@ import {
 } from '@/lib/trade-targets'
 import { getSettings } from '@/app/actions/settings'
 import { createPlanAlerts } from '@/app/actions/alerts'
+import type { AlertKind } from '@/lib/alerts'
 import {
   ensurePortfolios,
   kindOf,
@@ -474,6 +475,22 @@ export async function createTrade(input: TradeInput): Promise<{ id: number }> {
     return [angelegt]
   })
 
+  // Etappe 14: Der Wecker auf den EINSTIEG entsteht sofort mit dem Plan — nicht
+  // erst beim Aktivieren, wie bis Etappe 13. Das war der eigentliche Fehler:
+  // Genau in der Zeit, in der man auf den Einstieg wartet, meldete sich nichts.
+  //
+  // Stop und Ziel kommen erst beim Aktivieren dazu; sie gehören zu einer
+  // Position, die es noch nicht gibt.
+  //
+  // Fehlertolerant: Ein Wecker ist Beiwerk, ein angelegter Trade ist die
+  // Hauptsache. Ist der Kurs gerade nicht abrufbar, bleibt der Trade bestehen —
+  // nachrüsten lässt er sich jederzeit über „Wecker für alle offenen Pläne".
+  try {
+    await createPlanAlerts(row.id, { kinds: ['einstieg'] })
+  } catch {
+    // bewusst still — siehe oben
+  }
+
   revalidatePath('/')
   revalidatePath('/trades')
   return { id: row.id }
@@ -628,10 +645,15 @@ export async function activateTrade(
 
   // Kurs-Alerts sind Beiwerk: ihre Erzeugung darf die Aktivierung nie scheitern
   // lassen (Kurs nicht abrufbar o. Ä.). Deshalb hier gekapselt und geschluckt.
+  //
+  // Etappe 14: Jetzt kommen STOP und ZIELE dazu — der Einstiegs-Wecker steht
+  // schon seit dem Anlegen. `opts.createPlanAlerts` ist nur noch eine
+  // Übersteuerung für diesen einen Vorgang; ob dauerhaft geweckt wird,
+  // entscheidet `trade.alertsEnabled` (geprüft in `createPlanAlerts`).
   let alertsCreated = 0
-  if (opts?.createPlanAlerts) {
+  if (opts?.createPlanAlerts !== false) {
     try {
-      const { created } = await createPlanAlerts(id)
+      const { created } = await createPlanAlerts(id, { kinds: ['stop', 'ziel'] })
       alertsCreated = created
     } catch {
       alertsCreated = 0
@@ -900,8 +922,68 @@ export async function updateTradePlan(
     if (levelEvents.length) await tx.insert(tradeEvent).values(levelEvents)
   })
 
+  // Etappe 14: Ein verschobenes Level macht seinen Wecker falsch — er würde eine
+  // Marke melden, die nicht mehr im Plan steht. Deshalb: alte, noch nicht
+  // ausgelöste Plan-Wecker der betroffenen Art entfernen und neu setzen.
+  //
+  // Nur nicht ausgelöste: Ein Wecker, der schon geklingelt hat, ist Geschichte
+  // und wird nicht rückwirkend umgeschrieben.
+  await syncPlanAlertsAfterEdit(userId, id, {
+    entryChanged: patch.entryPrice != null && patch.entryPrice !== t.entryPrice,
+    exitChanged:
+      (patch.stopLoss != null && patch.stopLoss !== t.stopLoss) ||
+      patch.takeProfit !== undefined ||
+      patch.targets !== undefined,
+  })
+
   revalidatePath('/')
   revalidatePath('/trades')
+}
+
+/**
+ * Plan-Wecker nach einer Planänderung nachziehen (Etappe 14).
+ *
+ * Fehler beim Kursabruf werden geschluckt: Ein nicht neu gesetzter Wecker ist
+ * ärgerlich, eine fehlgeschlagene Planänderung wäre schlimmer.
+ */
+async function syncPlanAlertsAfterEdit(
+  userId: string,
+  tradeId: number,
+  changed: { entryChanged: boolean; exitChanged: boolean },
+): Promise<void> {
+  const kinds: AlertKind[] = []
+  if (changed.entryChanged) kinds.push('einstieg')
+  if (changed.exitChanged) kinds.push('stop', 'ziel')
+  if (kinds.length === 0) return
+
+  const [t] = await db
+    .select({ status: trade.status, alertsEnabled: trade.alertsEnabled })
+    .from(trade)
+    .where(and(eq(trade.id, tradeId), eq(trade.userId, userId)))
+  if (!t?.alertsEnabled) return
+
+  await db
+    .delete(priceAlert)
+    .where(
+      and(
+        eq(priceAlert.userId, userId),
+        eq(priceAlert.tradeId, tradeId),
+        isNull(priceAlert.triggeredAt),
+        inArray(priceAlert.kind, kinds),
+      ),
+    )
+
+  // Nur die Arten neu setzen, die zum Stand des Trades passen: Ein geplanter
+  // Trade bekommt keinen Stop-Wecker, auch wenn gerade der Stop geändert wurde.
+  const passend = t.status === 'geplant' ? ['einstieg'] : ['stop', 'ziel']
+  const zuSetzen = kinds.filter((k) => passend.includes(k))
+  if (zuSetzen.length === 0) return
+
+  try {
+    await createPlanAlerts(tradeId, { kinds: zuSetzen })
+  } catch {
+    // siehe oben — der Plan ist bereits gespeichert
+  }
 }
 
 /**

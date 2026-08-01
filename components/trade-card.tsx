@@ -567,7 +567,7 @@ function Stat({
  * er ist zugleich Erhebung und Innehalten. Wäre er optional, fiele er genau in
  * den aufgewühlten Momenten weg — also in denen, die die Auswertung braucht.
  */
-function ActivateDialog({
+export function ActivateDialog({
   trade,
   open,
   onOpenChange,
@@ -641,8 +641,9 @@ function ActivateDialog({
 
         <MoodCheck value={mood} onChange={setMood} phase="entry" disabled={busy} />
 
-        {/* Kurs-Alerts aus dem Plan (Etappe 3): Stop, Ziel und — falls ein Kurs
-            vorliegt — Einstieg. Genau die Punkte, an denen etwas zu tun ist. */}
+        {/* Etappe 14: Der Einstiegs-Wecker steht schon seit dem Anlegen; hier
+            kommen Stop und Ziele dazu — die Punkte, an denen es bei einer
+            LAUFENDEN Position etwas zu tun gibt. */}
         <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-primary/20 bg-primary/5 p-3">
           <input
             type="checkbox"
@@ -652,7 +653,7 @@ function ActivateDialog({
             className="mt-0.5 accent-[var(--primary)]"
           />
           <span className="font-mono text-[11px] text-foreground">
-            Kurs-Alerts aus dem Plan setzen — Meldung, wenn Stop oder Ziel erreicht wird.
+            Wecker für Stop und Ziel setzen — Meldung, sobald einer erreicht wird.
             <span className="mt-0.5 block text-muted-foreground">
               Setzen und weggehen, statt am Chart zu kleben.
             </span>
@@ -673,7 +674,7 @@ function ActivateDialog({
   )
 }
 
-function NoTradeDialog({
+export function NoTradeDialog({
   trade,
   open,
   onOpenChange,

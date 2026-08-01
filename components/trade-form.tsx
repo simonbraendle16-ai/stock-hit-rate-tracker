@@ -910,7 +910,10 @@ export function TradeForm({
         )}
       </FormSection>
 
-      <div className="flex gap-3 pt-1">
+      {/* Auf dem Handy untereinander: „WEITER ZUR FINALEN ENTSCHEIDUNG" neben
+          „ABBRECHEN" braucht mehr Platz als ein 390er Display hergibt — die
+          Zeile schob die Seite nach rechts. Der Hauptknopf steht oben. */}
+      <div className="flex flex-col gap-3 pt-1 sm:flex-row">
         <Button
           type="submit"
           disabled={loading}

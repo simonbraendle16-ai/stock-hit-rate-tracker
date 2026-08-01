@@ -34,6 +34,7 @@ import { InstrumentCardGrid } from '@/components/instrument-card-grid'
 import { PrognosisGapRow } from '@/components/prognosis-gap-row'
 import { QuoteAutoRefresh } from '@/components/quote-auto-refresh'
 import { SectionLabel } from '@/components/section-label'
+import { TrackingNav, TrackingSection } from '@/components/tracking-sections'
 import { getBotTwinStats } from '@/app/actions/bot-twin'
 import { getInstrumentCards } from '@/app/actions/instruments'
 import { getSettings } from '@/app/actions/settings'
@@ -137,7 +138,11 @@ export default async function TrackingPage() {
           <ExportTradesButton />
         </div>
 
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        {/* Etappe 14: Drei Sprungmarken statt einer Panel-Säule ohne Ordnung. */}
+        <TrackingNav />
+
+        <TrackingSection id="ergebnis">
+        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
           <div className="lg:col-span-2">
             <DisciplineBar stats={stats} />
           </div>
@@ -202,31 +207,6 @@ export default async function TrackingPage() {
           </div>
         </div>
 
-        {/* Bot-Zwilling — was kostet mich mein eigenes Eingreifen? */}
-        <div className="mt-4">
-          <BotTwinPanel stats={botTwin} />
-        </div>
-
-        {/* MAE/MFE — wie weit lief es gegen mich, wie weit für mich?
-            Lebt von denselben Kerzen wie der Bot-Zwilling darüber. */}
-        <div className="mt-4">
-          <ExcursionPanel stats={botTwin.excursion} />
-        </div>
-
-        {/* Wahrscheinlichkeits-Simulation — gehört die Verlustserie zur Verteilung? */}
-        <div className="mt-4">
-          <MonteCarloPanel stats={monteCarlo} />
-        </div>
-
-        {/* Setup-Vergleich — welches Setup verdient das Geld? */}
-        <div className="mt-4">
-          <SetupComparisonPanel stats={setupStats} />
-        </div>
-
-        {/* Zeit & Haltedauer — wann handle ich gut, wann schlecht? */}
-        <div className="mt-4">
-          <TimeHeatmapPanel stats={timeStats} />
-        </div>
 
         {/* Depot-Vergleich — Trefferquote & Ø Gewinn je Depot.
             Der einzige Block dieser Seite, der über die aktive Auswahl
@@ -240,53 +220,28 @@ export default async function TrackingPage() {
           <PortfolioProfitChart groups={depotVergleich} />
         </div>
 
-        {/* Zonen-Trefferquote — laufen die geplanten Zonen überhaupt an? */}
-        <div className="mt-4 panel sheen p-4">
-          <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-            Zonen-Trefferquote
-          </p>
-          {zoneStats.total === 0 ? (
-            <p className="mt-2 font-mono text-xs text-muted-foreground">
-              Noch keine Daten — sobald Setups/Analysen anlaufen oder als „nicht angelaufen"
-              markiert werden.
-            </p>
-          ) : (
-            <>
-              <div className="mt-1 flex items-end justify-between gap-3">
-                <p
-                  className={`font-heading text-4xl font-bold ${zoneStats.rate >= 50 ? 'text-positive' : 'text-warning'}`}
-                >
-                  {zoneStats.rate.toFixed(0)}%
-                </p>
-                <div className="flex gap-4 font-mono text-[11px]">
-                  <span className="text-positive">{zoneStats.reached} angelaufen</span>
-                  <span className="text-warning">{zoneStats.notReached} nicht angelaufen</span>
-                </div>
-              </div>
-              <div className="bar-track mt-3 flex h-2 overflow-hidden">
-                <div
-                  className="h-full bg-positive"
-                  style={{ width: `${zoneStats.rate}%` }}
-                />
-                <div
-                  className="h-full bg-warning"
-                  style={{ width: `${100 - zoneStats.rate}%` }}
-                />
-              </div>
-              <p className="mt-2 font-mono text-[11px] text-muted-foreground">
-                Wie oft deine geplanten Zonen tatsächlich angelaufen wurden — über Trades und
-                Analysen. Niedrige Quote = Zonen zu eng/falsch gesetzt. Zählt nicht in
-                Gewinn/Verlust oder Trefferquote.
-              </p>
-            </>
-          )}
+        </TrackingSection>
+
+        <TrackingSection id="prozess">
+        {/* Bot-Zwilling — was kostet mich mein eigenes Eingreifen? */}
+        <div className="mt-4">
+          <BotTwinPanel stats={botTwin} />
         </div>
 
-        {/* Zustand & Ergebnis — in welcher Verfassung verdienst du Geld? */}
+        {/* MAE/MFE — wie weit lief es gegen mich, wie weit für mich?
+            Lebt von denselben Kerzen wie der Bot-Zwilling darüber. */}
+        <div className="mt-4">
+          <ExcursionPanel stats={botTwin.excursion} />
+        </div>
+
+        {/* Zustand & Ergebnis — in welcher Verfassung verdienst du Geld?
+            Steht im Prozess-Teil: Es geht um die Verfassung beim Handeln,
+            nicht um das Ergebnis daraus. */}
         <div className="mt-4">
           <MoodStatsPanel stats={moodStats} />
         </div>
-
+        {/* Plan-Treue gegen Ergebnis: Beides misst, wie gehandelt wurde —
+            nicht, was dabei herauskam. Deshalb Prozess und nicht Ergebnis. */}
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
           {/* Ergebnis-Aufschlüsselung */}
           <div className="panel sheen p-4">
@@ -348,6 +303,66 @@ export default async function TrackingPage() {
           </div>
         </div>
 
+        </TrackingSection>
+
+        <TrackingSection id="muster">
+        {/* Wahrscheinlichkeits-Simulation — gehört die Verlustserie zur Verteilung? */}
+        <div className="mt-4">
+          <MonteCarloPanel stats={monteCarlo} />
+        </div>
+
+        {/* Setup-Vergleich — welches Setup verdient das Geld? */}
+        <div className="mt-4">
+          <SetupComparisonPanel stats={setupStats} />
+        </div>
+
+        {/* Zeit & Haltedauer — wann handle ich gut, wann schlecht? */}
+        <div className="mt-4">
+          <TimeHeatmapPanel stats={timeStats} />
+        </div>
+
+        {/* Zonen-Trefferquote — laufen die geplanten Zonen überhaupt an? */}
+        <div className="mt-4 panel sheen p-4">
+          <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+            Zonen-Trefferquote
+          </p>
+          {zoneStats.total === 0 ? (
+            <p className="mt-2 font-mono text-xs text-muted-foreground">
+              Noch keine Daten — sobald Setups/Analysen anlaufen oder als „nicht angelaufen"
+              markiert werden.
+            </p>
+          ) : (
+            <>
+              <div className="mt-1 flex items-end justify-between gap-3">
+                <p
+                  className={`font-heading text-4xl font-bold ${zoneStats.rate >= 50 ? 'text-positive' : 'text-warning'}`}
+                >
+                  {zoneStats.rate.toFixed(0)}%
+                </p>
+                <div className="flex gap-4 font-mono text-[11px]">
+                  <span className="text-positive">{zoneStats.reached} angelaufen</span>
+                  <span className="text-warning">{zoneStats.notReached} nicht angelaufen</span>
+                </div>
+              </div>
+              <div className="bar-track mt-3 flex h-2 overflow-hidden">
+                <div
+                  className="h-full bg-positive"
+                  style={{ width: `${zoneStats.rate}%` }}
+                />
+                <div
+                  className="h-full bg-warning"
+                  style={{ width: `${100 - zoneStats.rate}%` }}
+                />
+              </div>
+              <p className="mt-2 font-mono text-[11px] text-muted-foreground">
+                Wie oft deine geplanten Zonen tatsächlich angelaufen wurden — über Trades und
+                Analysen. Niedrige Quote = Zonen zu eng/falsch gesetzt. Zählt nicht in
+                Gewinn/Verlust oder Trefferquote.
+              </p>
+            </>
+          )}
+        </div>
+
         {/* Dieselbe Frage je Instrument. Hier ohne Bedienelemente: Auf der
             Auswertungsseite wird gelesen, nicht erfasst. */}
         <div className="mt-8">
@@ -359,6 +374,7 @@ export default async function TrackingPage() {
             emptyHint="Sobald Prognosen oder Trades zu einem Instrument vorliegen, steht es hier."
           />
         </div>
+        </TrackingSection>
       </main>
     </div>
   )

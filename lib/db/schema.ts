@@ -123,6 +123,11 @@ export const userSettings = pgTable('user_settings', {
   // `lib/portfolio-scope.ts`. In der DB und nicht im Cookie, damit
   // Server-Komponenten sie ohne Client-Zustand lesen.
   activeScope: text('activeScope').notNull().default('echtgeld'),
+  // Etappe 14: Wohin Alarm-Mails gehen. Leer = die Adresse des Kontos gilt
+  // (`resolveRecipient` in `lib/notify/alert-mail.ts`). Bewusst kein Backfill — eine
+  // kopierte Adresse liefe beim Ändern des Kontos auseinander.
+  notifyEmail: text('notifyEmail'),
+  notifyByEmail: boolean('notifyByEmail').notNull().default(true),
 })
 
 // Ein- und Auszahlungen auf ein DEPOT. Ohne sie rechnet die Rendite gegen
@@ -266,6 +271,11 @@ export const trade = pgTable('trade', {
   // hängen zwei Guard-Entscheidungen — die Regeln stehen in lib/trade-kind.ts.
   tradeKind: text('tradeKind').notNull().default('langfristig'),
 
+  // Etappe 14: Stellt dieser Trade seine Wecker selbst? Beim Anlegen den
+  // Einstieg, beim Aktivieren Stop und Ziele. Vorgabe an — ein Wecker zu viel
+  // ist eine Meldung, die man wegräumt, einer zu wenig ein verpasster Einstieg.
+  alertsEnabled: boolean('alertsEnabled').notNull().default(true),
+
   // --- Plan (locked once status = aktiv) ---
   direction: text('direction').notNull(), // long | short
   entryPrice: doublePrecision('entryPrice').notNull(),
@@ -366,7 +376,31 @@ export const priceAlert = pgTable('price_alert', {
   active: boolean('active').notNull().default(true),
   // Auslösezeitpunkt; null = noch nicht erreicht
   triggeredAt: timestamp('triggeredAt'),
+  // Zeitpunkt der VERSANDTEN Benachrichtigung (Etappe 14, Migration 0024).
+  // Bewusst getrennt von `triggeredAt`: ausgelöst ist die fachliche Wahrheit und
+  // darf nicht davon abhängen, ob eine Mail durchkam. Ein Lauf schickt nur für
+  // `triggeredAt != null AND notifiedAt IS NULL` — dadurch nie zweimal dieselbe
+  // Mail, und ein Versandfehler wird beim nächsten Lauf erneut versucht.
+  // MIT Zeitzone, weil daraus gerechnet wird (siehe Migration 0021).
+  notifiedAt: timestamp('notifiedAt', { withTimezone: true }),
   createdAt: timestamp('createdAt').notNull().defaultNow(),
+})
+
+// Etappe 14: Protokoll der Alarm-Prüfläufe. Der Takt kommt von einem externen
+// Cron-Dienst (Vercel-Hobby lässt nur einen Lauf pro Tag zu) — fällt der still
+// aus, sähe die App fertig aus und bliebe stumm. Diese Tabelle macht das
+// sichtbar: die Einstellungen zeigen „letzter Prüflauf: vor X Minuten".
+export const alertCheckRun = pgTable('alert_check_run', {
+  id: serial('id').primaryKey(),
+  startedAt: timestamp('startedAt', { withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp('finishedAt', { withTimezone: true }),
+  // cron | client — läuft nur noch 'client', ist der externe Job tot.
+  trigger: text('trigger').notNull().default('cron'),
+  alertsOpen: integer('alertsOpen').notNull().default(0),
+  triggered: integer('triggered').notNull().default(0),
+  mailsSent: integer('mailsSent').notNull().default(0),
+  mailsFailed: integer('mailsFailed').notNull().default(0),
+  error: text('error'),
 })
 
 // Persistente Chart-Zeichnungen (Trendlinien, Fibs, Level, Notizen) je Instrument.

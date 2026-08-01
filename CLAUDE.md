@@ -272,6 +272,42 @@ Candlesticks) · pnpm via corepack.
   Yahoo-Anfrage. Eine Klammer (`inFlightRefresh`) verhindert parallele Läufe.
   Im Hintergrundtab pausiert der Takt (`visibilitychange`); der **erste** Abruf läuft immer,
   sonst stünde eine im Hintergrund geöffnete Seite dauerhaft auf „…".
+- **Einstiegs-Signal** (Etappe 14) = die App meldet sich von selbst, wenn ein geplanter Trade
+  seinen Einstieg erreicht. Vier Teile, die zusammengehören:
+  **(1) Serverseitige Prüfung.** `runAlertCheck` in `lib/alert-run.ts` — sitzungsfrei, damit
+  die Cron-Route sie für alle Nutzer anstoßen kann; `checkAlerts()` delegiert nur noch dorthin
+  (zwei Auslöse-Implementierungen wären zwei Wahrheiten darüber, wann ein Level erreicht ist).
+  Zwei Kursquellen mit Absicht: `quote_snapshot` (frisch, Batch, nur Schlusskurs) UND die
+  letzte Kerze (bis 15 Min alt, dafür High/Low für Intra-Kerzen-Berührungen) — ausgelöst wird,
+  wenn EINE der beiden das Level erreicht sieht.
+  **(2) Zustellung.** `lib/notify/agentmail.ts` (HTTP-API, `AGENTMAIL_API_KEY` +
+  `AGENTMAIL_INBOX_ID`), Text rein und getestet in `lib/notify/alert-mail.ts`. Gesendet wird
+  nur für `triggeredAt != null AND notifiedAt IS NULL` — ein Versandfehler lässt `notifiedAt`
+  leer und wird beim nächsten Lauf erneut versucht, ein zweiter Lauf schickt nie dieselbe Mail.
+  **Takt von außen** (`.github/workflows/check-alerts.yml`, alle 5 Min): Vercel-Hobby lässt nur
+  EINEN Cron-Lauf pro Tag zu. Weil dieser Takt nicht der App gehört, zeigen die Einstellungen
+  „letzter Prüflauf: vor X Minuten" (`alert_check_run`, `lib/notify/status.ts`) — ein
+  Warnsystem, das seinen eigenen Ausfall verschweigt, ist schlimmer als keines.
+  **(3) Der Moment.** `/trades/[id]/einstieg` (`components/entry-moment.tsx`): Plan, Kurs mit
+  Zeitstempel, ein Douglas-Satz und zwei **gleich große** Wege. Aktivieren und Verwerfen laufen
+  über die BESTEHENDEN Dialoge aus `trade-card.tsx` (`ActivateDialog`/`NoTradeDialog`) — ein
+  zweiter Aktivieren-Weg wäre eine zweite Stelle, an der Gate, Guard und Check-in hängen.
+  Ein Trade, der nicht mehr `geplant` ist, wird auf die volle Trade-Ansicht umgeleitet.
+  **(4) Wecker automatisch** (`trade.alertsEnabled`, Migration `0025`): beim **Anlegen** der
+  Einstiegs-Wecker, beim **Aktivieren** Stop und Ziele. Vorher entstanden Alerts nur beim
+  Aktivieren und nur mit gesetztem Häkchen — ein wartender Plan hatte also nie einen
+  Einstiegs-Wecker. Welche Arten zum Stand passen, entscheidet `kindsForStatus`; nach einer
+  Planänderung zieht `syncPlanAlertsAfterEdit` sie nach. Altbestand nur auf Knopfdruck
+  (`createMissingPlanAlerts`). Migration `0024` stellt alle vor der Etappe ausgelösten Alerts
+  einmalig still — sonst hätte der erste scharfe Lauf Monate alter Marken auf einen Schlag
+  verschickt.
+- **Abstand zum Einstieg** (Etappe 14) = die Ordnung der Watchlist. `lib/entry-distance.ts`
+  (rein, getestet): je Instrument der NÄCHSTE geplante Einstieg, erreichte zuoberst, dann nach
+  Abstand, alles ohne Plan alphabetisch darunter. **Bewusst über alle Depots** — anders als die
+  Kennzahlen daneben: Der Abstand ist keine Geldkennzahl, sondern eine Frage der Aufmerksamkeit,
+  und der Wecker meldet ohnehin depotübergreifend. `/api/sparklines` antwortet seither in zwei
+  Zügen (`?closes=1`): erst der Kurs aus der Datenbank, dann die Verläufe mit bis zu neunzig
+  Kerzen-Abrufen — vorher wartete der Kurs auf das Beiwerk (5–10 Sekunden leere Felder).
 - Guards: **Pre-Trade-Gate** (alle 9 = "ja" nötig zum Aktivieren; **entfällt beim schnellen
   Trade**) · **Plan-Lock**
   (Stop/Invalidation verschieben = Regelbruch; **Ausnahme ab Etappe 6:** nach einem Teilverkauf
@@ -361,8 +397,29 @@ Candlesticks) · pnpm via corepack.
   `tradedWithMoney` verteilt)
   · Etappe 13 „Teilziele" (Migration `0023`, Tabelle `trade_target`; mehrere Take-Profits je
   Trade, vorher geplant und einzeln ausführbar, `lib/trade-targets.ts`. **Ohne Backfill**).
+  · Etappe 14 „Einstiegs-Signal" (Migrationen `0024` + `0025`: `price_alert.notifiedAt`,
+  `user_settings.notifyEmail/notifyByEmail`, Tabelle `alert_check_run`, `trade.alertsEnabled`.
+  Serverseitige Alarmprüfung + Mailversand + Einstiegs-Ansicht + automatische Plan-Wecker +
+  Abstand zum Einstieg in der Watchlist + Gliederung von `/tracking`. **Mit Backfill:** alle
+  vor der Etappe ausgelösten Alerts gelten als gemeldet).
   **Die Roadmap ist damit vollständig** — offen ist nur noch der Ideenvorrat in
   `IDEEN-BACKLOG.md`.
+
+## Mobil: geprüft und die Fallstricke, die dabei auftauchten (Etappe 14)
+Die App war nie auf einem schmalen Display geprüft worden. Elf Seiten bei 390 px hatten am
+Ende **null** horizontale Überbreite; gefunden und behoben wurden dabei:
+- **Die Kopfzeile über allen Seiten.** Logo + sieben Navigationsziele + Depot-Umschalter +
+  Abmelden brauchen ~620 px. Sie ist jetzt unter `sm` zweizeilig (`components/cockpit-header.tsx`),
+  die Navigation als eigene Zeile — kein Menü, weil das jeden Seitenwechsel um einen Griff
+  verlängert hätte.
+- **`overflow-x-auto` allein genügt nicht.** Ein Grid-/Flex-Kind bläht sich auf seine
+  Inhaltsbreite auf; der scrollbare Container braucht zusätzlich `min-w-0`, sonst schiebt die
+  Tabelle die ganze Seite. Betrifft alle fünf Tabellen-Panels auf `/tracking`.
+- **`shrink-0` an einem langen Text** (`StatRow`-Zusatz in `instrument-card.tsx`) schob die
+  Seite um 75 px — auf `/analysis` UND `/tracking`, weil derselbe Baustein an vier Orten steht.
+- Prüfen lässt sich das **nicht** über `resize_window` des Browser-MCP: Das Fenster schrumpft,
+  der Viewport folgt nicht (`innerWidth` bleibt stehen). Zuverlässig geht es über ein iframe
+  mit fester Breite — darin greifen die Media-Queries echt.
 
 ## Code-Exploration: codegraph zuerst (überschreibt die globale Read-Effizienz-Regel)
 Dieses Projekt hat einen lokalen `codegraph`-Index (`.codegraph/`, via MCP-Server `codegraph`).

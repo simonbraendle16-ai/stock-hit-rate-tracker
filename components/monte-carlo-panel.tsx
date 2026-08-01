@@ -306,7 +306,7 @@ function StreakTable({ stats }: { stats: MonteCarloStats }) {
       <p className="mb-2 font-mono text-[10px] font-bold uppercase tracking-widest text-primary/70">
         Verlustserien in {horizon} Trades
       </p>
-      <div className="overflow-x-auto">
+      <div className="min-w-0 overflow-x-auto">
         <table className="w-full min-w-[22rem] border-collapse font-mono text-xs">
           <thead>
             <tr className="text-[9px] uppercase tracking-widest text-muted-foreground">

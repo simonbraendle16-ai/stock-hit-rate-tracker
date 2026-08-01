@@ -14,6 +14,7 @@ import { SetupTagsCard } from '@/components/setup-tags-card'
 import { ExcursionCard } from '@/components/excursion-card'
 import { TradePortfolioCard } from '@/components/trade-portfolio-card'
 import { TradeTargetsCard } from '@/components/trade-targets-card'
+import { TradeAlertsToggle } from '@/components/trade-alerts-toggle'
 import { getScopeContext } from '@/app/actions/portfolios'
 import { ArrowLeft, LineChart, Lock } from 'lucide-react'
 
@@ -57,6 +58,21 @@ export default async function TradeDetailPage({
         >
           <ArrowLeft className="size-3" /> Zurück
         </Link>
+
+        {/* Etappe 14: Ob dieser Trade sich meldet, steht oben und nicht in einem
+            Dialog — es ist eine Eigenschaft des Trades, keine Wahl im Moment
+            des Aktivierens. */}
+        <div className="mb-3 flex items-center gap-2">
+          <TradeAlertsToggle tradeId={t.id} enabled={t.alertsEnabled} status={t.status} />
+          {t.status === 'geplant' && t.alertsEnabled && (
+            <Link
+              href={`/trades/${t.id}/einstieg`}
+              className="inline-flex items-center gap-1.5 rounded border border-border px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground hover:text-foreground"
+            >
+              Einstiegs-Ansicht
+            </Link>
+          )}
+        </div>
 
         <div className="grid grid-cols-1 gap-4">
           <TradeCard t={t} currency={settings.currency} events={events} />

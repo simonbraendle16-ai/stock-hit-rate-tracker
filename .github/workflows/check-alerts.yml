@@ -1,0 +1,43 @@
+# Der Takt für die Alarm-Prüfung (Etappe 14).
+#
+# Vercel-Hobby lässt nur EINEN Cron-Lauf pro Tag zu und lehnt sonst das ganze
+# Deployment ab. Deshalb kommt der Takt von hier: alle fünf Minuten ein Aufruf
+# der Route, die dann die Kurse prüft und Meldungen verschickt.
+#
+# EINRICHTUNG (einmalig, von Hand):
+#   1. Im GitHub-Repo unter Settings → Secrets and variables → Actions anlegen:
+#        APP_URL      z. B. https://deine-app.vercel.app   (ohne Schrägstrich am Ende)
+#        CRON_SECRET  derselbe Wert wie in den Vercel-Projekt-Einstellungen
+#   2. Diese Datei committen und pushen — der Zeitplan startet von selbst.
+#
+# Alternative ohne GitHub: derselbe Aufruf bei cron-job.org, mit dem Header
+#   Authorization: Bearer <CRON_SECRET>
+#
+# Hinweis: GitHub führt geplante Läufe unter Last verzögert aus; fünf Minuten
+# sind der Wunsch, nicht die Garantie. Für geplante Einstiege trägt das —
+# ein Signal, das auf die Sekunde kommen muss, gehört ohnehin nicht in eine Mail.
+
+name: Alarme prüfen
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch: # von Hand anstoßbar, zum Testen
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prüflauf anstoßen
+        run: |
+          code=$(curl --silent --show-error --location \
+            --max-time 60 \
+            --output response.json \
+            --write-out '%{http_code}' \
+            --header "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.APP_URL }}/api/cron/check-alerts")
+          echo "HTTP $code"
+          cat response.json
+          # Ein fehlgeschlagener Aufruf soll im Actions-Protokoll rot sein —
+          # sonst fällt ein toter Alarm-Takt niemandem auf.
+          if [ "$code" != "200" ]; then exit 1; fi

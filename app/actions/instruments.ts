@@ -9,11 +9,16 @@
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { assessment, quoteSnapshot, stock, trade, tradeEvent } from '@/lib/db/schema'
+import {
+  nearestEntryByStock,
+  type EntryDistance,
+  type PlannedEntry,
+} from '@/lib/entry-distance'
 import { computeInstrumentStats, overallGap } from '@/lib/instrument-stats'
 import type { InstrumentStats } from '@/lib/instrument-stats'
 import type { TradeEventsByTrade } from '@/lib/trade-stats'
 import type { TradeEventRow } from '@/lib/trade-events'
-import { asc, eq } from 'drizzle-orm'
+import { and, asc, eq } from 'drizzle-orm'
 import { headers } from 'next/headers'
 import { loadScopeContext, tradeScopeWhere } from '@/lib/portfolio-context'
 
@@ -32,6 +37,8 @@ async function getUserId() {
 export async function getInstrumentCards(): Promise<{
   cards: InstrumentStats[]
   quotes: Record<number, { price: number; changePct: number | null; currency: string | null }>
+  /** Abstand zum nächsten geplanten Einstieg je Instrument (Etappe 14). */
+  entries: Record<number, EntryDistance>
   overall: ReturnType<typeof overallGap>
 }> {
   const userId = await getUserId()
@@ -97,7 +104,33 @@ export async function getInstrumentCards(): Promise<{
     quoteMap[q.stockId] = { price: q.price, changePct: q.changePct, currency: q.currency }
   }
 
-  return { cards, quotes: quoteMap, overall: overallGap(cards) }
+  // Etappe 14: Abstand zum geplanten Einstieg.
+  //
+  // BEWUSST ÜBER ALLE DEPOTS, anders als die Kennzahlen darüber. Die Karten
+  // trennen Echtgeld und Übung streng, weil eine Summe über beide keine gültige
+  // Zahl wäre. Der Abstand zum Einstieg ist aber keine Geldkennzahl, sondern
+  // eine Frage der Aufmerksamkeit: Ein geplanter Übungs-Trade, dessen Einstieg
+  // gleich erreicht wird, verlangt dieselbe Entscheidung wie ein echter — und
+  // der Wecker (Abschnitt 1) meldet ihn ohnehin unabhängig vom Depot. Wäre es
+  // hier anders, zeigte die Watchlist keinen Abstand für einen Trade, zu dem
+  // eine Mail unterwegs ist.
+  const geplante = await db
+    .select({
+      stockId: trade.stockId,
+      status: trade.status,
+      direction: trade.direction,
+      entryPrice: trade.entryPrice,
+    })
+    .from(trade)
+    .where(and(eq(trade.userId, userId), eq(trade.status, 'geplant')))
+
+  // Als einfaches Objekt statt Map, damit es die Server-/Client-Grenze übersteht.
+  const entries: Record<number, EntryDistance> = {}
+  for (const [stockId, d] of nearestEntryByStock(geplante as PlannedEntry[], quoteMap)) {
+    entries[stockId] = d
+  }
+
+  return { cards, quotes: quoteMap, entries, overall: overallGap(cards) }
 }
 
 /** Nur die Karte eines einzelnen Instruments — für `/stock/[id]`. */

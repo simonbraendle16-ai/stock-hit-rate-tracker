@@ -8,16 +8,19 @@ import { SettingsForm } from '@/components/settings-form'
 import { CashflowList } from '@/components/cashflow-list'
 import { PortfolioManager } from '@/components/portfolio-manager'
 import { getPortfolioUsage, getScopeContext } from '@/app/actions/portfolios'
+import { getNotifyStatus } from '@/app/actions/notifications'
+import { NotifyPanel } from '@/components/notify-panel'
 
 export default async function SettingsPage() {
   const session = await auth.api.getSession({ headers: await headers() })
   if (!session?.user) redirect('/sign-in')
 
-  const [settings, cashflows, kontext, usage] = await Promise.all([
+  const [settings, cashflows, kontext, usage, notify] = await Promise.all([
     getSettings(),
     listCashflows(),
     getScopeContext(),
     getPortfolioUsage(),
+    getNotifyStatus(),
   ])
 
   return (
@@ -33,6 +36,12 @@ export default async function SettingsPage() {
           </p>
         </div>
         <SettingsForm initial={settings} />
+        {/* Etappe 14: steht bewusst weit oben. Ob die App sich meldet, entscheidet
+            darüber, ob ein geplanter Trade überhaupt stattfindet — das ist
+            wichtiger als jede Gebühreneinstellung darunter. */}
+        <div className="mt-5">
+          <NotifyPanel initial={notify} />
+        </div>
         {/* Startkapital und Gebühren stehen seit Etappe 12 hier, am Depot —
             nicht mehr kontoweit oben. */}
         <div className="mt-5">

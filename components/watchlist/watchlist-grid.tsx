@@ -17,6 +17,7 @@ import {
 import { CHART_COLORS } from '@/components/chart/colors'
 import { InstrumentCard, type InstrumentQuote } from '@/components/instrument-card'
 import type { InstrumentStats } from '@/lib/instrument-stats'
+import { entrySortKey, NEAR_ENTRY_PCT, type EntryDistance } from '@/lib/entry-distance'
 import {
   SymbolRepairDialog,
   type RepairTarget,
@@ -109,12 +110,27 @@ function useSparklines() {
         return
       }
       try {
+        // Etappe 14, in zwei Zügen: Zuerst nur die Kurse (ein
+        // Datenbankzugriff, sofort da), dann die Verläufe für die Sparklines
+        // (bis zu neunzig Kerzen-Abrufe). Vorher warteten die Kurse auf die
+        // Verläufe — das waren die fünf bis zehn Sekunden mit leeren Feldern.
         const res = await fetch('/api/sparklines', { cache: 'no-store' })
         if (!res.ok) throw new Error()
         const data = (await res.json()) as { sparks: Record<number, SparkEntry> }
         if (cancelled) return
         setSparks(data.sparks)
         attempts = 0
+
+        // Die Verläufe kommen nach und ersetzen den Stand, sobald sie da sind.
+        // Bleiben sie aus, steht trotzdem überall ein Kurs.
+        void fetch('/api/sparklines?closes=1', { cache: 'no-store' })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((full: { sparks: Record<number, SparkEntry> } | null) => {
+            if (!cancelled && full) setSparks(full.sparks)
+          })
+          .catch(() => {
+            /* Verlauf ist Beiwerk — ohne ihn bleibt die Zeile vollständig lesbar. */
+          })
         // Noch ungefüllte Symbole kommen schneller dran als der Regeltakt.
         const hasPending = Object.values(data.sparks).some((e) => e.status === 'pending')
         schedule(hasPending ? 20_000 : POLL_MS)
@@ -160,6 +176,23 @@ function relativeAge(iso: string): string {
   return `vor ${Math.floor(h / 24)} Tg.`
 }
 
+/**
+ * Dieselbe Aussage in wenigen Zeichen — für die schmale Kursspalte auf dem Handy.
+ *
+ * Kürzen ist erlaubt, Weglassen nicht: Ein Kurs ohne Altersangabe behauptet,
+ * aktuell zu sein.
+ */
+function shortAge(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime()
+  if (!Number.isFinite(ms) || ms < 0) return ''
+  const min = Math.floor(ms / 60000)
+  if (min < 1) return 'eben'
+  if (min < 60) return `${min} Min.`
+  const h = Math.floor(min / 60)
+  if (h < 24) return `${h} Std.`
+  return `${Math.floor(h / 24)} Tg.`
+}
+
 function Sparkline({ closes, positive }: { closes: number[]; positive: boolean }) {
   const path = useMemo(() => {
     const w = 96
@@ -197,6 +230,43 @@ function formatPrice(v: number): string {
 }
 
 /** Eine kompakte Instrument-Zeile im TradingView-Stil. */
+/**
+ * „noch 2,1 % bis zum Einstieg" — oder, wenn die Marke schon erreicht ist, der
+ * Hinweis darauf.
+ *
+ * Bewusst zurückhaltend formuliert: Die Zeile sagt, wo der Kurs steht, nie was
+ * zu tun ist. Der Weg zur Entscheidung führt über die Einstiegs-Ansicht, wo der
+ * ganze Plan steht — nicht über eine Prozentzahl in einer Liste.
+ */
+function EntryDistanceLabel({ d }: { d: EntryDistance }) {
+  if (d.reached) {
+    return (
+      <p className="truncate font-mono text-[10px] font-bold text-primary">
+        Einstieg <span className="hidden sm:inline">{formatPrice(d.entryPrice)} </span>erreicht
+      </p>
+    )
+  }
+  const nah = d.absPct <= NEAR_ENTRY_PCT
+  const richtung = d.pct > 0 ? 'abwärts' : 'aufwärts'
+  return (
+    <p
+      className={`truncate font-mono text-[10px] ${nah ? 'text-primary' : 'text-muted-foreground'}`}
+      title={`Geplanter Einstieg: ${formatPrice(d.entryPrice)} (${richtung})`}
+    >
+      {/* Deutsche Schreibweise: `toFixed` liefert einen Dezimalpunkt. */}
+      noch{' '}
+      {d.absPct.toLocaleString('de-DE', {
+        minimumFractionDigits: 1,
+        maximumFractionDigits: 1,
+      })}{' '}
+      %{/* Auf dem Handy bleibt die Zahl allein stehen — mit dem Zusatz passte
+           die Zeile nicht und wurde abgeschnitten, also ausgerechnet dort
+           unleserlich, wo sie am meisten zählt. */}
+      <span className="hidden sm:inline"> bis zum Einstieg</span>
+    </p>
+  )
+}
+
 function WatchlistRow({
   s,
   spark,
@@ -204,6 +274,7 @@ function WatchlistRow({
   onRepair,
   card,
   cardQuote,
+  entry,
   currency,
   expanded,
   onToggleCard,
@@ -215,6 +286,8 @@ function WatchlistRow({
   /** Kennzahlen des Instruments; fehlt, wenn es weder Prognosen noch Trades hat. */
   card: InstrumentStats | undefined
   cardQuote: InstrumentQuote | undefined
+  /** Abstand zum nächsten geplanten Einstieg; fehlt ohne Plan (Etappe 14). */
+  entry: EntryDistance | undefined
   currency: string
   expanded: boolean
   onToggleCard: (id: number) => void
@@ -241,7 +314,10 @@ function WatchlistRow({
                 stammt aus „CL=F", auch wenn in der Watchlist „CL1!" steht. */}
             {ok && ok.symbol.toUpperCase() !== s.ticker.toUpperCase() && (
               <span
-                className="font-mono text-[10px] text-muted-foreground"
+                // Auf dem Handy verborgen: Die Kursquelle ist Kontext, kein
+                // Kern — dort drängte sie sich in die Kursspalte und überlagerte
+                // die Zahl, um die es geht.
+                className="hidden font-mono text-[10px] text-muted-foreground sm:inline"
                 title={`Kursquelle: ${ok.symbol}`}
               >
                 → {ok.symbol}
@@ -269,6 +345,9 @@ function WatchlistRow({
           <p className="truncate font-mono text-[10px] text-muted-foreground">
             {s.name} · {MARKET_LABELS[s.market] ?? s.market}
           </p>
+          {/* Etappe 14: die eigentliche Aussage dieser Zeile. Ein Kurs allein
+              beantwortet keine Frage — der Abstand zum eigenen Einstieg schon. */}
+          {entry && <EntryDistanceLabel d={entry} />}
         </div>
 
         <div className="hidden shrink-0 sm:block">
@@ -279,18 +358,27 @@ function WatchlistRow({
           ) : null}
         </div>
 
-        <div className="w-28 shrink-0 text-right">
+        {/* Etappe 14: Auf dem Handy schmaler, damit links Platz für Name und
+            Abstand bleibt. Währung und Abrufalter sind dort Beiwerk — der Kurs
+            ist die Information. */}
+        <div className="w-24 shrink-0 text-right sm:w-28">
           {ok ? (
             <>
               <span className="font-mono text-sm text-foreground">{formatPrice(ok.last)}</span>
               {ok.currency && (
-                <span className="ml-1 font-mono text-[9px] text-muted-foreground">
+                <span className="ml-1 hidden font-mono text-[9px] text-muted-foreground sm:inline">
                   {ok.currency}
                 </span>
               )}
+              {/* Das Alter des Kurses steht AUCH auf dem Handy — es war
+                  zwischenzeitlich ausgeblendet, um Platz zu sparen, und damit
+                  stand dort eine Zahl, die aussah, als wäre sie live. Genau
+                  dagegen ist diese App gebaut. Verkürzt statt verborgen: „2 Min."
+                  passt neben den Kurs, „vor 2 Minuten" erst ab `sm`. */}
               {ok.fetchedAt && (
                 <p className="font-mono text-[9px] text-muted-foreground">
-                  {relativeAge(ok.fetchedAt)}
+                  <span className="sm:hidden">{shortAge(ok.fetchedAt)}</span>
+                  <span className="hidden sm:inline">{relativeAge(ok.fetchedAt)}</span>
                 </p>
               )}
             </>
@@ -312,7 +400,7 @@ function WatchlistRow({
         </div>
 
         <div
-          className={`w-16 shrink-0 text-right font-mono text-xs ${
+          className={`w-14 shrink-0 text-right font-mono text-xs sm:w-16 ${
             ok ? (positive ? 'text-positive' : 'text-destructive') : 'text-muted-foreground'
           }`}
         >
@@ -387,12 +475,15 @@ export function WatchlistGrid({
   stocks,
   cards = [],
   cardQuotes = {},
+  entries = {},
   currency = 'EUR',
 }: {
   stocks: StockWithStats[]
   /** Kennzahlen je Instrument (Etappe 10) — die aufklappbare Karte unter der Zeile. */
   cards?: InstrumentStats[]
   cardQuotes?: Record<number, InstrumentQuote>
+  /** Abstand zum nächsten geplanten Einstieg (Etappe 14) — die Rangfolge der Liste. */
+  entries?: Record<number, EntryDistance>
   currency?: string
 }) {
   const router = useRouter()
@@ -511,8 +602,20 @@ export function WatchlistGrid({
     for (const s of filtered) {
       map.get(s.watchlistSection ?? NO_SECTION)?.push(s)
     }
+    // Etappe 14: Innerhalb jeder Sektion steht oben, was der eigenen
+    // Entscheidung am nächsten ist — erreichte Einstiege zuerst, dann nach
+    // Abstand. Was keinen Plan trägt, bleibt unter sich alphabetisch und
+    // verschwindet nie aus der Liste.
+    for (const list of map.values()) {
+      list.sort((a, b) => {
+        const ka = entrySortKey(entries[a.id])
+        const kb = entrySortKey(entries[b.id])
+        if (ka !== kb) return ka - kb
+        return a.ticker.localeCompare(b.ticker, 'de')
+      })
+    }
     return Array.from(map.entries()).filter(([, list]) => list.length > 0)
-  }, [filtered, sections])
+  }, [filtered, sections, entries])
 
   const applySection = (section: string | null) => {
     if (!moveTarget) return
@@ -637,6 +740,7 @@ export function WatchlistGrid({
                       onRepair={openRepair}
                       card={cardById.get(s.id)}
                       cardQuote={cardQuotes[s.id]}
+                      entry={entries[s.id]}
                       currency={currency}
                       expanded={expandedCard === s.id}
                       onToggleCard={(id) =>

@@ -17,8 +17,8 @@ import { revalidatePath } from 'next/cache'
 import { getCachedQuote } from '@/lib/market-data/quote'
 import { MarketDataError, type Market } from '@/lib/market-data'
 import { createSymbolResolver } from '@/lib/market-data/lookup'
+import { runAlertCheck } from '@/lib/alert-run'
 import {
-  candleReachesLevel,
   directionForLevel,
   isAlertDirection,
   isAlertKind,
@@ -173,13 +173,28 @@ export async function createAlert(input: CreateAlertInput): Promise<AlertView> {
  * bereits vorhandene Alerts derselben Art werden übersprungen, damit ein
  * erneuter Aufruf nichts doppelt.
  */
-export async function createPlanAlerts(tradeId: number): Promise<{ created: number }> {
+export async function createPlanAlerts(
+  tradeId: number,
+  // Etappe 14: Welche Arten gesetzt werden sollen. Ohne Angabe alle — so
+  // verhalten sich alle bisherigen Aufrufer unverändert.
+  //
+  // Der Ablauf ist bewusst zweistufig: Beim ANLEGEN wird nur der Einstieg
+  // geweckt, denn Stop und Ziel gehören zu einer Position, die es noch nicht
+  // gibt. Ein „Stop erreicht" ohne Position wäre eine Meldung über nichts — und
+  // ein Warnsystem verliert seine Wirkung in dem Moment, in dem es anfängt,
+  // Belangloses zu melden. Beim AKTIVIEREN kommen Stop und Ziele dazu.
+  opts?: { kinds?: AlertKind[] },
+): Promise<{ created: number }> {
   const userId = await getUserId()
   const [t] = await db
     .select()
     .from(trade)
     .where(and(eq(trade.id, tradeId), eq(trade.userId, userId)))
   if (!t) throw new Error('Trade nicht gefunden.')
+
+  // Wer die Wecker für diesen Trade abgeschaltet hat, bekommt auch dann keine,
+  // wenn ein automatischer Weg sie anlegen würde.
+  if (!t.alertsEnabled) return { created: 0 }
 
   const resolvePlanSymbol = await createSymbolResolver(userId)
   const quote = await tryQuote(
@@ -218,11 +233,13 @@ export async function createPlanAlerts(tradeId: number): Promise<{ created: numb
         ? [t.takeProfit]
         : []
 
-  const levels: { kind: AlertKind; level: number | null }[] = [
+  const alleLevels: { kind: AlertKind; level: number | null }[] = [
     { kind: 'einstieg', level: t.entryPrice },
     { kind: 'stop', level: t.stopLoss },
     ...ziele.map((p) => ({ kind: 'ziel' as AlertKind, level: p })),
   ]
+  const gewuenscht = opts?.kinds
+  const levels = gewuenscht ? alleLevels.filter((l) => gewuenscht.includes(l.kind)) : alleLevels
 
   const rows: (typeof priceAlert.$inferInsert)[] = []
   for (const { kind, level } of levels) {
@@ -251,6 +268,115 @@ export async function createPlanAlerts(tradeId: number): Promise<{ created: numb
   return { created: rows.length }
 }
 
+/**
+ * Wecker für diesen Trade an- oder abschalten (Etappe 14).
+ *
+ * Abschalten räumt die noch offenen Plan-Alerts gleich mit weg — ein Schalter,
+ * der auf „aus" steht, während weiter Meldungen kommen, wäre schlimmer als kein
+ * Schalter. Bereits ausgelöste bleiben stehen: Sie sind Geschichte, keine
+ * Wartende.
+ *
+ * Anschalten setzt die Wecker passend zum Stand des Trades: bei einem geplanten
+ * nur den Einstieg, bei einem laufenden Stop und Ziele.
+ */
+export async function setTradeAlertsEnabled(
+  tradeId: number,
+  enabled: boolean,
+): Promise<{ created: number; removed: number }> {
+  const userId = await getUserId()
+  const [t] = await db
+    .select()
+    .from(trade)
+    .where(and(eq(trade.id, tradeId), eq(trade.userId, userId)))
+  if (!t) throw new Error('Trade nicht gefunden.')
+
+  await db
+    .update(trade)
+    .set({ alertsEnabled: enabled })
+    .where(and(eq(trade.id, tradeId), eq(trade.userId, userId)))
+
+  if (!enabled) {
+    const removed = await db
+      .delete(priceAlert)
+      .where(
+        and(
+          eq(priceAlert.userId, userId),
+          eq(priceAlert.tradeId, tradeId),
+          isNull(priceAlert.triggeredAt),
+        ),
+      )
+      .returning({ id: priceAlert.id })
+    revalidatePath('/')
+    revalidatePath(`/trades/${tradeId}`)
+    return { created: 0, removed: removed.length }
+  }
+
+  const { created } = await createPlanAlerts(tradeId, { kinds: kindsForStatus(t.status) })
+  revalidatePath(`/trades/${tradeId}`)
+  return { created, removed: 0 }
+}
+
+/**
+ * Welche Wecker zum Stand eines Trades passen.
+ *
+ * Geplant: nur der Einstieg — Stop und Ziel gehören zu einer Position, die es
+ * noch nicht gibt. Aktiv: Stop und Ziele; der Einstieg ist Geschichte.
+ * Abgeschlossen oder abgebrochen: keine.
+ */
+function kindsForStatus(status: string): AlertKind[] {
+  if (status === 'geplant') return ['einstieg']
+  if (status === 'aktiv') return ['stop', 'ziel']
+  return []
+}
+
+/**
+ * Wecker für ALLE offenen Pläne nachrüsten (Etappe 14).
+ *
+ * Für den Altbestand: Trades, die vor dieser Etappe geplant wurden, haben keinen
+ * Einstiegs-Wecker. Nachgerüstet wird nur auf ausdrücklichen Knopfdruck — ein
+ * Schwung Alerts, den niemand gesetzt hat, wäre dieselbe Überrumpelung wie eine
+ * Mail-Lawine, nur eine Ebene früher.
+ *
+ * `createPlanAlerts` überspringt von sich aus, was schon existiert oder bereits
+ * erfüllt ist; der Aufruf ist deshalb beliebig oft wiederholbar.
+ */
+export async function createMissingPlanAlerts(): Promise<{
+  trades: number
+  created: number
+}> {
+  const userId = await getUserId()
+  const offen = await db
+    .select({ id: trade.id, status: trade.status })
+    .from(trade)
+    .where(
+      and(
+        eq(trade.userId, userId),
+        eq(trade.alertsEnabled, true),
+        inArray(trade.status, ['geplant', 'aktiv']),
+      ),
+    )
+
+  let created = 0
+  let betroffen = 0
+  for (const t of offen) {
+    const kinds = kindsForStatus(t.status)
+    if (kinds.length === 0) continue
+    try {
+      const r = await createPlanAlerts(t.id, { kinds })
+      if (r.created > 0) {
+        created += r.created
+        betroffen += 1
+      }
+    } catch {
+      // Ein Trade ohne abrufbaren Kurs bekommt keinen Einstiegs-Wecker — das
+      // darf den Lauf über die übrigen nicht abbrechen.
+    }
+  }
+
+  revalidatePath('/')
+  return { trades: betroffen, created }
+}
+
 // ---------------------------------------------------------------------------
 // Lesen
 // ---------------------------------------------------------------------------
@@ -275,71 +401,29 @@ export async function listAlerts(): Promise<AlertView[]> {
 // ---------------------------------------------------------------------------
 
 /**
- * Prüft alle offenen Alerts gegen den aktuellen Kurs und markiert die
- * erreichten als ausgelöst. Gibt die NEU ausgelösten zurück, damit der Client
- * eine Benachrichtigung zeigen kann.
+ * Prüft die offenen Alerts des angemeldeten Nutzers und gibt die NEU
+ * ausgelösten zurück, damit der Client eine Benachrichtigung zeigen kann.
  *
- * Kurse werden je Symbol nur EINMAL geholt (gruppiert) und sind 15 Min gecacht —
- * das schont das Twelve-Data-Gratislimit auch bei mehreren offenen Positionen.
- * Symbole, deren Kurs gerade nicht abrufbar ist, bleiben unangetastet und werden
- * beim nächsten Lauf erneut geprüft.
+ * Der eigentliche Ablauf steht seit Etappe 14 in `lib/alert-run.ts` und wird von
+ * der Cron-Route mit denselben Regeln für alle Nutzer angestoßen. Zwei
+ * Auslöse-Implementierungen nebeneinander wären zwei Wahrheiten darüber, wann
+ * ein Level erreicht ist — deshalb delegiert diese Action nur noch.
+ *
+ * `notify: false`: Im offenen Tab meldet sich der `AlertWatcher` bereits selbst;
+ * eine zusätzliche Mail für denselben Alert wäre doppelt. Was der Browser
+ * auslöst, aber nicht meldet, schickt der nächste Cron-Lauf hinterher — er sucht
+ * alles mit `triggeredAt != null AND notifiedAt IS NULL`.
  */
 export async function checkAlerts(): Promise<AlertView[]> {
   const userId = await getUserId()
-  const open = await db
+  const report = await runAlertCheck({ userId, trigger: 'client', notify: false })
+  if (report.triggeredIds.length === 0) return []
+
+  const rows = await db
     .select()
     .from(priceAlert)
-    .where(
-      and(
-        eq(priceAlert.userId, userId),
-        eq(priceAlert.active, true),
-        isNull(priceAlert.triggeredAt),
-      ),
-    )
-  if (open.length === 0) return []
-
-  // Nach ANBIETER-Symbol gruppieren — ein Kursabruf je (Symbol, Markt). Die
-  // Aufloesung geht ueber das verknuepfte Instrument: Ein Alert auf einen
-  // Bitcoin-Trade mit Ticker `BTC` wurde sonst gegen ein fremdes Papier
-  // geprueft und haette bei 28,10 statt 63.533 ausgeloest.
-  const resolveAlertSymbol = await createSymbolResolver(userId)
-  const groups = new Map<string, AlertRow[]>()
-  for (const a of open) {
-    const key = `${resolveAlertSymbol(a.ticker, a.stockId)}|${a.market}`
-    const list = groups.get(key)
-    if (list) list.push(a)
-    else groups.set(key, [a])
-  }
-
-  const triggeredIds: number[] = []
-  for (const [key, list] of groups) {
-    const [symbol, market] = key.split('|')
-    const quote = await tryQuote(symbol, market as Market)
-    if (!quote) continue // Kurs nicht abrufbar → beim nächsten Lauf erneut
-    for (const a of list) {
-      if (!isAlertDirection(a.direction)) continue
-      // High/Low der letzten Kerze erfasst auch eine kurze Berührung innerhalb der Kerze.
-      if (candleReachesLevel(a.direction, a.price, quote)) triggeredIds.push(a.id)
-    }
-  }
-
-  if (triggeredIds.length === 0) return []
-
-  const now = new Date()
-  const updated = await db
-    .update(priceAlert)
-    .set({ triggeredAt: now })
-    .where(
-      and(
-        eq(priceAlert.userId, userId),
-        inArray(priceAlert.id, triggeredIds),
-        isNull(priceAlert.triggeredAt), // Wettlauf-sicher: nur, was noch offen war
-      ),
-    )
-    .returning()
-
-  if (updated.length) revalidatePath('/')
-  return updated.map(toView)
+    .where(and(eq(priceAlert.userId, userId), inArray(priceAlert.id, report.triggeredIds)))
+  return rows.map(toView)
 }
 
 // ---------------------------------------------------------------------------

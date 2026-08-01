@@ -65,17 +65,29 @@ async function fetchCloses(symbol: string, market: Market): Promise<number[] | n
  * Hälfte der Kurse fehlte. Gefüllt wird der Speicher vom Hintergrundlauf
  * (`/api/cron/sync-symbols`).
  */
-export async function GET() {
+export async function GET(req: Request) {
   const session = await auth.api.getSession({ headers: await headers() })
   if (!session?.user) {
     return NextResponse.json({ error: 'Nicht angemeldet.' }, { status: 401 })
   }
 
-  // Vor dem Lesen auffrischen, wenn der Speicher zu alt ist. Die Watchlist
-  // fragt diese Route im Takt ab — damit ist sie der Ort, an dem sich ein
-  // veralteter Stand ohne Zutun des Nutzers von selbst korrigiert. Der Aufruf
-  // wirft nie und hält bei frischem Speicher praktisch nicht auf.
-  await refreshQuotesIfStale()
+  // Etappe 14: Zwei Betriebsarten, und der Unterschied ist der Grund, warum die
+  // Watchlist bis hier fünf bis zehn Sekunden auf ihre Kurse wartete.
+  //
+  //   ohne `closes` (der ERSTE Abruf): nur der Kursspeicher, ein einziger
+  //     Datenbankzugriff. Antwortet in Millisekunden.
+  //   mit `closes=1` (der zweite, im Hintergrund): zusätzlich die Verläufe für
+  //     die Sparklines — und die kosten bis zu neunzig Kerzen-Abrufe.
+  //
+  // Der Verlauf ist Beiwerk; der Kurs ist die Information. Beide im selben
+  // Zug zu liefern hieß: Der Kurs wartet auf das Beiwerk.
+  const wantCloses = new URL(req.url).searchParams.get('closes') === '1'
+
+  // Auffrischen nur im zweiten, ohnehin langsamen Durchgang. Der erste soll den
+  // gespeicherten Stand SOFORT zeigen — mit Zeitstempel, also ehrlich als das,
+  // was er ist. Ein Kurs von vor zwei Minuten, sichtbar beschriftet, ist besser
+  // als ein leeres Feld, das auf den perfekten Kurs wartet.
+  if (wantCloses) await refreshQuotesIfStale()
 
   const rows = await db
     .select({
@@ -108,7 +120,7 @@ export async function GET() {
         return
       }
 
-      const closes = await fetchCloses(r.providerSymbol, r.market as Market)
+      const closes = wantCloses ? await fetchCloses(r.providerSymbol, r.market as Market) : null
       sparks[r.id] = {
         status: 'ok',
         // Ohne Verlauf bleibt die Sparkline leer — der Kurs steht trotzdem.

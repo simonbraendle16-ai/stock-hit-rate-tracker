@@ -22,86 +22,13 @@ import { cn } from '@/lib/utils'
 import { Activity, AlertCircle, BellPlus, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { SetAlertDialog } from '@/components/set-alert-dialog'
-
-interface QuoteState {
-  price: number | null
-  time: number | null
-  loading: boolean
-  error: string | null
-  errorCode: string | null
-}
-
-function useQuote(
-  symbol: string,
-  market: string,
-  enabled: boolean,
-  /** Verknüpftes Instrument — erst darueber ist ein Trade-Ticker aufloesbar. */
-  stockId: number | null,
-): QuoteState {
-  const [state, setState] = useState<QuoteState>({
-    price: null,
-    time: null,
-    loading: enabled,
-    error: null,
-    errorCode: null,
-  })
-
-  useEffect(() => {
-    if (!enabled) return
-    const controller = new AbortController()
-    setState((s) => ({ ...s, loading: true, error: null, errorCode: null }))
-
-    const params = new URLSearchParams({ symbol, market })
-    if (stockId != null) params.set('stockId', String(stockId))
-    fetch(`/api/quote?${params}`, { signal: controller.signal })
-      .then(async (res) => {
-        const data = await res.json()
-        if (!res.ok) {
-          setState({
-            price: null,
-            time: null,
-            loading: false,
-            error: data.error ?? 'Kurs konnte nicht geladen werden.',
-            errorCode: data.code ?? null,
-          })
-          return
-        }
-        setState({ price: data.price, time: data.time, loading: false, error: null, errorCode: null })
-      })
-      .catch((err) => {
-        if (err.name === 'AbortError') return
-        setState({
-          price: null,
-          time: null,
-          loading: false,
-          error: 'Netzwerkfehler beim Laden des Kurses.',
-          errorCode: null,
-        })
-      })
-
-    return () => controller.abort()
-  }, [symbol, market, enabled, stockId])
-
-  return state
-}
+// Der Kursabruf liegt seit Etappe 14 in `use-trade-quote.ts` — dieselbe Quelle
+// nutzt die Einstiegs-Ansicht.
+import { quoteTimeLabel, useTradeQuote } from '@/components/use-trade-quote'
 
 const pct = (n: number) => n.toLocaleString('de-DE', { maximumFractionDigits: 1 })
 const rMultiple = (n: number) =>
   `${n >= 0 ? '+' : ''}${n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} R`
-
-/** Kerzen-Zeitstempel → „Kurs von 14:32" (bzw. mit Datum, wenn nicht heute). */
-function quoteTimeLabel(timeSec: number): string {
-  const d = new Date(timeSec * 1000)
-  const now = new Date()
-  const sameDay =
-    d.getDate() === now.getDate() &&
-    d.getMonth() === now.getMonth() &&
-    d.getFullYear() === now.getFullYear()
-  const time = d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
-  if (sameDay) return `Kurs von ${time}`
-  const date = d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })
-  return `Kurs von ${date}, ${time}`
-}
 
 export function LivePosition({
   t,
@@ -115,7 +42,12 @@ export function LivePosition({
   const [alertOpen, setAlertOpen] = useState(false)
   // Optionen haben keine Gratis-Kursdaten — gar nicht erst abrufen.
   const enabled = t.market !== 'optionen'
-  const { price, time, loading, error, errorCode } = useQuote(t.ticker, t.market, enabled, t.stockId)
+  const { price, time, loading, error, errorCode } = useTradeQuote(
+    t.ticker,
+    t.market,
+    t.stockId,
+    enabled,
+  )
 
   // Etappe 6: liegen Events vor und wurde bereits ein Teil verkauft, bezieht sich
   // der unrealisierte Stand auf die verbleibende Restmenge zum gewichteten
