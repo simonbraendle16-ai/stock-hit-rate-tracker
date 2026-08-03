@@ -12,11 +12,27 @@ interface CandlesState {
   errorCode: string | null
 }
 
+export interface UseCandlesOptions {
+  /** Instrument aus der Watchlist — nur damit stimmt die Symbolauflösung (Etappe 11). */
+  stockId?: number
+  /**
+   * Trainingseinheit statt Symbol: Der Server nimmt Symbol, Markt und Intervall
+   * aus der Übung. Bei einer verdeckten Übung erfährt der Browser das Symbol
+   * dadurch gar nicht erst — „verdeckt" wäre sonst nur ein Anzeige-Trick.
+   */
+  trainingSessionId?: number
+}
+
 export function useCandles(
   symbol: string,
   market: string,
   interval: Interval,
+  options: number | UseCandlesOptions = {},
 ): CandlesState {
+  // Rückwärtsverträglich: früher war der vierte Parameter direkt die stockId.
+  const opts: UseCandlesOptions = typeof options === 'number' ? { stockId: options } : options
+  const { stockId, trainingSessionId } = opts
+
   const [state, setState] = useState<CandlesState>({
     candles: null,
     loading: true,
@@ -28,7 +44,16 @@ export function useCandles(
     const controller = new AbortController()
     setState((s) => ({ ...s, loading: true, error: null, errorCode: null }))
 
-    const params = new URLSearchParams({ symbol, market, interval })
+    const params = new URLSearchParams()
+    if (trainingSessionId != null) {
+      params.set('trainingSessionId', String(trainingSessionId))
+    } else {
+      params.set('symbol', symbol)
+      params.set('market', market)
+      params.set('interval', interval)
+      if (stockId != null) params.set('stockId', String(stockId))
+    }
+
     fetch(`/api/candles?${params}`, { signal: controller.signal })
       .then(async (res) => {
         const data = await res.json()
@@ -54,7 +79,7 @@ export function useCandles(
       })
 
     return () => controller.abort()
-  }, [symbol, market, interval])
+  }, [symbol, market, interval, stockId, trainingSessionId])
 
   return state
 }

@@ -21,16 +21,45 @@ export type Market =
   | 'optionen'
   | 'sonstiges'
 
-/** Anzahl Kerzen, die pro Interval geladen werden (deckt 1T–mehrere Jahre ab). */
+/**
+ * Anzahl Kerzen, die pro Intervall beim Anbieter angefragt werden.
+ *
+ * Gilt für Anbieter, die eine Stückzahl erwarten (Twelve Data, Binance). Yahoo
+ * bekommt stattdessen einen Zeitraum und liefert, was er hat — dort wird
+ * bewusst NICHT mehr gekürzt: Was einmal geholt ist, gehört in den
+ * Kerzenspeicher, auch wenn der Chart es gerade nicht zeigt.
+ */
 export const DEFAULT_OUTPUT_SIZE: Record<Interval, number> = {
-  '15min': 500,
-  '30min': 500,
-  '1h': 500,
-  '4h': 500,
-  '1day': 500,
-  '1week': 400,
-  '1month': 240,
+  '15min': 5000,
+  '30min': 3000,
+  '1h': 5000,
+  '4h': 3000,
+  '1day': 2500,
+  '1week': 1200,
+  '1month': 400,
 }
+
+/**
+ * Wie viele Kerzen standardmäßig AUSGELIEFERT werden — die Trennung von
+ * `DEFAULT_OUTPUT_SIZE` ist Absicht.
+ *
+ * Der Speicher soll alles behalten, was ein Anbieter je hergegeben hat; ein
+ * Chart soll deshalb aber nicht jedes Mal Tausende Kerzen durch die Leitung
+ * schicken. Wer mehr braucht (der Replay-Trainer), fragt ausdrücklich mit einem
+ * höheren `limit` an.
+ */
+export const DELIVERY_LIMIT: Record<Interval, number> = {
+  '15min': 900,
+  '30min': 900,
+  '1h': 900,
+  '4h': 900,
+  '1day': 900,
+  '1week': 600,
+  '1month': 300,
+}
+
+/** Obergrenze für ein ausdrücklich angefragtes `limit` — schützt vor Unsinn. */
+export const MAX_DELIVERY_LIMIT = 8000
 
 export class MarketDataError extends Error {
   constructor(

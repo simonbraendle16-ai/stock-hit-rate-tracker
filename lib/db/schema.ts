@@ -542,3 +542,128 @@ export const tradeExcursion = pgTable('trade_excursion', {
   createdAt: timestamp('createdAt').notNull().defaultNow(),
   updatedAt: timestamp('updatedAt').notNull().defaultNow(),
 })
+
+// --- Replay-Trainer (Migration 0026) ---------------------------------------
+// Eine Trainingseinheit: historischer Ausschnitt, VOR dem Aufdecken
+// festgeschriebene These, danach die Bewertung. Die Reihenfolge ist der Wert
+// der Übung — deshalb liegen These (hier), Zeichnungen und Bewertung in drei
+// Tabellen und nicht in einer Zeile.
+export const trainingSession = pgTable('training_session', {
+  id: serial('id').primaryKey(),
+  userId: text('userId').notNull(),
+  // Optional — ein frei eingegebenes Symbol hat kein Instrument. Ist es
+  // gesetzt, laufen die Kerzen über die Symbolauflösung (Etappe 9/11).
+  stockId: integer('stockId'),
+  symbol: text('symbol').notNull(),
+  market: text('market').notNull(),
+  timeframe: text('timeframe').notNull(),
+  // frei | zufall | elliott
+  mode: text('mode').notNull().default('frei'),
+  blind: boolean('blind').notNull().default(false),
+  candleCount: integer('candleCount').notNull().default(0),
+  startIndex: integer('startIndex').notNull().default(0),
+  firstCandleTime: integer('firstCandleTime'),
+  startCandleTime: integer('startCandleTime'),
+  lastCandleTime: integer('lastCandleTime'),
+  // offen | festgeschrieben | bewertet | abgebrochen
+  status: text('status').notNull().default('offen'),
+  // long | short | keine
+  direction: text('direction'),
+  elliottCount: text('elliottCount'),
+  invalidation: doublePrecision('invalidation'),
+  entryPrice: doublePrecision('entryPrice'),
+  stopLoss: doublePrecision('stopLoss'),
+  takeProfit: doublePrecision('takeProfit'),
+  thesisNote: text('thesisNote'),
+  // JSON-Array der Anzeigeformen, wie `trade.setupTags`.
+  setupTags: text('setupTags'),
+  committedAt: timestamp('committedAt', { withTimezone: true }),
+  revealedAt: timestamp('revealedAt', { withTimezone: true }),
+  createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp('finishedAt', { withTimezone: true }),
+})
+
+// Die Zeichnungen einer Übung. Bewusst NICHT in `chart_drawing`: Übungslinien
+// gehören zu einem historischen Ausschnitt, nicht zum Instrument — sonst
+// stünden sie im echten Chart neben echten Plan-Levels.
+export const trainingAnnotation = pgTable('training_annotation', {
+  id: serial('id').primaryKey(),
+  sessionId: integer('sessionId').notNull(),
+  userId: text('userId').notNull(),
+  // Dieselben Typen wie `chart_drawing`.
+  type: text('type').notNull(),
+  points: text('points').notNull(),
+  style: text('style'),
+  createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
+})
+
+// Die Bewertung NACH dem Aufdecken — genau eine je Übung (Unique-Index).
+export const trainingResult = pgTable('training_result', {
+  id: serial('id').primaryKey(),
+  sessionId: integer('sessionId').notNull(),
+  userId: text('userId').notNull(),
+  // korrekt | teilweise | falsch
+  rating: text('rating').notNull(),
+  // JSON-Array aus dem FESTEN Katalog in lib/training.ts.
+  errorTags: text('errorTags'),
+  note: text('note'),
+  revealedCandles: integer('revealedCandles'),
+  createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
+})
+
+// --- Kerzenspeicher (Migration 0027) ---------------------------------------
+// Was einmal beim Anbieter geholt wurde, bleibt hier liegen. Grund: Yahoo gibt
+// 15-Minuten-Kerzen nur 60 Tage weit heraus — was älter ist, ist dort für immer
+// weg, bei uns aber nicht. Ohne `userId`, weil eine Kerze keine Nutzerdatei ist,
+// sondern eine öffentliche Marktbeobachtung; Schlüssel ist das ANBIETER-Symbol
+// (`BTC-USD`), nie der Rohticker (dieselbe Entscheidung wie `quote_snapshot`).
+export const candleCache = pgTable(
+  'candle_cache',
+  {
+    symbol: text('symbol').notNull(),
+    interval: text('interval').notNull(),
+    // Unix-Sekunden des Kerzenbeginns (UTC), wie `Candle.time`.
+    time: integer('time').notNull(),
+    open: doublePrecision('open').notNull(),
+    high: doublePrecision('high').notNull(),
+    low: doublePrecision('low').notNull(),
+    close: doublePrecision('close').notNull(),
+    volume: doublePrecision('volume').notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.symbol, t.interval, t.time] })],
+)
+
+// Der Zustand je Reihe. Trägt die eine Angabe, die aus den Kerzen selbst nicht
+// hervorgeht: wann wir zuletzt beim Anbieter waren. Daran hängen die
+// Frischeprüfung beim Lesen und die Rotation im Sammellauf.
+export const candleSeries = pgTable(
+  'candle_series',
+  {
+    symbol: text('symbol').notNull(),
+    interval: text('interval').notNull(),
+    market: text('market'),
+    firstTime: integer('firstTime'),
+    lastTime: integer('lastTime'),
+    candleCount: integer('candleCount').notNull().default(0),
+    fetchedAt: timestamp('fetchedAt', { withTimezone: true }),
+    lastError: text('lastError'),
+    failCount: integer('failCount').notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.symbol, t.interval] })],
+)
+
+// Protokoll der Sammelläufe — wie `symbol_sync_run` und `alert_check_run`.
+// Der Takt kommt von außen (GitHub-Workflow); ohne Protokoll wäre ein
+// ausgefallener Lauf von einem ruhigen Markt nicht zu unterscheiden.
+export const candleCollectRun = pgTable('candle_collect_run', {
+  id: serial('id').primaryKey(),
+  startedAt: timestamp('startedAt', { withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp('finishedAt', { withTimezone: true }),
+  // cron | manual
+  trigger: text('trigger').notNull().default('cron'),
+  seriesDue: integer('seriesDue').notNull().default(0),
+  seriesFetched: integer('seriesFetched').notNull().default(0),
+  seriesFailed: integer('seriesFailed').notNull().default(0),
+  candlesAdded: integer('candlesAdded').notNull().default(0),
+  error: text('error'),
+})

@@ -308,6 +308,56 @@ Candlesticks) · pnpm via corepack.
   und der Wecker meldet ohnehin depotübergreifend. `/api/sparklines` antwortet seither in zwei
   Zügen (`?closes=1`): erst der Kurs aus der Datenbank, dann die Verläufe mit bis zu neunzig
   Kerzen-Abrufen — vorher wartete der Kurs auf das Beiwerk (5–10 Sekunden leere Felder).
+- **Replay-Trainer** (Migration `0026`) = Charts zurückspulen und die eigene Analyse messen.
+  Drei Tabellen, weil drei Zeitpunkte: `training_session` (die Übung **samt der vor dem
+  Aufdecken festgeschriebenen These**, `committedAt`), `training_annotation` (die Zeichnungen
+  dazu) und `training_result` (die Bewertung danach, genau eine je Übung). Läge alles in
+  einer Zeile, ließe sich nicht mehr belegen, dass die These vor dem Ergebnis stand — und
+  eine nachträglich anpassbare These misst nichts. Genau deshalb ist die Sperre auch keine
+  Warnung, sondern eine **Obergrenze am Replay** (`replayMaxVisible`): Vor dem Festschreiben
+  gibt der Chart keine einzige Kerze frei. Drei Modi (`lib/training.ts`): `frei` ·
+  `zufall` · `elliott` (dort sind Wellenzählung und Invalidation Pflicht). Die beiden
+  letzten sind **verdeckt** — und zwar echt: Der Chart fragt mit `trainingSessionId` an,
+  `/api/candles` nimmt Symbol/Markt/Intervall aus der Übung und gibt sie **erst nach dem
+  Aufdecken** zurück; dazu verschwindet die **Zeitachse** (ein Datum verrät den Ausschnitt
+  fast so gut wie der Ticker). Bewertet wird `korrekt | teilweise | falsch` plus Fehler aus
+  einem **festen** Katalog (anders als die frei benannten Setup-Tags — nur ein fester
+  Katalog lässt sich über Monate zählen). Auswertung `computeTrainingStats`
+  (`lib/training-stats.ts`, rein, getestet) auf **`/trainer/statistik`**, bewusst getrennt
+  von `/tracking`: Eine Übungsquote ist keine Handelsbilanz. Schwellen `MIN_TRAINING_RUNS`
+  = 10 und `MIN_TRAINING_BUCKET` = 5, darunter steht die Grundlage statt einer Quote.
+  Übungszeichnungen landen **nie** in `chart_drawing` — sie gehören zum historischen
+  Ausschnitt, nicht zum Instrument. Der Replay selbst läuft zusätzlich in **jedem**
+  Watchlist-Chart (`components/chart/instrument-chart.tsx`) und ungemessen unter
+  `/trainer/frei`. Zeitebene → Intervall steht seither einmal in `lib/chart-timeframes.ts`
+  (auch der Server braucht sie).
+- **Kerzenspeicher** (Migration `0027`) = was einmal geholt wurde, bleibt liegen. Vorher lag
+  vor den Anbietern nur ein `unstable_cache` (15 Min, prozessweit, nach jedem Neustart leer);
+  damit galt für die Historie immer das, was Yahoo GERADE hergibt — bei 15-Minuten-Kerzen ein
+  Fenster von **60 Tagen**. Der Speicher wächst über dieses Fenster hinaus, also über das,
+  was die Quelle selbst noch kennt. Tabellen: `candle_cache` (Schlüssel
+  **Anbieter-Symbol + Intervall + Zeit**, bewusst **ohne `userId`** — eine Kerze ist keine
+  Nutzerdatei, sondern eine öffentliche Marktbeobachtung, dieselbe Entscheidung wie
+  `quote_snapshot`), `candle_series` (Abdeckung je Reihe **und** wann zuletzt geholt — daran
+  hängen Frischeprüfung und Rotation) und `candle_collect_run` (Protokoll).
+  **`getCachedCandles` ist weiterhin der einzige Weg zu Kerzen**, liest aber jetzt zuerst die
+  Datenbank (`lib/market-data/candle-store.ts`); die reine Logik steht in `candle-merge.ts`
+  (`mergeCandles` · `candlesToWrite` · `isFresh` · `orderByStaleness` · `isDueForCollection` ·
+  `summarizeCoverage`, getestet). **Bei gleichem Zeitstempel gewinnt immer der frische Satz** —
+  die letzte Kerze einer Reihe läuft noch. **Fällt der Anbieter aus und es liegen Kerzen vor,
+  kommen die Kerzen**, nie ein leerer Chart. Gesammelt wird über
+  `/api/cron/collect-candles`, angestoßen vom **bestehenden 5-Minuten-GitHub-Takt**; die Route
+  entscheidet **selbst**, ob sie fällig ist (`RUN_INTERVAL_MS`, 1 h) und bricht nach
+  `TIME_BUDGET_MS` = 45 s von selbst ab — Vercels `maxDuration` von 60 s würde sie sonst
+  mitten im Schreiben abschneiden. Staffel: 15m/30m/1h täglich (dort läuft die Historie beim
+  Anbieter davon), alles darüber wöchentlich. **Speicherbedarf: rund 138 Bytes je Kerze**
+  (gemessen: 426.000 Kerzen = 56 MB); bei ~90 Instrumenten über alle Zeitebenen sind rund
+  200 MB zu erwarten, plus etwa 0,6 MB je Tag Zuwachs.
+  **Wer die ausgelieferte Kerzenzahl ändert, muss an Positionen denken, die als Index
+  gespeichert sind:** Eine Trainingseinheit findet ihren Startpunkt deshalb über die **Zeit**
+  ihrer Startkerze (`startCandleTime`), nicht über `startIndex` — sonst zeigt dieselbe Übung
+  nach jedem Zuwachs an Historie eine andere Stelle. `DELIVERY_LIMIT` (was ein Chart bekommt)
+  und `DEFAULT_OUTPUT_SIZE` (was beim Anbieter angefragt wird) sind seither getrennt.
 - Guards: **Pre-Trade-Gate** (alle 9 = "ja" nötig zum Aktivieren; **entfällt beim schnellen
   Trade**) · **Plan-Lock**
   (Stop/Invalidation verschieben = Regelbruch; **Ausnahme ab Etappe 6:** nach einem Teilverkauf
@@ -402,6 +452,16 @@ Candlesticks) · pnpm via corepack.
   Serverseitige Alarmprüfung + Mailversand + Einstiegs-Ansicht + automatische Plan-Wecker +
   Abstand zum Einstieg in der Watchlist + Gliederung von `/tracking`. **Mit Backfill:** alle
   vor der Etappe ausgelösten Alerts gelten als gemeldet).
+  · **Replay-Trainer** (Migration `0026`, Tabellen `training_session` + `training_annotation`
+  + `training_result`; Replay in jedem Chart, Zufallschart mit verdecktem Instrument,
+  festgeschriebene These, Bewertung und Trainingsstatistik — `lib/training.ts` +
+  `lib/training-stats.ts` + `lib/chart-timeframes.ts`, Seiten `/trainer`, `/trainer/[id]`,
+  `/trainer/frei`, `/trainer/statistik`. **Ohne Backfill**, es gab nichts nachzutragen)
+  · **Kerzenspeicher** (Migration `0027`, Tabellen `candle_cache` + `candle_series` +
+  `candle_collect_run`; Yahoos echte Grenzen ausgereizt — 15m von 30 auf 60 Tage, 1h von
+  3 Monaten auf 2 Jahre —, dauerhafter Speicher davor, Sammellauf am GitHub-Takt,
+  Abdeckungsanzeige im Trainer. **Ohne Backfill**, der Speicher füllt sich ab dem ersten
+  Abruf).
   **Die Roadmap ist damit vollständig** — offen ist nur noch der Ideenvorrat in
   `IDEEN-BACKLOG.md`.
 

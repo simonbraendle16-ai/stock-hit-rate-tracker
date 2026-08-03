@@ -27,6 +27,7 @@ import { ChartToolbar, type DrawTool } from './chart-toolbar'
 import { DrawingLayer } from './drawing-layer'
 import { AnalysisImport } from './analysis-import'
 import { IndicatorMenu } from './indicator-menu'
+import { ChartReplayControls } from './chart-replay-controls'
 import {
   computeIndicator,
   DEFAULT_INDICATORS,
@@ -42,7 +43,14 @@ import {
   type Drawing,
   type DrawingPoint,
 } from '@/app/actions/drawings'
-import type { Interval } from '@/lib/market-data/types'
+import {
+  createTrainingAnnotation,
+  updateTrainingAnnotation,
+  deleteTrainingAnnotation,
+  deleteAllTrainingAnnotations,
+} from '@/app/actions/training'
+import type { Candle } from '@/lib/market-data/types'
+import { CHART_TIMEFRAMES, type ChartTimeframe } from '@/lib/chart-timeframes'
 import { Button } from '@/components/ui/button'
 import { ChartEmpty, ChartHeader } from '@/components/chart-frame'
 import { CandlestickChart, Camera, Loader2, Maximize2, Minimize2 } from 'lucide-react'
@@ -64,15 +72,12 @@ export interface ChartMarker {
   text: string
 }
 
-const TIMEFRAMES: Record<string, { interval: Interval; days: number | null }> = {
-  '15m': { interval: '15min', days: 3 },
-  '30m': { interval: '30min', days: 6 },
-  '1h': { interval: '1h', days: 14 },
-  '4h': { interval: '4h', days: 60 },
-  T: { interval: '1day', days: 365 },
-  W: { interval: '1week', days: null },
-  M: { interval: '1month', days: null },
-}
+// Die Tabelle selbst liegt in `lib/chart-timeframes.ts` — auch der Server
+// braucht sie, seit der Trainer Übungen anlegt und `/api/candles` die Kerzen
+// einer verdeckten Übung ohne Symbol ausliefert.
+const TIMEFRAMES = CHART_TIMEFRAMES
+
+export type { ChartTimeframe }
 
 /** Chart-Darstellung (TradingView-Parität, AP 9). */
 type ChartStyle = 'candles' | 'bars' | 'line' | 'area'
@@ -147,6 +152,16 @@ export function PriceChart({
   markers = [],
   stockId,
   initialDrawings = [],
+  defaultTimeframe = 'T',
+  replayMode = false,
+  replayStart,
+  replayMaxVisible,
+  replayLockedHint,
+  onReplayVisibleChange,
+  onCandlesLoaded,
+  trainingSessionId,
+  hideIdentity = false,
+  lockTimeframe = false,
 }: {
   symbol: string
   market: string
@@ -155,10 +170,73 @@ export function PriceChart({
   /** Wenn gesetzt: Zeichenwerkzeuge aktiv, Zeichnungen persistent je Instrument (AP 5). */
   stockId?: number
   initialDrawings?: Drawing[]
+  defaultTimeframe?: ChartTimeframe
+  replayMode?: boolean
+  /** Startpunkt des Replays (Anzahl sichtbarer Kerzen). */
+  replayStart?: number
+  /** Obergrenze der sichtbaren Kerzen — der Trainer sperrt damit die Zukunft. */
+  replayMaxVisible?: number
+  replayLockedHint?: string
+  onReplayVisibleChange?: (visible: number) => void
+  /** Meldet den geladenen Kerzensatz nach oben (der Trainer trägt ihn ein). */
+  onCandlesLoaded?: (candles: Candle[]) => void
+  /**
+   * Trainingseinheit statt Instrument: Kerzen kommen über die Übung (bei einer
+   * verdeckten Übung ohne Symbol), Zeichnungen landen in `training_annotation`
+   * statt im echten Chart des Instruments.
+   */
+  trainingSessionId?: number
+  /** Verdeckt: kein Symbol im Kopf, keine Datumsachse. */
+  hideIdentity?: boolean
+  /** Die Zeitebene steht fest (sie gehört zur gespeicherten Übung). */
+  lockTimeframe?: boolean
 }) {
-  const [timeframe, setTimeframe] = useState<keyof typeof TIMEFRAMES>('T')
+  const [timeframe, setTimeframe] = useState<ChartTimeframe>(defaultTimeframe)
   const { interval, days } = TIMEFRAMES[timeframe]
-  const { candles, loading, error, errorCode } = useCandles(symbol, market, interval)
+  const { candles, loading, error, errorCode } = useCandles(symbol, market, interval, {
+    stockId,
+    trainingSessionId,
+  })
+  const [replayVisible, setReplayVisible] = useState<number | null>(null)
+
+  // Zeichnungen einer Übung gehen an die Trainer-Aktionen, die des Instruments
+  // an die Zeichnungs-Aktionen. Eine Übungslinie hat im echten Chart nichts zu
+  // suchen — Übung und Ernstfall bleiben getrennt.
+  const isTraining = trainingSessionId != null
+  const drawingsEnabled = stockId != null || isTraining
+
+  useEffect(() => {
+    if (!replayMode || !candles || candles.length === 0) {
+      setReplayVisible(null)
+      return
+    }
+    setReplayVisible(
+      Math.min(
+        candles.length,
+        Math.max(1, replayStart ?? Math.max(30, Math.round(candles.length * 0.62))),
+      ),
+    )
+  }, [replayMode, candles, replayStart])
+
+  // Den geladenen Satz einmal nach oben melden (der Trainer schreibt Umfang und
+  // Startpunkt in die Übung).
+  useEffect(() => {
+    if (candles && candles.length > 0) onCandlesLoaded?.(candles)
+  }, [candles, onCandlesLoaded])
+
+  const handleReplayChange = useCallback(
+    (v: number) => {
+      setReplayVisible(v)
+      onReplayVisibleChange?.(v)
+    },
+    [onReplayVisibleChange],
+  )
+
+  const chartCandles = useMemo(() => {
+    if (!candles) return null
+    if (!replayMode || replayVisible == null) return candles
+    return candles.slice(0, Math.min(candles.length, Math.max(1, replayVisible)))
+  }, [candles, replayMode, replayVisible])
 
   const containerRef = useRef<HTMLDivElement>(null)
   const containerWrapRef = useRef<HTMLDivElement>(null)
@@ -222,53 +300,64 @@ export function PriceChart({
   }, [])
 
   const handleDeleteAll = useCallback(() => {
-    if (stockId == null) return
+    if (!drawingsEnabled) return
     setSelectedId(null)
     setDrawings([])
-    deleteAllDrawings(stockId).catch(() =>
-      setDrawError('Zeichnungen konnten nicht gelöscht werden.'),
-    )
-  }, [stockId])
+    const p =
+      trainingSessionId != null
+        ? deleteAllTrainingAnnotations(trainingSessionId)
+        : deleteAllDrawings(stockId!)
+    p.catch(() => setDrawError('Zeichnungen konnten nicht gelöscht werden.'))
+  }, [stockId, trainingSessionId, drawingsEnabled])
   // Debounce-Timer je Zeichnung, damit Verschieben nicht jede Mausbewegung speichert.
   const persistTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map())
 
   const handleCreate = useCallback(
     (type: Drawing['type'], points: DrawingPoint[]) => {
-      if (stockId == null) return
+      if (!drawingsEnabled) return
       setDrawError(null)
-      createDrawing({ stockId, type, points })
-        .then((d) => {
-          setDrawings((ds) => [...ds, d])
-          setSelectedId(d.id)
-        })
-        .catch(() => setDrawError('Zeichnung konnte nicht gespeichert werden.'))
+      const p =
+        trainingSessionId != null
+          ? createTrainingAnnotation({ sessionId: trainingSessionId, type, points })
+          : createDrawing({ stockId: stockId!, type, points })
+      p.then((d) => {
+        setDrawings((ds) => [...ds, d])
+        setSelectedId(d.id)
+      }).catch(() => setDrawError('Zeichnung konnte nicht gespeichert werden.'))
     },
-    [stockId],
+    [stockId, trainingSessionId, drawingsEnabled],
   )
 
-  const handleUpdate = useCallback((id: number, points: DrawingPoint[]) => {
-    setDrawings((ds) => ds.map((d) => (d.id === id ? { ...d, points } : d)))
-    const timers = persistTimers.current
-    const prev = timers.get(id)
-    if (prev) clearTimeout(prev)
-    timers.set(
-      id,
-      setTimeout(() => {
-        timers.delete(id)
-        updateDrawing({ id, points }).catch(() =>
-          setDrawError('Zeichnung konnte nicht gespeichert werden.'),
-        )
-      }, 500),
-    )
-  }, [])
+  const handleUpdate = useCallback(
+    (id: number, points: DrawingPoint[]) => {
+      setDrawings((ds) => ds.map((d) => (d.id === id ? { ...d, points } : d)))
+      const timers = persistTimers.current
+      const prev = timers.get(id)
+      if (prev) clearTimeout(prev)
+      timers.set(
+        id,
+        setTimeout(() => {
+          timers.delete(id)
+          const p =
+            trainingSessionId != null
+              ? updateTrainingAnnotation({ id, points })
+              : updateDrawing({ id, points })
+          p.catch(() => setDrawError('Zeichnung konnte nicht gespeichert werden.'))
+        }, 500),
+      )
+    },
+    [trainingSessionId],
+  )
 
   const handleDeleteSelected = useCallback(() => {
     if (selectedId == null) return
     const id = selectedId
     setSelectedId(null)
     setDrawings((ds) => ds.filter((d) => d.id !== id))
-    deleteDrawing(id).catch(() => setDrawError('Zeichnung konnte nicht gelöscht werden.'))
-  }, [selectedId])
+    const p =
+      trainingSessionId != null ? deleteTrainingAnnotation(id) : deleteDrawing(id)
+    p.catch(() => setDrawError('Zeichnung konnte nicht gelöscht werden.'))
+  }, [selectedId, trainingSessionId])
 
   // Entf/Backspace löscht die Auswahl (nicht, wenn gerade ein Input fokussiert ist).
   useEffect(() => {
@@ -302,7 +391,7 @@ export function PriceChart({
   // Indikator-Serien aus den GELADENEN Kerzen berechnen — kein neuer Datenabruf.
   useEffect(() => {
     const chart = chartRef.current
-    if (!chartReady || !chart || !candles || candles.length === 0) return
+    if (!chartReady || !chart || !chartCandles || chartCandles.length === 0) return
 
     const added: ISeriesApi<SeriesType>[] = []
     // Volumen bekommt eine eigene Overlay-Preisskala unten im Hauptchart.
@@ -316,7 +405,7 @@ export function PriceChart({
     // Jede Sub-Pane-Instanz bekommt ein eigenes Pane; Overlays liegen im Hauptchart.
     let paneIndex = 1
     for (const inst of indicators.instances) {
-      const specs = computeIndicator(candles, inst, palette)
+      const specs = computeIndicator(chartCandles, inst, palette)
       if (specs.length === 0) continue
       const overlay = specs[0].overlay
       const targetPane = overlay ? 0 : paneIndex
@@ -384,17 +473,17 @@ export function PriceChart({
         /* Chart disposed */
       }
     }
-  }, [candles, indicators, chartReady, palette])
+  }, [chartCandles, indicators, chartReady, palette])
 
   // Marker auf existierende Kerzenzeiten snappen (sonst zeigt lightweight-charts sie nicht an).
   const seriesMarkers = useMemo<SeriesMarker<Time>[]>(() => {
-    if (!candles || candles.length === 0) return []
-    const first = candles[0].time
+    if (!chartCandles || chartCandles.length === 0) return []
+    const first = chartCandles[0].time
     return markers
       .filter((m) => m.time >= first)
       .map((m) => {
         let snapped = first
-        for (const c of candles) {
+        for (const c of chartCandles) {
           if (c.time <= m.time) snapped = c.time
           else break
         }
@@ -417,7 +506,7 @@ export function PriceChart({
         }
       })
       .sort((a, b) => (a.time as number) - (b.time as number))
-  }, [markers, candles, palette])
+  }, [markers, chartCandles, palette])
 
   // Chart einmalig erzeugen, bei Unmount sauber entsorgen.
   useEffect(() => {
@@ -526,6 +615,17 @@ export function PriceChart({
     })
   }, [palette])
 
+  // Verdeckte Übung: Die Zeitachse verschwindet mit dem Symbol. Ein Datum
+  // verrät den Ausschnitt fast so zuverlässig wie der Ticker — wer „März 2020"
+  // liest, analysiert nicht mehr, sondern erinnert sich.
+  useEffect(() => {
+    if (!chartReady) return
+    chartRef.current?.applyOptions({
+      timeScale: { visible: !hideIdentity },
+      crosshair: { vertLine: { labelVisible: !hideIdentity } },
+    })
+  }, [hideIdentity, chartReady])
+
   // Log-Skala umschalten.
   useEffect(() => {
     if (!chartReady) return
@@ -538,15 +638,15 @@ export function PriceChart({
   useEffect(() => {
     const series = seriesRef.current
     const chart = chartRef.current
-    if (!series || !chart || !candles) return
+    if (!series || !chart || !chartCandles) return
 
     if (chartStyle === 'line' || chartStyle === 'area') {
       series.setData(
-        candles.map((c) => ({ time: c.time as UTCTimestamp, value: c.close })),
+        chartCandles.map((c) => ({ time: c.time as UTCTimestamp, value: c.close })),
       )
     } else {
       series.setData(
-        candles.map((c) => ({
+        chartCandles.map((c) => ({
           time: c.time as UTCTimestamp,
           open: c.open,
           high: c.high,
@@ -559,9 +659,9 @@ export function PriceChart({
     markersRef.current?.setMarkers(seriesMarkers)
 
     // Sichtbaren Bereich auf das gewählte Zeitfenster begrenzen.
-    if (days && candles.length > 1) {
-      const to = candles[candles.length - 1].time
-      const from = Math.max(candles[0].time, to - days * 86400)
+    if (days && chartCandles.length > 1) {
+      const to = chartCandles[chartCandles.length - 1].time
+      const from = Math.max(chartCandles[0].time, to - days * 86400)
       chart.timeScale().setVisibleRange({
         from: from as UTCTimestamp,
         to: to as UTCTimestamp,
@@ -569,20 +669,20 @@ export function PriceChart({
     } else {
       chart.timeScale().fitContent()
     }
-  }, [candles, days, seriesMarkers, chartStyle, seriesVersion])
+  }, [chartCandles, days, seriesMarkers, chartStyle, seriesVersion])
 
   // OHLC-Legende oben links: Werte der Kerze unterm Crosshair (Direkt-DOM,
   // damit Mausbewegungen keine React-Renders auslösen).
   useEffect(() => {
     const chart = chartRef.current
-    if (!chartReady || !chart || !candles || candles.length === 0) return
-    const byTime = new Map(candles.map((c, i) => [c.time, i]))
+    if (!chartReady || !chart || !chartCandles || chartCandles.length === 0) return
+    const byTime = new Map(chartCandles.map((c, i) => [c.time, i]))
     const fmt = (n: number) => n.toLocaleString('de-DE', { maximumFractionDigits: 6 })
     const render = (i: number) => {
       const el = legendRef.current
       if (!el) return
-      const c = candles[i]
-      const prev = i > 0 ? candles[i - 1] : undefined
+      const c = chartCandles[i]
+      const prev = i > 0 ? chartCandles[i - 1] : undefined
       const chg = prev ? ((c.close - prev.close) / prev.close) * 100 : 0
       const col = c.close >= (prev?.close ?? c.open) ? palette.up : palette.down
       el.innerHTML =
@@ -592,10 +692,10 @@ export function PriceChart({
         `C <span style="color:${col}">${fmt(c.close)}</span> ` +
         `<span style="color:${col}">${chg >= 0 ? '+' : ''}${chg.toFixed(2)} %</span>`
     }
-    render(candles.length - 1)
+    render(chartCandles.length - 1)
     const handler = (param: { time?: unknown }) => {
       const idx = typeof param.time === 'number' ? byTime.get(param.time) : undefined
-      render(idx ?? candles.length - 1)
+      render(idx ?? chartCandles.length - 1)
     }
     chart.subscribeCrosshairMove(handler)
     return () => {
@@ -605,7 +705,7 @@ export function PriceChart({
         /* Chart disposed */
       }
     }
-  }, [candles, chartReady, palette])
+  }, [chartCandles, chartReady, palette])
 
   // Vollbild: Esc verlässt den Modus, Seite dahinter scrollt nicht.
   useEffect(() => {
@@ -678,7 +778,7 @@ export function PriceChart({
   // Plan-Linien (Entry/Stop/Target/Invalidation) als Preislinien.
   useEffect(() => {
     const series = seriesRef.current
-    if (!series || !candles) return
+    if (!series || !chartCandles) return
     const created = planLines.map((l) =>
       series.createPriceLine({
         price: l.price,
@@ -697,7 +797,7 @@ export function PriceChart({
         /* Chart disposed */
       }
     }
-  }, [planLines, candles, seriesVersion])
+  }, [planLines, chartCandles, seriesVersion])
 
   // Forex/Optionen: keine Gratis-Daten → Hinweis statt Chart (TradingView-Link bleibt).
   if (errorCode === 'unsupported') {
@@ -724,8 +824,14 @@ export function PriceChart({
       {/* Derselbe Kopf wie über den Auswertungen daneben — Werkzeuge rechts. */}
       <ChartHeader
         icon={CandlestickChart}
-        title={`Kurschart · ${symbol}`}
-        subtitle="Kerzen aus dem Zwischenspeicher — kein Echtzeitkurs."
+        title={hideIdentity ? 'Kurschart · verdeckt' : `Kurschart · ${symbol}`}
+        subtitle={
+          hideIdentity
+            ? 'Symbol und Datum bleiben verdeckt, bis du bewertet hast.'
+            : replayMode
+              ? 'Replay-Modus: Zukunft wird ausgeblendet, bis du sie Kerze für Kerze freigibst.'
+              : 'Kerzen aus dem Zwischenspeicher — kein Echtzeitkurs.'
+        }
         right={
           <div className="flex flex-wrap items-center justify-end gap-1.5">
           <div className="flex gap-0.5">
@@ -735,6 +841,12 @@ export function PriceChart({
                 size="sm"
                 variant={tf === timeframe ? 'secondary' : 'ghost'}
                 className="h-7 px-1.5 font-mono text-[11px]"
+                disabled={lockTimeframe && tf !== timeframe}
+                title={
+                  lockTimeframe
+                    ? 'Die Zeitebene gehört zur gespeicherten Übung und steht fest.'
+                    : undefined
+                }
                 onClick={() => setTimeframe(tf)}
               >
                 {tf}
@@ -777,10 +889,10 @@ export function PriceChart({
             TV
           </Button>
           <IndicatorMenu config={indicators} onChange={handleIndicatorsChange} />
-          {stockId != null && candles && candles.length > 0 && (
+          {stockId != null && chartCandles && chartCandles.length > 0 && (
             <AnalysisImport
               stockId={stockId}
-              candles={candles}
+              candles={chartCandles}
               onImported={(ds) => setDrawings((prev) => [...prev, ...ds])}
             />
           )}
@@ -806,6 +918,17 @@ export function PriceChart({
         }
       />
 
+      {replayMode && candles && replayVisible != null && (
+        <ChartReplayControls
+          total={candles.length}
+          visible={replayVisible}
+          onChange={handleReplayChange}
+          start={replayStart}
+          maxVisible={replayMaxVisible}
+          lockedHint={replayLockedHint}
+        />
+      )}
+
       {drawError && <p className="note mb-2 text-destructive">{drawError}</p>}
 
       <div
@@ -813,7 +936,7 @@ export function PriceChart({
           fullscreen ? 'flex min-h-0 flex-1 gap-1.5' : 'flex h-[380px] gap-1.5 sm:h-[440px]'
         }
       >
-        {stockId != null && (
+        {drawingsEnabled && (
           <ChartToolbar
             tool={tool}
             onToolChange={handleToolChange}
@@ -835,17 +958,17 @@ export function PriceChart({
             ref={legendRef}
             className="note pointer-events-none absolute left-2 top-1 z-20"
           />
-          {stockId != null &&
+          {drawingsEnabled &&
             drawingsVisible &&
             chartReady &&
             chartRef.current &&
             seriesRef.current &&
-            candles &&
-            candles.length > 0 && (
+            chartCandles &&
+            chartCandles.length > 0 && (
               <DrawingLayer
                 chart={chartRef.current}
                 series={seriesRef.current}
-                candles={candles}
+                candles={chartCandles}
                 drawings={drawings}
                 tool={tool}
                 onToolDone={() => setTool('cursor')}

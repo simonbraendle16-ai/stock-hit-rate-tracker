@@ -1,9 +1,20 @@
 import { auth } from '@/lib/auth'
+import { db } from '@/lib/db'
+import { trainingSession } from '@/lib/db/schema'
+import { and, eq } from 'drizzle-orm'
 import { Interval, Market, MarketDataError } from '@/lib/market-data'
 import { getCachedCandles } from '@/lib/market-data/cached'
 import { createSymbolResolver, lookupProviderSymbol } from '@/lib/market-data/lookup'
+import { intervalForTimeframe } from '@/lib/chart-timeframes'
 import { headers } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
+
+/**
+ * Kerzen für eine Trainingseinheit. Bewusst deutlich mehr als für einen
+ * normalen Chart: Der Replay braucht Vergangenheit UND verborgene Zukunft,
+ * und beides kommt aus demselben Satz.
+ */
+const TRAINING_CANDLE_LIMIT = 3000
 
 const VALID_INTERVALS: Interval[] = ['15min', '30min', '1h', '4h', '1day', '1week', '1month']
 const VALID_MARKETS: Market[] = [
@@ -23,14 +34,43 @@ export async function GET(req: NextRequest) {
   }
 
   const params = req.nextUrl.searchParams
-  const symbol = params.get('symbol')?.trim().toUpperCase() ?? ''
-  const market = (params.get('market') ?? 'aktien') as Market
-  const interval = (params.get('interval') ?? '1day') as Interval
+  let symbol = params.get('symbol')?.trim().toUpperCase() ?? ''
+  let market = (params.get('market') ?? 'aktien') as Market
+  let interval = (params.get('interval') ?? '1day') as Interval
   // Siehe `/api/quote`: über die Verknüpfung, wenn der Aufrufer sie kennt.
   const stockIdRaw = params.get('stockId')
-  const stockId = stockIdRaw && /^\d+$/.test(stockIdRaw) ? Number(stockIdRaw) : null
+  let stockId = stockIdRaw && /^\d+$/.test(stockIdRaw) ? Number(stockIdRaw) : null
 
-  if (!symbol || symbol.length > 20 || !/^[A-Z0-9./:-]+$/.test(symbol)) {
+  // Verdeckte Trainingseinheit (Replay-Trainer): Der Browser kennt das Symbol
+  // NICHT und darf es auch nicht erfahren — sonst wäre „verdeckt" nur ein
+  // Anzeige-Trick, und die erste Netzwerkzeile verriete das Instrument. Deshalb
+  // fragt der Chart hier mit der Übungs-Nummer an; Symbol, Markt und Intervall
+  // holt der Server aus der Übung und gibt sie erst nach dem Aufdecken zurück.
+  const trainingRaw = params.get('trainingSessionId')
+  const trainingSessionId = trainingRaw && /^\d+$/.test(trainingRaw) ? Number(trainingRaw) : null
+  let verdeckt = false
+
+  if (trainingSessionId != null) {
+    const [row] = await db
+      .select()
+      .from(trainingSession)
+      .where(
+        and(
+          eq(trainingSession.id, trainingSessionId),
+          eq(trainingSession.userId, session.user.id),
+        ),
+      )
+    if (!row) {
+      return NextResponse.json({ error: 'Trainingseinheit nicht gefunden.' }, { status: 404 })
+    }
+    symbol = row.symbol.toUpperCase()
+    market = row.market as Market
+    interval = intervalForTimeframe(row.timeframe)
+    stockId = row.stockId ?? null
+    verdeckt = row.blind && row.revealedAt == null
+  }
+
+  if (!symbol || symbol.length > 20 || !/^[A-Z0-9./:^=-]+$/.test(symbol)) {
     return NextResponse.json({ error: 'Ungültiges Symbol.' }, { status: 400 })
   }
   if (!VALID_MARKETS.includes(market)) {
@@ -47,11 +87,17 @@ export async function GET(req: NextRequest) {
     const providerSymbol = stockId
       ? (await createSymbolResolver(session.user.id))(symbol, stockId)
       : (await lookupProviderSymbol(session.user.id, symbol)).symbol
-    const candles = await getCachedCandles(providerSymbol, market, interval)
+    // Eine Übung lebt von Historie: Vergangenheit zum Analysieren UND Zukunft
+    // zum Aufdecken. Deshalb bekommt der Trainer mehr Kerzen als ein normaler
+    // Chart, in dem die letzten paar hundert genügen.
+    const limit = trainingSessionId != null ? TRAINING_CANDLE_LIMIT : undefined
+    const candles = await getCachedCandles(providerSymbol, market, interval, { limit })
     return NextResponse.json({
-      symbol,
-      providerSymbol,
-      market,
+      // Bei einer verdeckten Übung bleibt beides leer — der Chart beschriftet
+      // sich dann selbst mit „Verdecktes Instrument".
+      symbol: verdeckt ? null : symbol,
+      providerSymbol: verdeckt ? null : providerSymbol,
+      market: verdeckt ? null : market,
       interval,
       candles,
     })

@@ -15,13 +15,7 @@
 // Datenbank gehalten (siehe `quoteCache`), damit ein Ausfall den letzten
 // bekannten Kurs zeigt statt ein leeres Feld.
 
-import {
-  Candle,
-  DEFAULT_OUTPUT_SIZE,
-  Interval,
-  MarketDataError,
-  MarketDataProvider,
-} from './types'
+import { Candle, Interval, MarketDataError, MarketDataProvider } from './types'
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36'
@@ -41,16 +35,29 @@ const YAHOO_INTERVAL: Record<Interval, string> = {
 }
 
 /**
- * Zeitraum je Intervall, großzügig genug für `DEFAULT_OUTPUT_SIZE` Kerzen.
- * Yahoo akzeptiert nur diese festen Bezeichner, keine freien Zahlen.
+ * Zeitraum je Intervall — jeweils das, was Yahoo für dieses Intervall überhaupt
+ * hergibt.
+ *
+ * Bis zum Kerzenspeicher standen hier deutlich kleinere Werte (`1mo` bei 15
+ * Minuten, `3mo` bei einer Stunde). Die knappe Historie im Replay-Trainer war
+ * damit zum großen Teil hausgemacht: Yahoo liefert bei 15-/30-Minuten-Kerzen
+ * **60 Tage** und bei Stundenkerzen **zwei Jahre**. Wer hier kleiner fragt,
+ * bekommt kleiner — der Anbieter hätte mehr gegeben.
+ *
+ * Die Obergrenzen sind Yahoos eigene: Über 60 Tagen liefert der Endpunkt bei
+ * Minutenintervallen gar nichts mehr, über 730 Tagen bei 60m ebenso. Deshalb
+ * stehen hier keine runden Wunschwerte, sondern genau diese Kanten.
+ *
+ * Yahoo akzeptiert nur feste Bezeichner, keine freien Zahlen.
  */
 const YAHOO_RANGE: Record<Interval, string> = {
-  '15min': '1mo',
-  '30min': '1mo',
-  '1h': '3mo',
-  '4h': '1y',
-  '1day': '5y',
-  '1week': '10y',
+  '15min': '60d',
+  '30min': '60d',
+  '1h': '2y',
+  // 4h entsteht aus 60m — dieselbe Zwei-Jahres-Kante.
+  '4h': '2y',
+  '1day': '10y',
+  '1week': 'max',
   '1month': 'max',
 }
 
@@ -250,7 +257,10 @@ export const yahooProvider: MarketDataProvider = {
     if (candles.length === 0) {
       throw new MarketDataError(`Keine Kursdaten für „${symbol}“ gefunden.`, 'unknown_symbol')
     }
-    return candles.slice(-DEFAULT_OUTPUT_SIZE[interval])
+    // Bewusst ungekürzt: Yahoo bekommt einen Zeitraum, keine Stückzahl, und
+    // alles, was er hergibt, gehört in den Kerzenspeicher. Wie viel davon ein
+    // Chart sieht, entscheidet erst die Auslieferung (`DELIVERY_LIMIT`).
+    return candles
   },
 }
 

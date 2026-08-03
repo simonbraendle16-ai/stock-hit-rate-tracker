@@ -14,7 +14,8 @@ import { DistributionChart } from '@/components/distribution-chart'
 import { HitRateTimeline } from '@/components/hitrate-timeline'
 import { AssessmentList } from '@/components/assessment-list'
 import { ChartLinkControl } from '@/components/chart-link-control'
-import { PriceChart, type ChartMarker, type PlanLine } from '@/components/chart/price-chart'
+import type { ChartMarker, PlanLine } from '@/components/chart/price-chart'
+import { InstrumentChart } from '@/components/chart/instrument-chart'
 import { ChartModeTabs } from '@/components/chart/chart-mode-tabs'
 import { PlanBar } from '@/components/chart/plan-bar'
 import { PLAN_COLORS } from '@/components/chart/colors'
@@ -155,7 +156,9 @@ export default async function StockDetailPage({
             market={detail.market}
             chartUrl={detail.chartUrl}
           >
-            <PriceChart
+            {/* Phase 2 des Trainer-Plans: derselbe Chart, auf Knopfdruck im
+                Replay — ohne die Seite zu verlassen. */}
+            <InstrumentChart
               symbol={detail.ticker}
               market={detail.market}
               planLines={planLines}

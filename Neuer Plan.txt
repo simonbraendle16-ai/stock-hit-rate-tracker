@@ -1,0 +1,259 @@
+Trading App – Replay-/Trainer-Modus (Masterplan)
+🎯 Ziel
+
+Die bestehende Trading-App soll nicht durch einen neuen Chart ersetzt werden, sondern um einen Replay-/Trainingsmodus erweitert werden. Ziel ist es, Elliott-Wellen und die eigene Handelsstrategie unter realistischen Bedingungen zu trainieren – ähnlich wie die Replay-Funktion in TradingView, jedoch auch für kleinere Timeframes (bis mindestens 15 Minuten).
+
+Phase 1 – Replay-Prototyp ✅ (größtenteils umgesetzt)
+Ziel
+
+Ein Replay-Modus für jeden Chart, unabhängig davon, ob das Symbol aus der Watchlist oder frei eingegeben wurde.
+
+Funktionen
+✅ Watchlist-Symbol auswählen
+✅ Freies Symbol eingeben
+✅ Timeframes:
+15m
+30m
+1h
+4h
+1D
+1W
+1M
+✅ Historische Kerzen laden
+✅ Chart an beliebige Stelle zurückspulen
+✅ Zukunft vollständig ausblenden
+✅ Vorhandene Elliott-Werkzeuge weiterhin benutzen
+✅ Kein Datenbank-Backend notwendig
+✅ Fokus ausschließlich auf funktionierendem Prototyp
+Replay-Steuerung
+
+Folgende Funktionen sollen vorhanden sein:
+
+✅ Zurück
+✅ Nächste Kerze
+✅ Play
+✅ Pause
+✅ Reset
+✅ Alle Kerzen anzeigen
+✅ Slider zum Springen innerhalb der Historie
+Replay-Logik
+
+Die Software soll:
+
+historische Kerzen laden
+einen Startpunkt wählen
+Vergangenheit anzeigen
+Zukunft verstecken
+Kerze für Kerze freigeben
+
+Dadurch entsteht praktisch derselbe Effekt wie im Live-Markt.
+
+Technische Umsetzung
+PriceChart erweitern
+
+Datei:
+
+components/chart/price-chart.tsx
+
+Erweiterungen:
+
+ReplayMode
+visibleCandles
+hideFuture
+onNextCandle
+
+Außerdem:
+
+Chart zeigt nur den sichtbaren Kerzenausschnitt
+Indikatoren sehen keine Zukunft
+Elliott-Zeichnungen funktionieren weiterhin
+use-candles erweitern
+
+Datei:
+
+components/chart/use-candles.ts
+
+Erweiterung:
+
+optional stockId unterstützen
+Watchlist-Symbole sauber laden
+Replay-Steuerung
+
+Neue Datei:
+
+components/chart/chart-replay-controls.tsx
+
+Enthält:
+
+Slider
+Zurück
+Vor
+Play
+Pause
+Reset
+Neue Trainer-Seite
+
+Neue Route:
+
+/trainer
+
+Dort auswählbar:
+
+Symbol
+Markt
+Timeframe
+
+Der bestehende Chart läuft dort direkt im Replay-Modus.
+
+Navigation
+
+Trainer-Seite wird als eigener Navigationspunkt eingebaut.
+
+Datenquelle
+
+Vorerst:
+
+Yahoo Finance
+
+Bekanntes Problem:
+
+Yahoo liefert nur begrenzt historische Intraday-Daten (15m).
+
+Später soll eine bessere Datenquelle gesucht oder ein eigener Candle-Cache aufgebaut werden.
+
+Phase 2 – Replay überall
+
+Der Replay-Modus soll nicht nur auf der Trainer-Seite funktionieren.
+
+Sondern zusätzlich:
+
+/stock/[id]
+
+Jeder Watchlist-Chart soll direkt in den Replay-Modus geschaltet werden können.
+
+Phase 3 – Bewertungssystem
+
+Nach jeder Übung:
+
+korrekt
+teilweise korrekt
+falsch
+
+Zusätzlich:
+
+Notizen speichern.
+
+Phase 4 – Speicherung
+
+Neue Tabellen:
+
+training_session
+
+training_annotation
+
+training_result
+
+Gespeichert werden:
+
+Symbol
+Timeframe
+Zeichnungen
+Bewertung
+Notizen
+Ergebnis
+Phase 5 – Statistik
+
+Später Auswertungen wie:
+
+Trefferquote
+Trefferquote pro Setup
+Trefferquote pro Timeframe
+häufigste Elliott-Fehler
+falsche Invalidierungen
+zu früher Einstieg
+falsche Wellenzählung
+Spätere Erweiterungen
+
+Geplant sind außerdem:
+
+Zufällige historische Charts
+Zufälliger Startpunkt
+Elliott-Trainingsmodus
+Bewertung kompletter Analysen
+Eigener Candle-Cache
+Bessere Intraday-Datenquelle
+Bereits umgesetzt ✅
+
+Aus dem Verlauf wurden folgende Arbeiten bereits durchgeführt:
+
+Replay-Grundfunktion
+✅ Replay-fähiger PriceChart
+✅ sichtbarer Kerzenausschnitt (chartCandles)
+✅ Zukunft wird im Chart ausgeblendet
+✅ Indikatoren arbeiten nur mit sichtbaren Daten
+✅ Elliott-Zeichnungen bleiben nutzbar
+Replay-Steuerung
+✅ neue Komponente chart-replay-controls.tsx
+✅ Slider
+✅ Schritt vor/zurück
+✅ Play/Pause
+✅ Reset
+Daten
+✅ use-candles.ts erweitert
+✅ optionale stockId-Unterstützung
+Trainer
+✅ neue /trainer-Seite angelegt
+✅ Symbolauswahl
+✅ Markt-Auswahl
+✅ Timeframe-Auswahl
+✅ bestehender Chart wird im Replay-Modus verwendet
+Navigation
+✅ Trainer-Eintrag in die Navigation integriert
+Sonstiges
+✅ Navigation angepasst
+✅ mehrere Dateien refaktoriert und Build-kompatibel angepasst
+Abgearbeitet am 03.08.2026 ✅
+✅ Replay direkt in jedem Watchlist-Chart (/stock/[id]) — Knopf „Replay" am Cockpit-Chart
+   (components/chart/instrument-chart.tsx); Plan-Linien bleiben stehen.
+✅ Zufälliger Chartstart — Instrument wird serverseitig aus der Watchlist gezogen, der
+   Startpunkt liegt zufällig zwischen 35 % und 80 % der Historie (randomStartIndex).
+✅ Bewertungssystem — korrekt / teilweise korrekt / falsch, dazu Notizen und Fehler aus
+   einem FESTEN Katalog (frei getippte Fehler wären nach zwanzig Übungen zwanzig Einzelfälle).
+✅ Speicherung in Datenbank — Migration 0026: training_session, training_annotation,
+   training_result. Drei Tabellen, weil drei Zeitpunkte; nur so ist belegbar, dass die
+   These VOR dem Ergebnis stand.
+✅ Trainingsstatistiken — /trainer/statistik: Trefferquote gesamt, je Zeitebene, je Setup,
+   je Übungsart, häufigste Fehler (Elliott-Fehler eigens ausgewiesen), Verlauf und Serie.
+✅ Elliott-spezifischer Trainingsmodus — Wellenzählung und Invalidation sind dort Pflicht.
+✅ Vollständiger Trainingsworkflow — Analyse → festschreiben → aufdecken → bewerten →
+   auflösen → Statistik. Vor dem Festschreiben gibt der Replay keine Kerze frei.
+✅ Verdeckte Übung — Symbol UND Datum bleiben bis zur Auflösung verborgen; das Symbol
+   erreicht den Browser gar nicht erst (die Kerzen laufen über die Übungs-Nummer).
+
+✅ Eigener Candle-Cache (03.08.2026) — Migration 0027: candle_cache, candle_series,
+   candle_collect_run. Was einmal geholt wurde, bleibt liegen und wächst über Yahoos
+   Fenster hinaus. Dabei kam heraus, dass die knappe Historie zum großen Teil hausgemacht
+   war: Die App fragte bei 15m nur einen Monat an (Yahoo gibt 60 Tage) und bei 1h drei
+   Monate (Yahoo gibt zwei Jahre), und kappte danach alles bei 500 Kerzen.
+   Belegt: 15m 30 → 85 Tage, 1h 3 Monate → 2 Jahre, Tageskerzen 10 Jahre,
+   Wochenkerzen 42 Jahre. Der Sammellauf hängt am bestehenden GitHub-Takt, prüft selbst
+   seine Fälligkeit (stündlich) und bricht nach 45 Sekunden ab, damit Vercel ihn nicht
+   mitten im Schreiben abschneidet.
+✅ Der Speicher bedient die ganze App — Charts, Sparklines, Bot-Zwilling und MAE/MFE.
+   Ein Anbieterausfall zeigt seither den gespeicherten Verlauf statt eines leeren Charts.
+
+Bewusst offen ⏳
+⏳ Bezahlte Intraday-Datenquelle — nicht angebunden. Mit dem Speicher ist der Bedarf
+   kleiner geworden: Was fehlt, ist nur noch Historie VOR dem ersten Abruf; alles danach
+   sammelt die App selbst. Ein Anbieter mit tiefer Intraday-Historie bliebe die einzige
+   Möglichkeit, rückwirkend an ältere 15-Minuten-Kerzen zu kommen.
+⏳ Freies Replay ohne Bewertung bleibt als /trainer/frei erhalten — nicht jedes
+   Zurückspulen ist eine Übung.
+
+Zu beobachten
+- Speicherbedarf: rund 138 Bytes je Kerze (gemessen: 426.000 Kerzen = 56 MB). Bei rund
+  90 Instrumenten über alle Zeitebenen sind etwa 200 MB zu erwarten, danach etwa 0,6 MB
+  Zuwachs am Tag. Auf einem Datenbank-Gratistarif mit 512 MB ist das der Punkt, der
+  irgendwann eine Entscheidung braucht — heute nicht.
+
+Dieser Plan bildet den bisherigen Entwicklungsstand vollständig ab und zeigt klar, welche Komponenten bereits implementiert wurden und welche als nächste Ausbaustufen vorgesehen sind.

@@ -41,3 +41,24 @@ jobs:
           # Ein fehlgeschlagener Aufruf soll im Actions-Protokoll rot sein —
           # sonst fällt ein toter Alarm-Takt niemandem auf.
           if [ "$code" != "200" ]; then exit 1; fi
+
+      # Derselbe Takt füllt den Kerzenspeicher (Migration 0027). Die Route
+      # entscheidet SELBST, ob sie fällig ist (alle zwei Stunden) und antwortet
+      # sonst sofort mit `ran: false` — deshalb darf sie hier bei jedem
+      # Fünf-Minuten-Durchgang mitlaufen, ohne 288-mal am Tag zu arbeiten.
+      #
+      # `continue-on-error`, weil das Sammeln Beiwerk ist: Ein Kerzenspeicher,
+      # der einmal nicht wächst, ist ärgerlich — ein Alarm-Takt, der deswegen
+      # rot steht, verdeckt einen echten Ausfall.
+      - name: Kerzenspeicher füllen
+        continue-on-error: true
+        run: |
+          code=$(curl --silent --show-error --location \
+            --max-time 60 \
+            --output candles.json \
+            --write-out '%{http_code}' \
+            --header "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.APP_URL }}/api/cron/collect-candles")
+          echo "HTTP $code"
+          cat candles.json
+          if [ "$code" != "200" ]; then exit 1; fi

@@ -41,7 +41,12 @@ export interface DrawingPoint {
 
 export interface Drawing {
   id: number
-  stockId: number
+  /**
+   * Fehlt bei den Zeichnungen einer Trainingseinheit: die hängen an einer
+   * Übung (`training_annotation`), nicht an einem Instrument. Die Zeichenebene
+   * selbst braucht das Feld nicht — sie kennt nur Punkte und Typ.
+   */
+  stockId?: number
   type: DrawingType
   points: DrawingPoint[]
   style: { color?: string; dashed?: boolean; label?: string } | null
