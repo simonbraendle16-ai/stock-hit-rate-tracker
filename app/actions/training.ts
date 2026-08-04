@@ -22,6 +22,7 @@ import {
   trainingAnnotation,
   trainingResult,
   trainingSession,
+  trainingTrade,
 } from '@/lib/db/schema'
 import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import { headers } from 'next/headers'
@@ -51,6 +52,7 @@ import {
   type TrainingStatus,
 } from '@/lib/training'
 import { computeTrainingStats, type TrainingRunRow, type TrainingStats } from '@/lib/training-stats'
+import { clampStopEvery, isStopMode } from '@/lib/training-trade'
 import type { DrawingPoint, DrawingType, Drawing } from '@/app/actions/drawings'
 
 async function getUserId() {
@@ -89,6 +91,10 @@ export async function getTrainingSession(id: number): Promise<{
     committedAt: Date | null
     revealedAt: Date | null
     createdAt: Date
+    /** Ausbaustufe 2: wie der Replay anhält und ob die Sitzung beendet ist. */
+    stopMode: string
+    stopEvery: number
+    endedAt: Date | null
   }
   annotations: Drawing[]
   result: {
@@ -146,6 +152,9 @@ export async function getTrainingSession(id: number): Promise<{
       committedAt: row.committedAt,
       revealedAt: row.revealedAt,
       createdAt: row.createdAt,
+      stopMode: row.stopMode,
+      stopEvery: row.stopEvery,
+      endedAt: row.endedAt,
     },
     annotations: annotationRows.map((a) => ({
       id: a.id,
@@ -210,7 +219,35 @@ export async function listTrainingSessions(limit = 20): Promise<
 /** Die Trainingsstatistik (Phase 5) — gerechnet wird in `lib/training-stats.ts`. */
 export async function getTrainingStats(): Promise<TrainingStats> {
   const userId = await getUserId()
-  const rows = await db
+
+  // Seit Migration 0029 ist die Einheit der Auswertung der geübte TRADE, nicht
+  // die Sitzung: Zehn Trades in einer Sitzung sind zehn Entscheidungen, und
+  // eine Sitzung mit zehn Trades darf nicht so viel wiegen wie eine mit einem.
+  //
+  // Setup, Zeitebene und Modus kommen dabei weiter aus der Sitzung — der
+  // Ausschnitt gehört ihr —, Bewertung und Fehler vom Trade.
+  const tradeRows = await db
+    .select({
+      id: trainingTrade.id,
+      sessionId: trainingTrade.sessionId,
+      mode: trainingSession.mode,
+      symbol: trainingSession.symbol,
+      timeframe: trainingSession.timeframe,
+      status: trainingSession.status,
+      setupTags: trainingTrade.setupTags,
+      rating: trainingTrade.rating,
+      errorTags: trainingTrade.errorTags,
+      ratedAt: trainingTrade.ratedAt,
+    })
+    .from(trainingTrade)
+    .innerJoin(trainingSession, eq(trainingSession.id, trainingTrade.sessionId))
+    .where(eq(trainingTrade.userId, userId))
+
+  // Alt-Übungen aus der Zeit vor 0029: eine These, eine Bewertung. Sie zählen
+  // unverändert weiter — als Sitzung mit genau einem Trade. Kein Backfill:
+  // Ihre Daten werden nur gelesen, nie kopiert; eine Kopie liefe beim ersten
+  // Ändern auseinander.
+  const sessionRows = await db
     .select({
       id: trainingSession.id,
       mode: trainingSession.mode,
@@ -226,19 +263,39 @@ export async function getTrainingStats(): Promise<TrainingStats> {
     .leftJoin(trainingResult, eq(trainingResult.sessionId, trainingSession.id))
     .where(eq(trainingSession.userId, userId))
 
-  const runs: TrainingRunRow[] = rows
-    // Abgebrochene Übungen zählen nirgends mit — sie sind kein Ergebnis.
-    .filter((r) => r.status !== 'abgebrochen')
-    .map((r) => ({
-      id: r.id,
-      mode: r.mode as TrainingMode,
-      symbol: r.symbol,
-      timeframe: r.timeframe,
-      setupTags: parseSetupTags(r.setupTags),
-      rating: isTrainingRating(r.rating) ? r.rating : null,
-      errorTags: parseErrorTags(r.errorTags),
-      ratedAt: r.ratedAt ?? null,
-    }))
+  // Eine Sitzung, die eigene Trades trägt, darf NICHT zusätzlich als eigene
+  // Zeile zählen — sonst stünde sie doppelt in der Quote.
+  const mitTrades = new Set(tradeRows.map((r) => r.sessionId))
+
+  const runs: TrainingRunRow[] = [
+    ...tradeRows
+      // Abgebrochene Übungen zählen nirgends mit — sie sind kein Ergebnis.
+      .filter((r) => r.status !== 'abgebrochen')
+      .map((r) => ({
+        id: r.id,
+        mode: r.mode as TrainingMode,
+        symbol: r.symbol,
+        timeframe: r.timeframe,
+        setupTags: parseSetupTags(r.setupTags),
+        rating: isTrainingRating(r.rating) ? r.rating : null,
+        errorTags: parseErrorTags(r.errorTags),
+        ratedAt: r.ratedAt ?? null,
+      })),
+    ...sessionRows
+      .filter((r) => r.status !== 'abgebrochen' && !mitTrades.has(r.id))
+      .map((r) => ({
+        // Negativ, damit sich die id-Räume von Sitzung und Trade nicht
+        // überschneiden — die Auswertung nutzt sie als Schlüssel.
+        id: -r.id,
+        mode: r.mode as TrainingMode,
+        symbol: r.symbol,
+        timeframe: r.timeframe,
+        setupTags: parseSetupTags(r.setupTags),
+        rating: isTrainingRating(r.rating) ? r.rating : null,
+        errorTags: parseErrorTags(r.errorTags),
+        ratedAt: r.ratedAt ?? null,
+      })),
+  ]
 
   return computeTrainingStats(runs)
 }
@@ -295,6 +352,9 @@ export async function startTrainingSession(input: {
   symbol?: string
   market?: string
   timeframe: string
+  /** Haltepunkte: 'auto' (alle N Kerzen) oder 'manuell'. Siehe `lib/training-trade.ts`. */
+  stopMode?: string
+  stopEvery?: number
 }): Promise<{ id: number } | { error: string }> {
   const userId = await getUserId()
 
@@ -351,6 +411,11 @@ export async function startTrainingSession(input: {
       mode,
       blind: isBlindMode(mode),
       status: 'offen',
+      // Wie der Replay anhält, wird EINMAL beim Anlegen gewählt und gilt für
+      // die ganze Sitzung — mitten im Durchlauf umzuschalten hieße, sich die
+      // Übung passend zu machen.
+      stopMode: isStopMode(input.stopMode) ? input.stopMode : 'auto',
+      stopEvery: clampStopEvery(input.stopEvery),
     })
     .returning({ id: trainingSession.id })
 

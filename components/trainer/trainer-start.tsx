@@ -7,6 +7,13 @@ import { Button } from '@/components/ui/button'
 import { Field, FormSection, ChoiceButton, InlineNotice } from '@/components/form-frame'
 import { startTrainingSession } from '@/app/actions/training'
 import { CHART_TIMEFRAME_IDS } from '@/lib/chart-timeframes'
+import {
+  DEFAULT_STOP_EVERY,
+  MAX_STOP_EVERY,
+  MIN_STOP_EVERY,
+  STOP_MODES,
+  type StopMode,
+} from '@/lib/training-trade'
 import { TRAINING_MODES, type TrainingMode } from '@/lib/training'
 import { AlertTriangle, Play } from 'lucide-react'
 
@@ -48,6 +55,8 @@ export function TrainerStart({
   const [symbol, setSymbol] = useState(initialSymbol)
   const [market, setMarket] = useState(initialMarket)
   const [timeframe, setTimeframe] = useState('1h')
+  const [stopMode, setStopMode] = useState<StopMode>('auto')
+  const [stopEvery, setStopEvery] = useState(DEFAULT_STOP_EVERY)
   const [fehler, setFehler] = useState<string | null>(null)
   const [pending, startTransition] = useTransition()
   const gesamtKerzen = coverage.reduce((s, c) => s + c.candles, 0)
@@ -55,7 +64,14 @@ export function TrainerStart({
   function start() {
     setFehler(null)
     startTransition(async () => {
-      const res = await startTrainingSession({ mode, symbol, market, timeframe })
+      const res = await startTrainingSession({
+        mode,
+        symbol,
+        market,
+        timeframe,
+        stopMode,
+        stopEvery,
+      })
       if ('error' in res) {
         setFehler(res.error)
         return
@@ -134,6 +150,49 @@ export function TrainerStart({
             )
           })}
         </div>
+      </Field>
+
+      {/* Wie der Replay anhält, wird EINMAL hier gewählt und gilt dann für die
+          ganze Sitzung — mitten im Durchlauf umzuschalten hieße, sich die Übung
+          passend zu machen. */}
+      <Field
+        label="Haltepunkte"
+        as="div"
+        hint="Steht für die ganze Sitzung fest."
+      >
+        <div className="flex flex-wrap gap-1.5">
+          {STOP_MODES.map((s) => (
+            <Button
+              key={s.id}
+              size="sm"
+              variant={s.id === stopMode ? 'secondary' : 'ghost'}
+              className="h-8 px-2.5 font-mono text-[11px]"
+              title={s.hint}
+              onClick={() => setStopMode(s.id)}
+            >
+              {s.label}
+            </Button>
+          ))}
+          {stopMode === 'auto' && (
+            <label className="flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
+              alle
+              <input
+                type="number"
+                min={MIN_STOP_EVERY}
+                max={MAX_STOP_EVERY}
+                value={stopEvery}
+                onChange={(e) => setStopEvery(Number(e.target.value))}
+                className="input-ocean h-8 w-16 rounded px-2 font-mono text-[11px]"
+              />
+              Kerzen
+            </label>
+          )}
+        </div>
+        <p className="note mt-1.5">
+          {stopMode === 'auto'
+            ? 'Der Replay hält von selbst an und fragt, ob du ein Setup siehst — so verpasst du keine Stelle.'
+            : 'Der Replay läuft, bis du selbst Pause drückst.'}
+        </p>
       </Field>
 
       {fehler && (

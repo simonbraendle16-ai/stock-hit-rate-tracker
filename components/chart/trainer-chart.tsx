@@ -95,7 +95,17 @@ export function TrainerChart({
         market={market}
         defaultTimeframe={timeframe}
         replayMode
+        // Zeichnen gehört zur Analyse — ohne Werkzeuge ist ein Replay nur ein
+        // Film. Gespeichert wird hier nichts: Diese Seite hält bewusst nichts
+        // fest, und eine Linie ohne Instrument hätte auch keinen Ort.
+        ephemeralDrawings
+        heightClass="h-[440px] sm:h-[560px] xl:h-[min(70vh,760px)]"
       />
+
+      <p className="note">
+        Zeichnungen bleiben nur in dieser Ansicht — beim Verlassen sind sie weg. Wer sie
+        behalten will, übt über den Trainer oder zeichnet im Chart des Instruments.
+      </p>
     </div>
   )
 }

@@ -99,6 +99,56 @@ export function isTrainingDirection(v: unknown): v is TrainingDirection {
 }
 
 // ---------------------------------------------------------------------------
+// Der Auftrag
+// ---------------------------------------------------------------------------
+
+/**
+ * Was in dieser Übung zu tun ist — im Klartext, je Modus verschieden.
+ *
+ * Warum das überhaupt in den Daten steht und nicht nur als Überschrift im
+ * Layout: Ohne ausgesprochenen Auftrag sieht man ein Formular und weiß nicht,
+ * was man leisten soll. Der Trainer misst aber nicht das Ausfüllen, sondern
+ * eine Entscheidung — und die muss man kennen, bevor man sie trifft.
+ *
+ * Der Satz zur Enthaltung steht mit Absicht in JEDEM Auftrag: „Kein Setup" ist
+ * ein Ergebnis, keine Lücke. Wer glaubt, er müsse liefern, handelt zu viel —
+ * der häufigste Fehler überhaupt.
+ */
+export const TRAINING_TASKS: Record<
+  TrainingMode,
+  { title: string; steps: string[]; abstain: string }
+> = {
+  frei: {
+    title: 'Finde ein Setup — oder entscheide dich bewusst dagegen.',
+    steps: [
+      'Lies die Struktur: Trend, Zonen, markante Hochs und Tiefs. Zeichne, was du siehst.',
+      'Wenn du handeln würdest: Richtung, Einstieg, Stop und Ziel festlegen.',
+      'Danach läuft der Replay weiter — die Marken sind ab dann unveränderlich.',
+    ],
+    abstain: 'Siehst du kein Setup, wähle „Kein Setup". Das ist eine vollwertige Antwort.',
+  },
+  zufall: {
+    title: 'Unbekanntes Instrument, unbekannter Zeitraum. Was siehst du?',
+    steps: [
+      'Du weißt nicht, welcher Wert das ist — genau darum geht es. Urteile nur aus dem Chart.',
+      'Lies die Struktur und zeichne sie ein.',
+      'Wenn du handeln würdest: Richtung, Einstieg, Stop und Ziel festlegen.',
+    ],
+    abstain: 'Siehst du kein Setup, wähle „Kein Setup". Das ist eine vollwertige Antwort.',
+  },
+  elliott: {
+    title: 'Zähle die Wellen — und sage, woran deine Zählung scheitert.',
+    steps: [
+      'Bestimme den Grad und zähle die Wellen. Trage die Zählung ein (z. B. „Welle 4 einer übergeordneten 3").',
+      'Setze die Invalidation: den Kurs, ab dem deine Zählung widerlegt ist.',
+      'Wenn du handeln würdest: Richtung, Einstieg, Stop und Ziel festlegen.',
+    ],
+    abstain:
+      'Ist die Lage nicht eindeutig zählbar, wähle „Kein Setup" — eine erzwungene Zählung ist keine.',
+  },
+}
+
+// ---------------------------------------------------------------------------
 // Fehler-Katalog
 // ---------------------------------------------------------------------------
 

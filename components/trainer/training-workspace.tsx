@@ -1,11 +1,23 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { PriceChart } from '@/components/chart/price-chart'
+import { PriceChart, type PlanLine } from '@/components/chart/price-chart'
+import { PLAN_COLORS } from '@/components/chart/colors'
 import { ThesisForm } from './thesis-form'
 import { VerdictForm } from './verdict-form'
 import { TrainingSummary } from './training-summary'
+import { SessionPanel } from './session-panel'
+import { listSessionTrades, resolveTrainingTrade } from '@/app/actions/training-trades'
+import {
+  PICK_LABELS,
+  isStopMode,
+  measureOutcome,
+  nextStopAt,
+  type PickField,
+  type StopMode,
+  type TrainingTradeView,
+} from '@/lib/training-trade'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { registerTrainingCandles, abortTrainingSession } from '@/app/actions/training'
@@ -22,6 +34,7 @@ import {
 } from '@/lib/training'
 import type { Candle } from '@/lib/market-data/types'
 import { Trash2 } from 'lucide-react'
+import { toast } from 'sonner'
 
 export interface TrainingSessionView {
   id: number
@@ -45,6 +58,10 @@ export interface TrainingSessionView {
   setupTags: string[]
   committedAt: Date | null
   revealedAt: Date | null
+  /** Ausbaustufe 2 (Migration 0029). */
+  stopMode: string
+  stopEvery: number
+  endedAt: Date | null
 }
 
 const SCHRITTE = [
@@ -66,6 +83,7 @@ export function TrainingWorkspace({
   session,
   annotations,
   result,
+  initialTrades = [],
 }: {
   session: TrainingSessionView
   annotations: Drawing[]
@@ -75,6 +93,8 @@ export function TrainingWorkspace({
     note: string | null
     revealedCandles: number | null
   } | null
+  /** Die geübten Trades dieser Sitzung (Ausbaustufe 2). */
+  initialTrades?: TrainingTradeView[]
 }) {
   const router = useRouter()
   const [status, setStatus] = useState<TrainingStatus>(session.status)
@@ -82,6 +102,57 @@ export function TrainingWorkspace({
   const [startIndex, setStartIndex] = useState(session.startIndex || 0)
   const [visible, setVisible] = useState(session.startIndex || 0)
   const registered = useRef(session.startIndex > 0)
+  const [trades, setTrades] = useState<TrainingTradeView[]>(initialTrades)
+  const [ended, setEnded] = useState(session.endedAt != null)
+  const [candles, setCandles] = useState<Candle[]>([])
+
+  /**
+   * Kurs-Aufnahme aus dem Chart. Der Zustand liegt hier, weil Chart und
+   * Formular ihn beide brauchen: Das eine fordert an, das andere liefert.
+   */
+  const [pickField, setPickField] = useState<PickField | null>(null)
+  const [pickedPrice, setPickedPrice] = useState<{ field: PickField; price: number } | null>(
+    null,
+  )
+
+  // Esc bricht die Aufnahme ab — ein Modus, aus dem man nur mit einem Klick
+  // irgendwohin herauskommt, ist eine Falle.
+  useEffect(() => {
+    if (!pickField) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setPickField(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [pickField])
+
+  /**
+   * Übungen von VOR Migration 0029 tragen ihre These an der Sitzung selbst.
+   * Sie behalten den alten, einstufigen Ablauf — ihre Daten umzudeuten würde
+   * rückwirkend etwas anderes behaupten, als damals gemacht wurde.
+   */
+  const altModell = result != null || session.direction != null
+
+  /**
+   * Wie weit der Replay laufen darf.
+   *
+   * Zwei Sperren, beide keine Warnung, sondern eine echte Obergrenze:
+   * 1. Solange nichts festgeschrieben ist, gibt der Replay keine Kerze frei.
+   *    Ohne das misst die Übung nichts.
+   * 2. Danach der nächste Haltepunkt — im automatischen Modus alle N Kerzen.
+   */
+  const [freigabe, setFreigabe] = useState<number | null>(null)
+
+  const stopMode: StopMode = isStopMode(session.stopMode) ? session.stopMode : 'auto'
+
+  // Nach jedem Festschreiben und jeder Haltepunkt-Antwort die nächste Marke setzen.
+  const naechsteFreigabe = useCallback(
+    (ab: number) => {
+      if (stopMode !== 'auto') return null
+      return nextStopAt(ab, startIndex, total || ab, stopMode, session.stopEvery)
+    },
+    [stopMode, startIndex, total, session.stopEvery],
+  )
 
   const verdeckt = session.blind && session.revealedAt == null && status !== 'bewertet'
 
@@ -91,6 +162,7 @@ export function TrainingWorkspace({
   const handleCandles = useCallback(
     (candles: Candle[]) => {
       setTotal(candles.length)
+      setCandles(candles)
 
       if (registered.current) {
         // Eine bereits festgelegte Übung wird über die ZEIT ihrer Startkerze
@@ -146,8 +218,102 @@ export function TrainingWorkspace({
 
   // Beim ersten Rendern ist der Startpunkt noch unbekannt; bis dahin steht
   // keine Obergrenze, weil auch noch keine Kerzen da sind.
-  const cap = status === 'offen' ? (startIndex > 0 ? startIndex : undefined) : undefined
   const freigegeben = Math.max(0, visible - startIndex)
+
+  /** Obergrenze im alten, einstufigen Ablauf. */
+  const altCap = status === 'offen' ? (startIndex > 0 ? startIndex : undefined) : undefined
+
+  /**
+   * Obergrenze im neuen Ablauf: erst nichts, dann bis zum nächsten Haltepunkt.
+   * Eine beendete Sitzung ist frei — dann gibt es nichts mehr zu verbergen.
+   */
+  const neuCap = ended
+    ? undefined
+    : trades.length === 0
+      ? startIndex > 0
+        ? startIndex
+        : undefined
+      : (freigabe ?? undefined)
+
+  const cap = altModell ? altCap : neuCap
+
+  /**
+   * Der laufende Plan als Linien im Chart.
+   *
+   * Der eigentliche Gewinn ist nicht die Anzeige, sondern das Zusehen: Man
+   * sieht den Kurs auf den eigenen Stop zulaufen, statt Zahlen zu vergleichen.
+   * Genau das ist der Moment, den der Trainer üben soll — und der einzige
+   * Grund, warum ein Replay überhaupt etwas anderes ist als eine Tabelle.
+   */
+  const planLines: PlanLine[] = useMemo(() => {
+    const t =
+      trades.find((x) => x.direction !== 'keine' && x.outcome == null) ??
+      // Nach dem Abschluss bleibt der zuletzt gehandelte Plan stehen — sonst
+      // verschwindet genau in dem Moment die Grundlage für die Einordnung.
+      [...trades].reverse().find((x) => x.direction !== 'keine')
+    if (!t) return []
+    const out: PlanLine[] = []
+    if (t.entryPrice != null)
+      out.push({ price: t.entryPrice, color: PLAN_COLORS.entry, title: 'Einstieg' })
+    if (t.stopLoss != null)
+      out.push({ price: t.stopLoss, color: PLAN_COLORS.stop, title: 'Stop' })
+    if (t.takeProfit != null)
+      out.push({ price: t.takeProfit, color: PLAN_COLORS.target, title: 'Ziel' })
+    if (t.invalidation != null)
+      out.push({
+        price: t.invalidation,
+        color: PLAN_COLORS.invalidation,
+        title: 'Invalidation',
+        dashed: true,
+      })
+    return out
+  }, [trades])
+
+  /** Steht der Replay gerade an einem Haltepunkt und wartet auf eine Antwort? */
+  const amHaltepunkt =
+    !altModell &&
+    !ended &&
+    trades.length > 0 &&
+    freigabe != null &&
+    visible >= freigabe &&
+    freigabe < total
+
+  /** Die letzte Kerze, die gerade zu sehen ist — Zeit und Schlusskurs. */
+  const letzteSichtbare =
+    candles.length > 0 ? (candles[Math.min(visible, candles.length) - 1] ?? null) : null
+  const sichtbareKerzenzeit = letzteSichtbare?.time ?? null
+  const sichtbarerKurs = letzteSichtbare?.close ?? null
+
+  /** Nach jedem Schritt: bis zum nächsten Haltepunkt weiter freigeben. */
+  const weiterGeben = useCallback(() => {
+    setFreigabe((f) => naechsteFreigabe(Math.max(f ?? 0, visible)))
+  }, [naechsteFreigabe, visible])
+
+  /**
+   * Berührt der aufgedeckte Kurs Stop oder Ziel, misst die App von selbst.
+   *
+   * Erkannt wird im Browser (über die SICHTBAREN Kerzen), gemessen wird auf dem
+   * Server — ein Ergebnis, das der Client mitschickt, wäre keine Messung,
+   * sondern eine Behauptung.
+   *
+   * Wichtig ist die Begrenzung auf die sichtbaren Kerzen: Würde schon vorher
+   * über die volle Historie gemessen, bekäme man das Ergebnis, bevor man es
+   * aufgedeckt hat — und damit wäre die Übung wertlos. Erst beim Beenden der
+   * Sitzung wird der Rest über alles gemessen; dann ist nichts mehr zu
+   * verbergen.
+   */
+  const messungLaeuft = useRef(false)
+
+  const tradesNeuLaden = useCallback(async () => {
+    try {
+      const rows = await listSessionTrades(session.id)
+      setTrades(rows)
+      // Der erste festgeschriebene Trade öffnet den Replay bis zum ersten Halt.
+      setFreigabe((f) => (f == null ? naechsteFreigabe(visible) : f))
+    } catch {
+      /* Beim nächsten Laden erneut. */
+    }
+  }, [session.id, naechsteFreigabe, visible])
 
   const [aborting, setAborting] = useState(false)
   async function verwerfen() {
@@ -159,6 +325,73 @@ export function TrainingWorkspace({
   useEffect(() => {
     setStatus(session.status)
   }, [session.status])
+
+  // Die Freigabe steht nur im Browser — nach dem Neuladen einer Sitzung, die
+  // schon Trades trägt, muss sie neu gesetzt werden. Ohne das liefe der Replay
+  // unbegrenzt weiter, und die Haltepunkte wären mit einem F5 abgeschaltet.
+  useEffect(() => {
+    if (altModell || ended || trades.length === 0) return
+    if (freigabe != null || startIndex <= 0 || total <= 0) return
+    setFreigabe(naechsteFreigabe(Math.max(startIndex, visible)))
+  }, [altModell, ended, trades.length, freigabe, startIndex, total, visible, naechsteFreigabe])
+
+  useEffect(() => {
+    if (altModell || ended || candles.length === 0 || messungLaeuft.current) return
+    const offen = trades.find((t) => t.direction !== 'keine' && t.outcome == null)
+    if (
+      !offen ||
+      offen.entryCandleTime == null ||
+      offen.entryPrice == null ||
+      offen.stopLoss == null ||
+      offen.takeProfit == null
+    ) {
+      return
+    }
+
+    const treffer = measureOutcome(
+      {
+        direction: offen.direction,
+        entryPrice: offen.entryPrice,
+        stopLoss: offen.stopLoss,
+        takeProfit: offen.takeProfit,
+      },
+      candles.slice(0, visible),
+      offen.entryCandleTime,
+    )
+    // 'offen' heißt: bis hierher ist nichts passiert — dann bleibt der Trade
+    // stehen und läuft weiter.
+    if (!treffer || treffer.outcome === 'offen') return
+
+    messungLaeuft.current = true
+    resolveTrainingTrade({ sessionId: session.id, tradeId: offen.id })
+      .then((res) => {
+        // Der Moment, in dem der Plan aufgeht oder scheitert, ist der
+        // lehrreichste der ganzen Übung — er darf nicht beiläufig passieren.
+        // Der Replay hält an: Weiterlaufen würde über die Stelle hinwegspielen,
+        // an der man hinsehen soll.
+        if (res.ok && res.trade.outcome && res.trade.outcome !== 'offen') {
+          setFreigabe(visible)
+          const r = res.trade.rMultiple
+          const inR = r != null ? ` · ${r >= 0 ? '+' : ''}${r.toFixed(2)} R` : ''
+          if (res.trade.outcome === 'ziel') {
+            toast.success(`Ziel erreicht${inR}`, {
+              description: 'Der Plan ist aufgegangen. Ordne ihn rechts ein.',
+            })
+          } else {
+            toast.error(`Stop ausgelöst${inR}`, {
+              description: 'Vorher festgelegt, jetzt eingetreten. Ordne ihn rechts ein.',
+            })
+          }
+        }
+        return tradesNeuLaden()
+      })
+      .catch(() => {
+        /* Beim nächsten Schritt erneut. */
+      })
+      .finally(() => {
+        messungLaeuft.current = false
+      })
+  }, [visible, trades, candles, ended, altModell, session.id, tradesNeuLaden])
 
   const schrittIndex = status === 'offen' ? 0 : status === 'festgeschrieben' ? 1 : 2
 
@@ -189,13 +422,16 @@ export function TrainingWorkspace({
         )}
       </div>
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-5">
-        <div className="xl:col-span-3">
+      {/* 5 von 7 Spalten für den Chart. Im Trainer wird eine Struktur gelesen —
+          dafür braucht es Fläche; das Formular daneben kommt mit weniger aus. */}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-7">
+        <div className="xl:col-span-5">
           <PriceChart
             symbol={session.symbol ?? ''}
             market={session.market ?? 'aktien'}
             stockId={undefined}
             trainingSessionId={session.id}
+            planLines={planLines}
             initialDrawings={annotations}
             defaultTimeframe={session.timeframe as ChartTimeframe}
             lockTimeframe
@@ -203,21 +439,63 @@ export function TrainingWorkspace({
             replayMode
             replayStart={startIndex > 0 ? startIndex : undefined}
             replayMaxVisible={cap}
-            replayLockedHint="Erst die These festschreiben"
+            replayLockedHint={
+              // Nur solange wirklich nichts festgeschrieben ist. Danach ist die
+              // Grenze ein Haltepunkt, keine Sperre — derselbe Text wäre dort
+              // schlicht falsch.
+              altModell || trades.length === 0
+                ? 'Erst den Plan festschreiben'
+                : 'Haltepunkt — rechts beantworten'
+            }
             onReplayVisibleChange={setVisible}
             onCandlesLoaded={handleCandles}
+            heightClass="h-[440px] sm:h-[560px] xl:h-[min(74vh,820px)]"
+            pickPrice={
+              pickField
+                ? (price) => setPickedPrice({ field: pickField, price })
+                : null
+            }
+            pickLabel={pickField ? PICK_LABELS[pickField] : undefined}
           />
-          {status === 'offen' && (
+          {cap != null && !amHaltepunkt && (
             <p className="note mt-2">
-              Der Replay ist gesperrt, bis die These steht. Zeichnen, messen und Werkzeuge
-              benutzen kannst du jetzt schon — die Zeichnungen gehören zu dieser Übung und
-              landen nicht im Chart des Instruments.
+              {altModell || trades.length === 0
+                ? 'Der Replay ist gesperrt, bis dein Plan steht. Zeichnen, messen und Werkzeuge benutzen kannst du jetzt schon — die Zeichnungen gehören zu dieser Übung und landen nicht im Chart des Instruments.'
+                : `Der Replay läuft bis zum nächsten Haltepunkt (Kerze ${cap}).`}
+            </p>
+          )}
+          {amHaltepunkt && (
+            <p className="note mt-2 text-warning">
+              Haltepunkt erreicht — beantworte rechts, wie es weitergeht.
             </p>
           )}
         </div>
 
-        <div className="xl:col-span-2">
-          {status === 'offen' && (
+        <div className="xl:col-span-2 xl:min-w-0">
+          {/* Neuer Ablauf: eine Sitzung, darin mehrere geübte Trades. */}
+          {!altModell && status !== 'abgebrochen' && (
+            <SessionPanel
+              sessionId={session.id}
+              mode={session.mode}
+              trades={trades}
+              visibleCandleTime={sichtbareKerzenzeit}
+              currentPrice={sichtbarerKurs}
+              pickField={pickField}
+              pickedPrice={pickedPrice}
+              onPickField={setPickField}
+              atCheckpoint={amHaltepunkt}
+              ended={ended}
+              onTradesChanged={tradesNeuLaden}
+              onCheckpointHandled={weiterGeben}
+              onEnded={() => {
+                setEnded(true)
+                tradesNeuLaden()
+                router.refresh()
+              }}
+            />
+          )}
+
+          {altModell && status === 'offen' && (
             <ThesisForm
               sessionId={session.id}
               mode={session.mode}
@@ -228,7 +506,7 @@ export function TrainingWorkspace({
             />
           )}
 
-          {status === 'festgeschrieben' && (
+          {altModell && status === 'festgeschrieben' && (
             <VerdictForm
               sessionId={session.id}
               revealedCandles={freigegeben}
@@ -240,7 +518,7 @@ export function TrainingWorkspace({
             />
           )}
 
-          {status === 'bewertet' && (
+          {altModell && status === 'bewertet' && (
             <TrainingSummary
               session={{ ...session, startCandleTime: session.startCandleTime }}
               result={result}

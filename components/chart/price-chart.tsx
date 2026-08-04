@@ -1,7 +1,6 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useTheme } from 'next-themes'
 import {
   AreaSeries,
   BarSeries,
@@ -28,6 +27,13 @@ import { DrawingLayer } from './drawing-layer'
 import { AnalysisImport } from './analysis-import'
 import { IndicatorMenu } from './indicator-menu'
 import { ChartReplayControls } from './chart-replay-controls'
+import { ChartSettings } from './chart-settings'
+import { DEFAULT_APPEARANCE, type ChartAppearance } from '@/lib/chart-appearance'
+import {
+  loadChartAppearance,
+  resetChartAppearance,
+  saveChartAppearance,
+} from '@/app/actions/chart-appearance'
 import {
   computeIndicator,
   DEFAULT_INDICATORS,
@@ -89,61 +95,9 @@ const CHART_STYLES: { id: ChartStyle; label: string }[] = [
   { id: 'area', label: 'Fläche' },
 ]
 
-interface ChartPalette {
-  text: string
-  grid: string
-  border: string
-  up: string
-  down: string
-  /** Linien-/Flächen-Serie + Crosshair-Label */
-  accent: string
-  /** Chart-Hintergrund ('transparent' = Karte scheint durch) */
-  bg: string
-}
-
-// App-Schema „Indigo-Nacht“ (Default) — Werte aus `components/chart/colors.ts`
-const DARK: ChartPalette = {
-  text: CHART_COLORS.muted,
-  grid: 'rgba(163, 166, 205, 0.08)',
-  border: 'rgba(163, 166, 205, 0.15)',
-  up: CHART_COLORS.up,
-  down: CHART_COLORS.down,
-  accent: CHART_COLORS.accent,
-  bg: 'transparent',
-}
-
-const LIGHT: ChartPalette = {
-  text: '#5b5f8a',
-  grid: 'rgba(91, 95, 138, 0.10)',
-  border: 'rgba(91, 95, 138, 0.25)',
-  up: '#1f9e6d',
-  down: '#c93a4a',
-  accent: CHART_COLORS.accent,
-  bg: 'transparent',
-}
-
-// TradingView-Schema (Original-Farben, AP 9): BG #131722, Kerzen #089981/#F23645
-const TV_DARK: ChartPalette = {
-  text: '#B2B5BE',
-  grid: 'rgba(42, 46, 57, 0.6)',
-  border: 'rgba(178, 181, 190, 0.2)',
-  up: '#089981',
-  down: '#F23645',
-  accent: '#2962FF',
-  bg: '#131722',
-}
-
-const TV_LIGHT: ChartPalette = {
-  text: '#131722',
-  grid: 'rgba(42, 46, 57, 0.08)',
-  border: 'rgba(19, 23, 34, 0.2)',
-  up: '#089981',
-  down: '#F23645',
-  accent: '#2962FF',
-  bg: '#ffffff',
-}
-
-const COLOR_SCHEME_KEY = 'chart-color-scheme'
+/* Die früheren vier festen Paletten (App/TradingView je hell und dunkel) sind
+ * mit Migration 0028 entfallen: Das Aussehen kommt jetzt aus den Einstellungen
+ * des Nutzers (`lib/chart-appearance.ts`), TradingView ist dort eine Vorlage. */
 
 export function PriceChart({
   symbol,
@@ -162,6 +116,10 @@ export function PriceChart({
   trainingSessionId,
   hideIdentity = false,
   lockTimeframe = false,
+  heightClass,
+  pickPrice = null,
+  pickLabel,
+  ephemeralDrawings = false,
 }: {
   symbol: string
   market: string
@@ -190,6 +148,29 @@ export function PriceChart({
   hideIdentity?: boolean
   /** Die Zeitebene steht fest (sie gehört zur gespeicherten Übung). */
   lockTimeframe?: boolean
+  /**
+   * Höhe des Chartbereichs als Tailwind-Klasse. Der Trainer braucht mehr Fläche
+   * als eine Karte am Trade — dort wird eine Struktur gelesen, nicht ein Stand
+   * abgelesen. Ohne Angabe bleibt es bei der bisherigen Höhe.
+   */
+  heightClass?: string
+  /**
+   * Kurs-Aufnahme: Ist sie gesetzt, legt sich eine Ebene über den Chart, und
+   * der nächste Klick meldet den Kurs an dieser Höhe statt zu zeichnen.
+   *
+   * Damit lassen sich Einstieg, Stop und Ziel dort setzen, wo die Struktur sie
+   * verlangt — statt sie aus der Achse abzulesen und abzutippen. Genau so
+   * arbeitet man auch im echten Chart.
+   */
+  pickPrice?: ((price: number) => void) | null
+  /** Was gerade aufgenommen wird — erscheint als Hinweis auf der Ebene. */
+  pickLabel?: string
+  /**
+   * Zeichnen erlauben, auch ohne Instrument und ohne Übung. Die Zeichnungen
+   * werden dann **nicht gespeichert** — sie leben nur in dieser Ansicht.
+   * Gedacht für das freie Replay, das ausdrücklich nichts festhält.
+   */
+  ephemeralDrawings?: boolean
 }) {
   const [timeframe, setTimeframe] = useState<ChartTimeframe>(defaultTimeframe)
   const { interval, days } = TIMEFRAMES[timeframe]
@@ -203,7 +184,17 @@ export function PriceChart({
   // an die Zeichnungs-Aktionen. Eine Übungslinie hat im echten Chart nichts zu
   // suchen — Übung und Ernstfall bleiben getrennt.
   const isTraining = trainingSessionId != null
-  const drawingsEnabled = stockId != null || isTraining
+  /**
+   * Flüchtig zeichnen: Werkzeuge ohne Speicherort.
+   *
+   * Das freie Replay hat weder Instrument noch Übung — bis hier hieß das: gar
+   * keine Werkzeuge. Für „einfach mal ein Replay fahren und dabei einzeichnen"
+   * war das eine Lücke, denn Zeichnen IST die Analyse. Die Linien leben nur in
+   * dieser Ansicht und verschwinden beim Verlassen; das passt zur Seite, die
+   * ausdrücklich „keine Bewertung und keine Speicherung" verspricht.
+   */
+  const fluechtig = ephemeralDrawings && stockId == null && !isTraining
+  const drawingsEnabled = stockId != null || isTraining || fluechtig
 
   useEffect(() => {
     if (!replayMode || !candles || candles.length === 0) {
@@ -238,6 +229,16 @@ export function PriceChart({
     return candles.slice(0, Math.min(candles.length, Math.max(1, replayVisible)))
   }, [candles, replayMode, replayVisible])
 
+  // Identität der ANSICHT — nicht der Daten. Nur wenn sie wechselt, darf der
+  // sichtbare Bereich neu gesetzt werden. Chart-Typ und Theme stehen bewusst
+  // NICHT darin: Sie erzeugen zwar eine neue Serie, aber die Zeitachse gehört
+  // dem Chart und behält ihren Zustand — ein Farbwechsel soll den Zoom nicht
+  // kosten.
+  const viewKey = `${symbol}|${market}|${timeframe}`
+  const viewRef = useRef<string | null>(null)
+  /** Kerzenzahl des letzten Durchlaufs — daran hängt das Mitlaufen im Replay. */
+  const lastLenRef = useRef(0)
+
   const containerRef = useRef<HTMLDivElement>(null)
   const containerWrapRef = useRef<HTMLDivElement>(null)
   const legendRef = useRef<HTMLDivElement>(null)
@@ -251,37 +252,31 @@ export function PriceChart({
   const [chartStyle, setChartStyle] = useState<ChartStyle>('candles')
   const [logScale, setLogScale] = useState(false)
   const [fullscreen, setFullscreen] = useState(false)
-  const { resolvedTheme } = useTheme()
-  const [colorScheme, setColorScheme] = useState<'app' | 'tv'>('app')
-  const palette =
-    colorScheme === 'tv'
-      ? resolvedTheme === 'light'
-        ? TV_LIGHT
-        : TV_DARK
-      : resolvedTheme === 'light'
-        ? LIGHT
-        : DARK
+  /** Position und Kurs unter dem Zeiger, während ein Level aufgenommen wird. */
+  const [pickAt, setPickAt] = useState<{ y: number; price: number } | null>(null)
+  /**
+   * Das Aussehen kommt aus den Einstellungen des Nutzers (Migration 0028) und
+   * gilt in JEDEM Chart der App — Watchlist, Trade, Trainer.
+   *
+   * Bis es geladen ist, gilt der Auslieferungszustand. Ein Chart wartet nie auf
+   * eine Einstellung; das frühere Umschalten „App / TradingView" ist zu zwei
+   * Vorlagen im Dialog geworden.
+   */
+  const [appearance, setAppearance] = useState<ChartAppearance>(DEFAULT_APPEARANCE)
+  const palette = appearance
 
-  // Gemerktes Farbschema erst nach dem Mount laden (kein SSR-Mismatch).
   useEffect(() => {
-    try {
-      const saved = window.localStorage.getItem(COLOR_SCHEME_KEY)
-      if (saved === 'tv' || saved === 'app') setColorScheme(saved)
-    } catch {
-      /* localStorage gesperrt — Default bleibt */
+    let lebt = true
+    loadChartAppearance()
+      .then((a) => {
+        if (lebt) setAppearance(a)
+      })
+      .catch(() => {
+        /* Der Standard bleibt stehen — lieber unverändert als leer. */
+      })
+    return () => {
+      lebt = false
     }
-  }, [])
-
-  const handleColorSchemeToggle = useCallback(() => {
-    setColorScheme((s) => {
-      const next = s === 'tv' ? 'app' : 'tv'
-      try {
-        window.localStorage.setItem(COLOR_SCHEME_KEY, next)
-      } catch {
-        /* localStorage gesperrt — gilt dann nur für die Sitzung */
-      }
-      return next
-    })
   }, [])
 
   // ---- Zeichenwerkzeuge (AP 5 + AP 9) --------------------------------------
@@ -303,12 +298,13 @@ export function PriceChart({
     if (!drawingsEnabled) return
     setSelectedId(null)
     setDrawings([])
+    if (fluechtig) return
     const p =
       trainingSessionId != null
         ? deleteAllTrainingAnnotations(trainingSessionId)
         : deleteAllDrawings(stockId!)
     p.catch(() => setDrawError('Zeichnungen konnten nicht gelöscht werden.'))
-  }, [stockId, trainingSessionId, drawingsEnabled])
+  }, [stockId, trainingSessionId, drawingsEnabled, fluechtig])
   // Debounce-Timer je Zeichnung, damit Verschieben nicht jede Mausbewegung speichert.
   const persistTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map())
 
@@ -316,6 +312,18 @@ export function PriceChart({
     (type: Drawing['type'], points: DrawingPoint[]) => {
       if (!drawingsEnabled) return
       setDrawError(null)
+
+      // Flüchtiger Modus (freies Replay): Es gibt kein Instrument und keine
+      // Übung, also auch kein Ziel zum Speichern. Die Zeichnung lebt nur in
+      // dieser Ansicht — negative Nummern, damit sie sich nie mit gespeicherten
+      // Zeichnungen überschneiden.
+      if (fluechtig) {
+        const d: Drawing = { id: -Date.now(), type, points, style: null }
+        setDrawings((ds) => [...ds, d])
+        setSelectedId(d.id)
+        return
+      }
+
       const p =
         trainingSessionId != null
           ? createTrainingAnnotation({ sessionId: trainingSessionId, type, points })
@@ -325,12 +333,13 @@ export function PriceChart({
         setSelectedId(d.id)
       }).catch(() => setDrawError('Zeichnung konnte nicht gespeichert werden.'))
     },
-    [stockId, trainingSessionId, drawingsEnabled],
+    [stockId, trainingSessionId, drawingsEnabled, fluechtig],
   )
 
   const handleUpdate = useCallback(
     (id: number, points: DrawingPoint[]) => {
       setDrawings((ds) => ds.map((d) => (d.id === id ? { ...d, points } : d)))
+      if (fluechtig) return // nichts zu speichern
       const timers = persistTimers.current
       const prev = timers.get(id)
       if (prev) clearTimeout(prev)
@@ -346,18 +355,26 @@ export function PriceChart({
         }, 500),
       )
     },
-    [trainingSessionId],
+    [trainingSessionId, fluechtig],
+  )
+
+  /** Eine Zeichnung entfernen — gemeinsamer Weg für Entf-Taste und Radiergummi. */
+  const handleDeleteById = useCallback(
+    (id: number) => {
+      setSelectedId((s) => (s === id ? null : s))
+      setDrawings((ds) => ds.filter((d) => d.id !== id))
+      if (fluechtig) return
+      const p =
+        trainingSessionId != null ? deleteTrainingAnnotation(id) : deleteDrawing(id)
+      p.catch(() => setDrawError('Zeichnung konnte nicht gelöscht werden.'))
+    },
+    [trainingSessionId, fluechtig],
   )
 
   const handleDeleteSelected = useCallback(() => {
     if (selectedId == null) return
-    const id = selectedId
-    setSelectedId(null)
-    setDrawings((ds) => ds.filter((d) => d.id !== id))
-    const p =
-      trainingSessionId != null ? deleteTrainingAnnotation(id) : deleteDrawing(id)
-    p.catch(() => setDrawError('Zeichnung konnte nicht gelöscht werden.'))
-  }, [selectedId, trainingSessionId])
+    handleDeleteById(selectedId)
+  }, [selectedId, handleDeleteById])
 
   // Entf/Backspace löscht die Auswahl (nicht, wenn gerade ein Input fokussiert ist).
   useEffect(() => {
@@ -523,8 +540,8 @@ export function PriceChart({
         attributionLogo: false,
       },
       grid: {
-        vertLines: { color: palette.grid },
-        horzLines: { color: palette.grid },
+        vertLines: { color: palette.grid, visible: palette.gridVisible },
+        horzLines: { color: palette.grid, visible: palette.gridVisible },
       },
       rightPriceScale: { borderColor: palette.border },
       timeScale: { borderColor: palette.border, timeVisible: true },
@@ -556,11 +573,17 @@ export function PriceChart({
     let series: ISeriesApi<SeriesType>
     if (chartStyle === 'candles') {
       series = chart.addSeries(CandlestickSeries, {
-        upColor: palette.up,
+        // Hohlkerzen wie TradingViews „Hollow Candles": Die steigende Kerze
+        // bekommt keinen Körper, nur ihren Rand. Deshalb muss der Rand hier
+        // immer gezeichnet werden — bei gleichen Farben sieht das aus wie
+        // vorher, macht aber „nur Umriss" überhaupt erst möglich.
+        upColor: palette.hollow ? 'rgba(0,0,0,0)' : palette.up,
         downColor: palette.down,
-        wickUpColor: palette.up,
-        wickDownColor: palette.down,
-        borderVisible: false,
+        wickUpColor: palette.wickUp,
+        wickDownColor: palette.wickDown,
+        borderVisible: true,
+        borderUpColor: palette.borderUp,
+        borderDownColor: palette.borderDown,
       })
     } else if (chartStyle === 'bars') {
       series = chart.addSeries(BarSeries, {
@@ -603,8 +626,8 @@ export function PriceChart({
         textColor: palette.text,
       },
       grid: {
-        vertLines: { color: palette.grid },
-        horzLines: { color: palette.grid },
+        vertLines: { color: palette.grid, visible: palette.gridVisible },
+        horzLines: { color: palette.grid, visible: palette.gridVisible },
       },
       rightPriceScale: { borderColor: palette.border },
       timeScale: { borderColor: palette.border },
@@ -640,6 +663,15 @@ export function PriceChart({
     const chart = chartRef.current
     if (!series || !chart || !chartCandles) return
 
+    // Wo stand der Blick, BEVOR die neuen Daten kommen? Das muss vor `setData`
+    // gelesen werden.
+    const prevLen = lastLenRef.current
+    const before = chart.timeScale().getVisibleLogicalRange()
+    // Klebte der Blick am rechten Rand? Nur dann läuft er mit der neuen Kerze
+    // mit. Wer nach links gescrollt hat, um sich etwas anzusehen, soll dort
+    // bleiben — ein Chart, der einen wegreißt, ist im Replay unbrauchbar.
+    const folgtDemRand = before != null && prevLen > 0 && before.to >= prevLen - 1.5
+
     if (chartStyle === 'line' || chartStyle === 'area') {
       series.setData(
         chartCandles.map((c) => ({ time: c.time as UTCTimestamp, value: c.close })),
@@ -658,18 +690,35 @@ export function PriceChart({
 
     markersRef.current?.setMarkers(seriesMarkers)
 
-    // Sichtbaren Bereich auf das gewählte Zeitfenster begrenzen.
-    if (days && chartCandles.length > 1) {
-      const to = chartCandles[chartCandles.length - 1].time
-      const from = Math.max(chartCandles[0].time, to - days * 86400)
-      chart.timeScale().setVisibleRange({
-        from: from as UTCTimestamp,
-        to: to as UTCTimestamp,
-      })
-    } else {
-      chart.timeScale().fitContent()
+    const len = chartCandles.length
+
+    if (viewRef.current !== viewKey) {
+      // Neue Ansicht (anderes Instrument oder andere Zeitebene): Ausschnitt
+      // einmal auf das gewählte Zeitfenster setzen.
+      viewRef.current = viewKey
+      if (days && len > 1) {
+        const to = chartCandles[len - 1].time
+        const from = Math.max(chartCandles[0].time, to - days * 86400)
+        chart.timeScale().setVisibleRange({
+          from: from as UTCTimestamp,
+          to: to as UTCTimestamp,
+        })
+      } else {
+        chart.timeScale().fitContent()
+      }
+    } else if (before && folgtDemRand && len !== prevLen) {
+      // Dieselbe Ansicht, nur mehr (oder weniger) Kerzen — Zoomstufe halten und
+      // den Ausschnitt um die Differenz mitziehen.
+      const versatz = len - prevLen
+      chart
+        .timeScale()
+        .setVisibleLogicalRange({ from: before.from + versatz, to: before.to + versatz })
     }
-  }, [chartCandles, days, seriesMarkers, chartStyle, seriesVersion])
+    // Sonst: den Ausschnitt bewusst NICHT anfassen. Genau hier wurde vorher bei
+    // jeder Replay-Kerze der Zoom des Nutzers weggeworfen.
+
+    lastLenRef.current = len
+  }, [chartCandles, days, seriesMarkers, chartStyle, seriesVersion, viewKey])
 
   // OHLC-Legende oben links: Werte der Kerze unterm Crosshair (Direkt-DOM,
   // damit Mausbewegungen keine React-Renders auslösen).
@@ -732,12 +781,10 @@ export function PriceChart({
       out.width = base.width
       out.height = base.height
       const ctx = out.getContext('2d')!
+      // Ein PNG kann nicht „durchscheinen": Bei transparentem Chart-Grund
+      // bekommt das Bild den Untergrund der App, auf dem der Chart auch liegt.
       ctx.fillStyle =
-        palette.bg !== 'transparent'
-          ? palette.bg
-          : resolvedTheme === 'light'
-            ? '#ffffff'
-            : CHART_COLORS.background
+        palette.bg !== 'transparent' ? palette.bg : CHART_COLORS.background
       ctx.fillRect(0, 0, out.width, out.height)
       ctx.drawImage(base, 0, 0)
 
@@ -773,7 +820,7 @@ export function PriceChart({
       console.error('screenshot:', err)
       toast.error('Screenshot fehlgeschlagen.')
     }
-  }, [symbol, resolvedTheme, palette])
+  }, [symbol, palette])
 
   // Plan-Linien (Entry/Stop/Target/Invalidation) als Preislinien.
   useEffect(() => {
@@ -875,19 +922,15 @@ export function PriceChart({
           >
             Log
           </Button>
-          <Button
-            size="sm"
-            variant={colorScheme === 'tv' ? 'secondary' : 'ghost'}
-            className="h-7 px-2 font-mono text-[11px]"
-            title={
-              colorScheme === 'tv'
-                ? 'Zurück zu den App-Farben'
-                : 'TradingView-Farbschema (Hintergrund + Kerzenfarben)'
-            }
-            onClick={handleColorSchemeToggle}
-          >
-            TV
-          </Button>
+          {/* Das frühere „TV" (ein Umschalter zwischen zwei festen Schemata)
+              ist hier aufgegangen: TradingView ist jetzt eine von vier
+              Vorlagen, und jeder einzelne Wert ist danach änderbar. */}
+          <ChartSettings
+            value={appearance}
+            onChange={setAppearance}
+            onSave={saveChartAppearance}
+            onReset={resetChartAppearance}
+          />
           <IndicatorMenu config={indicators} onChange={handleIndicatorsChange} />
           {stockId != null && chartCandles && chartCandles.length > 0 && (
             <AnalysisImport
@@ -918,22 +961,13 @@ export function PriceChart({
         }
       />
 
-      {replayMode && candles && replayVisible != null && (
-        <ChartReplayControls
-          total={candles.length}
-          visible={replayVisible}
-          onChange={handleReplayChange}
-          start={replayStart}
-          maxVisible={replayMaxVisible}
-          lockedHint={replayLockedHint}
-        />
-      )}
-
       {drawError && <p className="note mb-2 text-destructive">{drawError}</p>}
 
       <div
         className={
-          fullscreen ? 'flex min-h-0 flex-1 gap-1.5' : 'flex h-[380px] gap-1.5 sm:h-[440px]'
+          fullscreen
+            ? 'flex min-h-0 flex-1 gap-1.5'
+            : `flex gap-1.5 ${heightClass ?? 'h-[380px] sm:h-[440px]'}`
         }
       >
         {drawingsEnabled && (
@@ -976,10 +1010,64 @@ export function PriceChart({
                 onSelect={setSelectedId}
                 onCreate={handleCreate}
                 onUpdate={handleUpdate}
+                onDelete={handleDeleteById}
                 magnet={magnet}
                 locked={drawingsLocked}
               />
             )}
+          {/* Kurs-Aufnahme: liegt ÜBER der Zeichenebene (z-30), damit ein Klick
+              hier keine Zeichnung anlegt. Die Linie folgt dem Zeiger, damit man
+              sieht, welchen Kurs man gerade nimmt — eine Zahl allein ließe sich
+              nicht mit der Struktur im Chart abgleichen. */}
+          {pickPrice && (
+            <div
+              className="absolute inset-0 z-30"
+              style={{ cursor: 'crosshair' }}
+              onMouseMove={(e) => {
+                const rect = e.currentTarget.getBoundingClientRect()
+                const y = e.clientY - rect.top
+                const p = seriesRef.current?.coordinateToPrice(y)
+                setPickAt(p != null ? { y, price: p } : null)
+              }}
+              onMouseLeave={() => setPickAt(null)}
+              onClick={(e) => {
+                const rect = e.currentTarget.getBoundingClientRect()
+                const p = seriesRef.current?.coordinateToPrice(e.clientY - rect.top)
+                if (p != null && Number.isFinite(p)) pickPrice(p)
+                setPickAt(null)
+              }}
+            >
+              {pickAt && (
+                <>
+                  <div
+                    className="pointer-events-none absolute left-0 right-0 border-t border-dashed"
+                    style={{ top: pickAt.y, borderColor: palette.accent }}
+                  />
+                  <div
+                    className="pointer-events-none absolute rounded px-1.5 py-0.5 font-mono text-[11px] font-semibold"
+                    style={{
+                      top: pickAt.y - 10,
+                      right: 76,
+                      background: palette.accent,
+                      color: CHART_COLORS.background,
+                    }}
+                  >
+                    {/* Dieselbe Genauigkeit, die auch übernommen wird — eine
+                        Vorschau mit sechs Nachkommastellen und ein Feld mit
+                        zweien wären zwei verschiedene Zahlen. */}
+                    {pickAt.price.toLocaleString('de-DE', {
+                      maximumFractionDigits:
+                        Math.abs(pickAt.price) >= 100 ? 2 : Math.abs(pickAt.price) >= 1 ? 4 : 6,
+                    })}
+                  </div>
+                </>
+              )}
+              <div className="pointer-events-none absolute left-1/2 top-2 -translate-x-1/2 rounded-full bg-primary px-3 py-1 font-mono text-[11px] text-primary-foreground">
+                {pickLabel ?? 'Kurs wählen'} — klicken · Esc bricht ab
+              </div>
+            </div>
+          )}
+
           {loading && (
             <div className="absolute inset-0 flex items-center justify-center">
               <Loader2 className="size-5 animate-spin text-muted-foreground" />
@@ -992,6 +1080,19 @@ export function PriceChart({
           )}
         </div>
       </div>
+
+      {/* Die Replay-Leiste sitzt UNTER dem Chart — dort, wo in TradingView die
+          Zeitachse liegt und die Hand ohnehin hinfasst. */}
+      {replayMode && candles && replayVisible != null && (
+        <ChartReplayControls
+          total={candles.length}
+          visible={replayVisible}
+          onChange={handleReplayChange}
+          start={replayStart}
+          maxVisible={replayMaxVisible}
+          lockedHint={replayLockedHint}
+        />
+      )}
     </div>
   )
 }

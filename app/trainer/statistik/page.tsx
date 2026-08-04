@@ -4,14 +4,18 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { CockpitHeader } from '@/components/cockpit-header'
 import { TrainingStatsPanel } from '@/components/trainer/training-stats-panel'
+import { BehaviourPanel } from '@/components/trainer/behaviour-panel'
 import { getTrainingStats } from '@/app/actions/training'
+import { getTrainingBehaviour } from '@/app/actions/training-trades'
 import { ArrowLeft } from 'lucide-react'
 
 export default async function TrainingStatsPage() {
   const session = await auth.api.getSession({ headers: await headers() })
   if (!session?.user) redirect('/sign-in')
 
-  const stats = await getTrainingStats()
+  // Zwei Hälften derselben Frage: die Analyse (lag ich richtig) und das
+  // Verhalten (habe ich meinen Plan auch gehandelt).
+  const [stats, behaviour] = await Promise.all([getTrainingStats(), getTrainingBehaviour()])
 
   return (
     <div className="min-h-svh">
@@ -35,7 +39,10 @@ export default async function TrainingStatsPage() {
           </p>
         </div>
 
-        <TrainingStatsPanel stats={stats} />
+        <div className="space-y-4">
+          <TrainingStatsPanel stats={stats} />
+          <BehaviourPanel {...behaviour} />
+        </div>
       </main>
     </div>
   )

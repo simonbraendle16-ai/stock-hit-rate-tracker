@@ -31,7 +31,31 @@ const TWO_POINT: DrawTool[] = [
 /** Tools mit 3 Klick-Punkten. */
 const THREE_POINT: DrawTool[] = ['channel', 'fibext']
 
-const SELECT_TOLERANCE = 6 // px
+/**
+ * Wie nah der Zeiger an einer Zeichnung sein muss, um sie zu treffen.
+ *
+ * 6 px waren zu knapp: Eine 1,5 px dünne Linie auf Pixelbruchteilen ist damit
+ * nur mit ruhiger Hand zu greifen — das war der Grund, warum sich Zeichnungen
+ * "nicht anfassen" ließen. TradingView liegt bei rund 8 px.
+ */
+const SELECT_TOLERANCE = 9 // px
+/** Endpunkt-Griffe dürfen großzügiger sein — sie liegen über der Linie. */
+const HANDLE_TOLERANCE = 11 // px
+
+/**
+ * Zeiger im Radiergummi-Modus: das Werkzeug selbst, damit ohne Blick auf die
+ * Leiste klar ist, dass der nächste Klick löscht. Doppelt gezeichnet (dunkel
+ * unter hell), damit es auf jedem Chart-Hintergrund lesbar bleibt.
+ */
+const ERASER_CURSOR = (() => {
+  const d = 'm7 21-4.3-4.3a2.4 2.4 0 0 1 0-3.4l9.6-9.6a2.4 2.4 0 0 1 3.4 0l5.6 5.6a2.4 2.4 0 0 1 0 3.4L13 21M22 21H7m-2-10 9 9'
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none">` +
+    `<path d="${d}" stroke="#0f1124" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>` +
+    `<path d="${d}" stroke="#f2607a" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>` +
+    `</svg>`
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 4 18, crosshair`
+})()
 
 interface Pt {
   x: number
@@ -58,6 +82,7 @@ export function DrawingLayer({
   onSelect,
   onCreate,
   onUpdate,
+  onDelete,
   magnet = false,
   locked = false,
 }: {
@@ -71,6 +96,8 @@ export function DrawingLayer({
   onSelect: (id: number | null) => void
   onCreate: (type: Drawing['type'], points: DrawingPoint[]) => void
   onUpdate: (id: number, points: DrawingPoint[]) => void
+  /** Radiergummi — entfernt die angeklickte Zeichnung. */
+  onDelete?: (id: number) => void
   /** Snap auf O/H/L/C der nächstgelegenen Kerze (TradingView-Magnet). */
   magnet?: boolean
   /** Zeichnungen gesperrt: auswählen ja, verschieben nein. */
@@ -85,8 +112,9 @@ export function DrawingLayer({
   const [brushPts, setBrushPts] = useState<DrawingPoint[] | null>(null)
   const dragRef = useRef<{
     id: number
-    pointIndex: number | null // null = ganze Zeichnung (nur Preis-Verschiebung)
+    pointIndex: number | null // null = ganze Zeichnung (Zeit UND Preis)
     startPoints: DrawingPoint[]
+    startX: number
     startY: number
   } | null>(null)
 
@@ -297,6 +325,15 @@ export function DrawingLayer({
     const point = fromPx(x, y)
     if (!point) return
 
+    // Radiergummi: trifft der Klick eine Zeichnung, ist sie weg. Der Modus
+    // bleibt an, damit mehrere Zeichnungen hintereinander wegkönnen.
+    if (tool === 'eraser') {
+      if (locked) return
+      const treffer = hitTest(x, y)
+      if (treffer != null) onDelete?.(treffer)
+      return
+    }
+
     if (tool === 'cursor') {
       // Endpunkt-Handle der Auswahl treffen? (gesperrt: nur auswählen)
       if (selectedId != null && !locked) {
@@ -305,8 +342,14 @@ export function DrawingLayer({
           const pts = sel.points.map(toPx)
           for (let i = 0; i < pts.length; i++) {
             const p = pts[i]
-            if (p && Math.hypot(p.x - x, p.y - y) < 8) {
-              dragRef.current = { id: sel.id, pointIndex: i, startPoints: sel.points, startY: y }
+            if (p && Math.hypot(p.x - x, p.y - y) < HANDLE_TOLERANCE) {
+              dragRef.current = {
+                id: sel.id,
+                pointIndex: i,
+                startPoints: sel.points,
+                startX: x,
+                startY: y,
+              }
               svgRef.current!.setPointerCapture(e.pointerId)
               return
             }
@@ -320,7 +363,7 @@ export function DrawingLayer({
         // Vertikale: Ganzkörper-Drag verschiebt nur den Preis (unsichtbar) —
         // deshalb direkt den Punkt selbst ziehen (Zeit + Preis).
         const pointIndex = d.type === 'vline' ? 0 : null
-        dragRef.current = { id: hit, pointIndex, startPoints: d.points, startY: y }
+        dragRef.current = { id: hit, pointIndex, startPoints: d.points, startX: x, startY: y }
         svgRef.current!.setPointerCapture(e.pointerId)
       }
       return
@@ -387,12 +430,37 @@ export function DrawingLayer({
           i === drag.pointIndex ? { ...p, time: point.time, price: point.price } : p,
         )
       } else {
-        // ganze Zeichnung vertikal verschieben (Preis-Delta)
+        // Ganze Zeichnung verschieben — in BEIDE Richtungen. Vorher wanderte
+        // nur der Preis mit; waagerecht ließ sich eine fertige Linie gar nicht
+        // versetzen, was das Anfassen praktisch unbrauchbar machte.
         const startPrice = series.coordinateToPrice(drag.startY)
         const nowPrice = series.coordinateToPrice(y)
         if (startPrice == null || nowPrice == null) return
         const delta = nowPrice - startPrice
-        next = drag.startPoints.map((p) => ({ ...p, price: p.price + delta }))
+
+        // Waagerecht wird in KERZEN verschoben, nicht in Pixeln: Ein Punkt muss
+        // auf einer Kerzenzeit landen, sonst hat er keinen Platz auf der Achse.
+        const ls = chart.timeScale().coordinateToLogical(drag.startX)
+        const ln = chart.timeScale().coordinateToLogical(x)
+        let versatz = ls != null && ln != null ? Math.round(ln - ls) : 0
+
+        // Der Versatz wird EINMAL für die ganze Zeichnung begrenzt. Würde jeder
+        // Punkt für sich an den Rand geklemmt, liefe der vordere Punkt weiter
+        // als der hintere — die Zeichnung würde sich beim Schieben verformen.
+        const idx = drag.startPoints.map((p) => candles.findIndex((c) => c.time === p.time))
+        if (versatz !== 0 && idx.every((i) => i >= 0)) {
+          const min = Math.min(...idx)
+          const max = Math.max(...idx)
+          versatz = Math.max(-min, Math.min(candles.length - 1 - max, versatz))
+        } else {
+          versatz = 0
+        }
+
+        next = drag.startPoints.map((p, k) => {
+          const price = p.price + delta
+          if (versatz === 0) return { ...p, price }
+          return { time: candles[idx[k] + versatz].time, price }
+        })
       }
       onUpdate(drag.id, next)
       return
@@ -884,7 +952,8 @@ export function DrawingLayer({
         className="absolute inset-0 z-10 h-full w-full"
         style={{
           pointerEvents: interactive ? 'auto' : 'none',
-          cursor: tool === 'cursor' ? 'default' : 'crosshair',
+          cursor:
+            tool === 'cursor' ? 'default' : tool === 'eraser' ? ERASER_CURSOR : 'crosshair',
           // Preisachse rechts (~70px) und Zeitachse unten nicht überdecken
           clipPath: 'inset(0 70px 26px 0)',
         }}

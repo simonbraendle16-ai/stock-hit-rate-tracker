@@ -128,6 +128,10 @@ export const userSettings = pgTable('user_settings', {
   // kopierte Adresse liefe beim Ändern des Kontos auseinander.
   notifyEmail: text('notifyEmail'),
   notifyByEmail: boolean('notifyByEmail').notNull().default(true),
+  // Aussehen der Charts als JSON (Migration 0028). NULL = Auslieferungszustand.
+  // Gelesen wird ausschließlich über `normalizeAppearance`
+  // (`lib/chart-appearance.ts`) — nie roh an den Chart geben.
+  chartAppearance: text('chartAppearance'),
 })
 
 // Ein- und Auszahlungen auf ein DEPOT. Ohne sie rechnet die Rendite gegen
@@ -581,6 +585,74 @@ export const trainingSession = pgTable('training_session', {
   revealedAt: timestamp('revealedAt', { withTimezone: true }),
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
   finishedAt: timestamp('finishedAt', { withTimezone: true }),
+  // --- Ausbaustufe 2 (Migration 0029): die Sitzung ist der Replay-Durchlauf ---
+  // Wie der Replay anhält: 'auto' (alle `stopEvery` Kerzen) | 'manuell'.
+  // Entscheidung dazu ausschließlich in `lib/training-trade.ts`.
+  stopMode: text('stopMode').notNull().default('auto'),
+  stopEvery: integer('stopEvery').notNull().default(10),
+  // Das Ende bestimmt der Nutzer, nicht die App.
+  endedAt: timestamp('endedAt', { withTimezone: true }),
+})
+
+// Ein geübter Trade INNERHALB einer Sitzung (Migration 0029).
+//
+// Getrennt von der Sitzung, weil es zwei Zeitpunkte sind: `committedAt` belegt,
+// dass die These vor dem Aufdecken stand. Läge sie in der Sitzungszeile, ließe
+// sich das nicht mehr belegen — und eine nachträglich anpassbare These misst
+// nichts.
+//
+// `outcome`/`rMultiple` werden GEMESSEN (`measureOutcome`), `rating`/`errorTags`
+// sind die eigene Einordnung. Beides nebeneinander: Ein Trade kann sein Ziel
+// erreichen und die Zählung trotzdem falsch gewesen sein.
+export const trainingTrade = pgTable('training_trade', {
+  id: serial('id').primaryKey(),
+  sessionId: integer('sessionId').notNull(),
+  userId: text('userId').notNull(),
+  /** Laufende Nummer in der Sitzung — die Reihenfolge, in der geübt wurde. */
+  seq: integer('seq').notNull().default(1),
+  // long | short | keine ('keine' = bewusste Enthaltung, nicht in der Quote)
+  direction: text('direction').notNull(),
+  entryPrice: doublePrecision('entryPrice'),
+  stopLoss: doublePrecision('stopLoss'),
+  takeProfit: doublePrecision('takeProfit'),
+  elliottCount: text('elliottCount'),
+  invalidation: doublePrecision('invalidation'),
+  thesisNote: text('thesisNote'),
+  setupTags: text('setupTags'),
+  /** Letzte sichtbare Kerze beim Festschreiben — Startpunkt der Messung. */
+  entryCandleTime: integer('entryCandleTime'),
+  committedAt: timestamp('committedAt', { withTimezone: true }).notNull().defaultNow(),
+  // ziel | stop | offen — NULL, solange der Trade läuft.
+  outcome: text('outcome'),
+  outcomeCandleTime: integer('outcomeCandleTime'),
+  exitPrice: doublePrecision('exitPrice'),
+  rMultiple: doublePrecision('rMultiple'),
+  /** Stop und Ziel in derselben Kerze → es gilt der Stop, und das steht da. */
+  ambiguous: boolean('ambiguous').notNull().default(false),
+  // korrekt | teilweise | falsch
+  rating: text('rating'),
+  errorTags: text('errorTags'),
+  note: text('note'),
+  ratedAt: timestamp('ratedAt', { withTimezone: true }),
+  createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
+})
+
+// Was an einem Haltepunkt entschieden wurde (Migration 0029).
+//
+// Der Wert steckt in den Zeilen OHNE `tradeId`: Sie zählen, wie oft hingesehen
+// und bewusst nichts gemacht wurde. Überhandeln ist sonst nicht messbar — man
+// sähe nur die Trades, die entstanden sind, nie die verkniffenen.
+export const trainingCheckpoint = pgTable('training_checkpoint', {
+  id: serial('id').primaryKey(),
+  sessionId: integer('sessionId').notNull(),
+  userId: text('userId').notNull(),
+  /** NULL = zu diesem Zeitpunkt war kein Trade offen. */
+  tradeId: integer('tradeId'),
+  candleTime: integer('candleTime'),
+  // kein_setup | haelt | gedreht | raus
+  decision: text('decision').notNull(),
+  note: text('note'),
+  createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
 })
 
 // Die Zeichnungen einer Übung. Bewusst NICHT in `chart_drawing`: Übungslinien

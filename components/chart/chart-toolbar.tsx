@@ -1,11 +1,13 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Button } from '@/components/ui/button'
 import {
   ArrowUpRight,
   Brush,
   Circle,
+  Delete,
   Eraser,
   Eye,
   EyeOff,
@@ -26,6 +28,8 @@ import {
 
 export type DrawTool =
   | 'cursor'
+  /** Radiergummi: Jeder Klick entfernt die getroffene Zeichnung. */
+  | 'eraser'
   | 'trendline'
   | 'ray'
   | 'hline'
@@ -45,6 +49,11 @@ export type DrawTool =
   | 'measure'
   | 'pricerange'
   | 'daterange'
+
+/** Maße des Werkzeug-Flyouts — nur zum Einpassen ins Fenster. */
+const FLYOUT_ROW = 30 // Höhe einer Zeile (h-7 + gap)
+const FLYOUT_HEAD = 40 // Überschrift + Innenabstand
+const FLYOUT_MARGIN = 8 // Mindestabstand zum Fensterrand
 
 interface ToolDef {
   id: DrawTool
@@ -158,12 +167,17 @@ export function ChartToolbar({
     null,
   )
   const rootRef = useRef<HTMLDivElement>(null)
+  /** Das Flyout liegt im Portal am <body> — es muss eigens geprüft werden. */
+  const flyoutRef = useRef<HTMLDivElement>(null)
 
   // Klick außerhalb schließt das Flyout.
   useEffect(() => {
     if (!openGroup) return
     const onDown = (e: PointerEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpenGroup(null)
+      const ziel = e.target as Node
+      if (rootRef.current?.contains(ziel)) return
+      if (flyoutRef.current?.contains(ziel)) return
+      setOpenGroup(null)
     }
     const onScroll = () => setOpenGroup(null)
     document.addEventListener('pointerdown', onDown)
@@ -231,6 +245,18 @@ export function ChartToolbar({
         <MousePointer2 className="size-4" />
       ))}
 
+      {/* Radiergummi steht bewusst neben dem Cursor: Wegräumen ist beim
+          Zeichnen genauso häufig wie Auswählen. Der Modus bleibt aktiv, bis
+          man ihn wieder abwählt — mehrere Zeichnungen ohne Umweg entfernen. */}
+      {iconBtn(
+        'eraser',
+        'Radiergummi — Klick entfernt die Zeichnung (nochmal klicken zum Beenden)',
+        tool === 'eraser',
+        () => onToolChange(tool === 'eraser' ? 'cursor' : 'eraser'),
+        <Eraser className="size-4" />,
+        tool === 'eraser' ? 'text-destructive' : undefined,
+      )}
+
       {GROUPS.map((group) => {
         const current =
           group.tools.find((t) => t.id === groupChoice[group.name]) ?? group.tools[0]
@@ -251,7 +277,17 @@ export function ChartToolbar({
                 setOpenGroup(null)
               } else {
                 const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
-                setOpenGroup({ name: group.name, top: r.top, left: r.right + 4 })
+                // Das Menü öffnet auf Höhe seines Knopfes — aber die unteren
+                // Gruppen (Fibonacci, Elliott, Position, Notiz, Messen) liefen
+                // damit unten aus dem Bild und waren praktisch nicht bedienbar.
+                // Deshalb wird es am Fensterrand nach oben geschoben.
+                const hoehe = FLYOUT_HEAD + group.tools.length * FLYOUT_ROW
+                const platz = window.innerHeight - FLYOUT_MARGIN - hoehe
+                setOpenGroup({
+                  name: group.name,
+                  top: Math.max(FLYOUT_MARGIN, Math.min(r.top, platz)),
+                  left: r.right + 4,
+                })
               }
             }}
           >
@@ -260,26 +296,47 @@ export function ChartToolbar({
         )
       })}
 
-      {openGroup && (
-        <div
-          className="panel-raised fixed z-50 flex w-64 flex-col gap-0.5 p-1.5"
-          style={{ top: openGroup.top, left: openGroup.left }}
-        >
-          <p className="eyebrow px-2 py-1">{openGroup.name}</p>
-          {GROUPS.find((g) => g.name === openGroup.name)?.tools.map((t) => (
-            <Button
-              key={t.id}
-              size="sm"
-              variant={tool === t.id ? 'secondary' : 'ghost'}
-              className="h-7 justify-start gap-2 px-2 font-mono text-[11px]"
-              onClick={() => selectTool(openGroup.name, t.id)}
-            >
-              <span className="flex w-5 justify-center">{t.icon}</span>
-              {t.label}
-            </Button>
-          ))}
-        </div>
-      )}
+      {/* Das Flyout hängt am <body>, NICHT hier im Baum.
+          Grund: Die Chart-Karte trägt `.rise-in`, und deren `transform` bleibt
+          auch nach der Animation stehen (`matrix(1,0,0,1,0,0)`). Ein Element
+          mit transform wird zum Bezugsrahmen für `position: fixed` — die
+          Menüs richteten sich also nach der Karte statt nach dem Fenster und
+          landeten weit unterhalb ihres Knopfes. Wer hier künftig `fixed`
+          benutzt, muss denselben Weg gehen. */}
+      {openGroup &&
+        createPortal(
+          <div
+            ref={flyoutRef}
+            className="panel-raised z-50 flex w-64 flex-col gap-0.5 overflow-y-auto p-1.5"
+            style={{
+              // `position` MUSS inline stehen: In `globals.css` gilt
+              // `body > * { position: relative }`, und diese Regel liegt
+              // außerhalb der Tailwind-Layer — ungelayertes CSS gewinnt gegen
+              // gelayerte Utilities unabhängig von der Spezifität. Die Klasse
+              // `fixed` wurde deshalb überstimmt, und `top` zählte plötzlich
+              // als Fluss-Versatz: Das Menü landete rund 1200 px zu tief.
+              position: 'fixed',
+              top: openGroup.top,
+              left: openGroup.left,
+              maxHeight: `calc(100vh - ${openGroup.top + FLYOUT_MARGIN}px)`,
+            }}
+          >
+            <p className="eyebrow px-2 py-1">{openGroup.name}</p>
+            {GROUPS.find((g) => g.name === openGroup.name)?.tools.map((t) => (
+              <Button
+                key={t.id}
+                size="sm"
+                variant={tool === t.id ? 'secondary' : 'ghost'}
+                className="h-7 justify-start gap-2 px-2 font-mono text-[11px]"
+                onClick={() => selectTool(openGroup.name, t.id)}
+              >
+                <span className="flex w-5 justify-center">{t.icon}</span>
+                {t.label}
+              </Button>
+            ))}
+          </div>,
+          document.body,
+        )}
 
       <div className="my-1 h-px w-5 bg-border" />
 
@@ -305,7 +362,7 @@ export function ChartToolbar({
 
       {hasSelection &&
         iconBtn('del', 'Auswahl löschen (Entf)', false, onDeleteSelected, (
-          <Trash2 className="size-4" />
+          <Delete className="size-4" />
         ), 'text-destructive')}
       {hasDrawings &&
         iconBtn(
@@ -313,7 +370,7 @@ export function ChartToolbar({
           confirmDeleteAll ? 'Wirklich ALLE löschen? Nochmal klicken' : 'Alle Zeichnungen löschen',
           confirmDeleteAll,
           handleDeleteAll,
-          <Eraser className="size-4" />,
+          <Trash2 className="size-4" />,
           confirmDeleteAll ? 'text-destructive animate-pulse' : 'text-muted-foreground',
         )}
     </div>

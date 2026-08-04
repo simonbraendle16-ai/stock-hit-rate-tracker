@@ -1,0 +1,37 @@
+-- Chart-Aussehen — der Chart gehört dem, der ihn liest.
+--
+-- AUSGANGSLAGE
+-- Das Aussehen der Charts lag fest im Code: zwei Paletten („Indigo-Nacht" und
+-- ein TradingView-Schema), umschaltbar über einen Knopf, gemerkt im
+-- localStorage des Browsers. Damit war weder der Hintergrund noch die
+-- Kerzenfarbe wählbar — und auf einem zweiten Gerät war selbst die
+-- Schema-Wahl wieder weg.
+--
+-- WARUM DAS KEINE GESCHMACKSFRAGE IST
+-- Diese App ist dafür gebaut, dass eine Struktur im Chart erkannt wird, bevor
+-- Geld im Markt ist. Ob eine Kerze lesbar ist, hängt am Auge, am Bildschirm und
+-- am Licht im Raum — nicht am Farbgefühl der App. Ein Chart, den man nicht
+-- sauber lesen kann, führt zu einer schlechteren Entscheidung; das ist genau
+-- die Sorte Fehler, gegen die hier sonst überall Leitplanken stehen.
+--
+-- WARUM EINE SPALTE UND KEIN localStorage
+-- localStorage ist an ein Gerät und einen Browser gebunden. Wer am Laptop
+-- einstellt und am zweiten Rechner übt, sieht dort wieder etwas anderes — und
+-- eine Übung, die anders aussieht als der Ernstfall, übt das Falsche.
+--
+-- WARUM EIN TEXTFELD MIT JSON UND KEINE ZWÖLF SPALTEN
+-- Es sind heute dreizehn Werte (Hintergrund, Gitter, Achsen, Kerzenkörper,
+-- Dochte, Ränder, Akzent, Hohlkerzen). Jeder als eigene Spalte hieße: jede
+-- weitere Einstellung ist eine weitere Migration. Gelesen wird ausschließlich
+-- über `normalizeAppearance` (`lib/chart-appearance.ts`), das jedes Feld
+-- einzeln prüft und Fehlendes mit dem Standard auffüllt — eine ältere
+-- gespeicherte Einstellung bleibt nach einer Erweiterung also gültig, statt
+-- den Chart schwarz zu lassen.
+--
+-- KEIN BACKFILL: NULL heißt „Auslieferungszustand" (`DEFAULT_APPEARANCE`).
+-- Damit sieht für alle, die nie etwas einstellen, exakt alles aus wie bisher.
+--
+-- Additiv und idempotent, mehrfach ausführbar.
+
+ALTER TABLE "user_settings"
+  ADD COLUMN IF NOT EXISTS "chartAppearance" text;

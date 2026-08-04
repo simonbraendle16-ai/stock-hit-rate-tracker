@@ -358,6 +358,88 @@ Candlesticks) · pnpm via corepack.
   ihrer Startkerze (`startCandleTime`), nicht über `startIndex` — sonst zeigt dieselbe Übung
   nach jedem Zuwachs an Historie eine andere Stelle. `DELIVERY_LIMIT` (was ein Chart bekommt)
   und `DEFAULT_OUTPUT_SIZE` (was beim Anbieter angefragt wird) sind seither getrennt.
+- **Replay-Sitzung mit mehreren Trades** (Migration `0029`) = die zweite Ausbaustufe des
+  Trainers. Vorher war eine Übung: eine These, einmal aufdecken, eine Bewertung. Das misst die
+  **Analyse**, nicht das **Handeln** — im Markt trifft man nicht eine Entscheidung, sondern eine
+  Folge davon. Ab hier ist `training_session` der Replay-**Durchlauf**, darin liegen beliebig
+  viele `training_trade` (höchstens `MAX_SESSION_TRADES` = 20). **Gezählt wird der Trade, nicht
+  die Sitzung** — zehn Trades in einer Sitzung sind zehn Entscheidungen; `getTrainingStats`
+  liefert deshalb je Trade eine `TrainingRunRow`, `computeTrainingStats` blieb unverändert.
+  **Alt-Übungen zählen weiter** als Sitzung mit genau einem Trade (erkannt an
+  `trainingSession.direction != null`, dann läuft auch die alte Oberfläche) — **kein Backfill**,
+  ihre Daten werden gelesen, nie kopiert.
+  **Gemessen statt geschätzt:** `outcome`/`rMultiple` rechnet `measureOutcome`
+  (`lib/training-trade.ts`, rein, getestet) aus den Kerzen; die Trefferentscheidung kommt aus
+  `candleReachesLevel` (`lib/alerts.ts`) — derselben Quelle wie Bot-Zwilling und Kurs-Alerts.
+  Stop und Ziel in derselben Kerze → konservativ der **Stop**, ausgewiesen als `ambiguous`.
+  `rating`/`errorTags` bleiben daneben die **eigene** Einordnung: Ein Trade kann sein Ziel
+  erreichen und die Zählung trotzdem falsch gewesen sein.
+  **Erkannt wird im Browser über die SICHTBAREN Kerzen, gemessen auf dem Server.** Es gibt
+  bewusst **keinen** „jetzt messen"-Knopf: Der Server misst über die volle Historie, das wäre
+  auf Knopfdruck eine Abkürzung zum Ergebnis, bevor man es aufgedeckt hat. Erst
+  `endTrainingSession` misst den Rest — dann ist nichts mehr zu verbergen.
+  **Haltepunkte** (`stopMode` `auto`|`manuell` + `stopEvery`, gewählt **einmal** beim Anlegen):
+  `nextStopAt` begrenzt den Replay auf die nächste Marke. Ohne offenen Trade lautet die Frage
+  „siehst du hier ein Setup?" — die Neins landen in `training_checkpoint` **ohne `tradeId`** und
+  sind die einzige Zahl gegen **Überhandeln**; ohne sie sähe man nur die Trades, die entstanden
+  sind, nie die verkniffenen. Enthaltungen (`direction = 'keine'`) zählen **nicht** in die
+  Trefferquote — würden sie als Fehlschlag zählen, wäre die sicherste Strategie, immer
+  irgendetwas zu handeln. **Pflicht bleiben Einstieg, Stop und Ziel**, sobald eine Richtung
+  steht (`validateTradeDraft`, gemeinsam für Formular und Server): ohne sie ist nichts messbar.
+  Der **Auftrag je Modus** steht in `TRAINING_TASKS` (`lib/training.ts`) — ohne ausgesprochene
+  Aufgabe sieht man ein Formular und weiß nicht, was man leisten soll.
+  **Was das Eingreifen kostet** (`computeInterventionCost`, rein, getestet) = der eigentliche
+  Ertrag der Haltepunkte und der Grund, warum sie überhaupt gespeichert werden. Wer „ich wäre
+  raus" sagt und der Trade läuft danach ins Ziel, hat genau den Douglas-Kernfehler gemacht:
+  aus einem plan-konformen Trade auszusteigen, weil es sich unangenehm anfühlte. Gezeigt wird
+  je Sitzung („3× wolltest du raus, davon 2 Trades, die danach das Ziel erreichten — 3,4 R
+  hätte das gekostet"), geladen über `getSessionReview`. Je Trade zählt **ein** Ausstiegswunsch.
+  Der Block **beobachtet**, er ordnet nichts an — derselbe Ton wie bei MAE/MFE.
+  **Der Plan liegt als Linie IM Chart** (`planLines`, `PLAN_COLORS`): Man sieht den Kurs auf den
+  eigenen Stop zulaufen, statt Zahlen zu vergleichen — das ist der einzige Grund, warum ein
+  Replay etwas anderes ist als eine Tabelle. Der Einstieg ist mit dem sichtbaren Schlusskurs
+  vorbelegt (gerundet nach Größenordnung), und CRV plus Stop-Abstand stehen live im Formular
+  (`computeRiskReward` aus `lib/trade-math.ts`, nicht neu gerechnet).
+  **Tastatur am Replay** (`chart-replay-controls.tsx`): Leertaste spielt/hält, ← → gehen Kerze
+  für Kerze, mit Umschalt in Zehnerschritten. Beim Üben liegt der Blick auf dem Chart — jeder
+  Griff zur Maus unterbricht genau das Lesen, das geübt werden soll.
+  **Levels aus dem Chart nehmen** (`pickPrice`/`pickLabel` am `PriceChart`, `PickField` in
+  `lib/training-trade.ts`): Fadenkreuz-Knopf am Feld → eine Ebene legt sich über den Chart
+  (z-30, **über** der Zeichenebene, sonst entstünde eine Zeichnung), eine Linie folgt dem
+  Zeiger, der Klick übernimmt den Kurs; Esc bricht ab. So setzt man den Stop dorthin, wo die
+  Struktur ihn verlangt, statt ihn von der Achse abzulesen. Der Zustand liegt im **Arbeitsplatz**,
+  weil Chart und Formular ihn beide brauchen — zwei Kopien wären zwei Meinungen darüber, worauf
+  der nächste Klick geht. Vorschau und übernommener Wert runden **gleich** (`alsKurs`, nach
+  Größenordnung: ≥100 → 2 Stellen, ≥1 → 4, sonst 6).
+  **Beim Treffer hält der Replay an** und meldet ihn (`setFreigabe(visible)` + Toast): Der
+  Moment, in dem der Plan aufgeht oder scheitert, ist der lehrreichste der Übung —
+  darüber hinwegzuspielen wäre der eine Fehler, den die Oberfläche nicht machen darf.
+  **MAE/MFE je Sitzung** über `computeExcursion` (`lib/excursion.ts`, nicht neu gerechnet),
+  **live und ohne Migration**: abgeleitete Werte aus Plan + Kerzen; eine Spalte dafür wäre eine
+  zweite Wahrheit, die beim ersten Nachladen von Historie auseinanderliefe.
+  **`/trainer/statistik` hat zwei Hälften:** `TrainingStatsPanel` beantwortet „lag ich richtig"
+  (die **Analyse**), `BehaviourPanel` (`getTrainingBehaviour`) beantwortet „habe ich meinen
+  eigenen Plan gehandelt" (das **Verhalten**) — über alle Sitzungen hinweg, weil eine einzelne
+  nur Zufall zeigt. Unter `MIN_BEHAVIOUR_TRADES` = 5 steht die Grundlage statt einer Aussage.
+  Dateien: `lib/training-trade.ts` · `app/actions/training-trades.ts` ·
+  `components/trainer/{session-panel,trade-plan-form,trade-verdict-form}.tsx`.
+- **Chart-Aussehen** (Migration `0028`) = wie die Charts aussehen, gehört dem Nutzer, nicht dem
+  Design. Dreizehn Werte (Hintergrund · Kerzenkörper · Ränder · Dochte · Gitter · Achsenschrift
+  · Achsenlinie · Akzent · Gitter an/aus · Hohlkerzen) in `user_settings.chartAppearance` als
+  **JSON in einem Textfeld** — je Wert eine Spalte hieße: jede weitere Einstellung ist eine
+  weitere Migration. Gelesen wird **ausschließlich** über `normalizeAppearance`
+  (`lib/chart-appearance.ts`, rein, getestet): Jedes Feld wird einzeln geprüft, Ungültiges und
+  Fehlendes fällt auf den Standard — eine ältere gespeicherte Einstellung bleibt nach einer
+  Erweiterung gültig, statt den Chart schwarz zu lassen. Farben werden gegen ein Muster geprüft,
+  **bevor** sie in Canvas-Eigenschaften gehen; ein ungültiger Wert lässt die Serie sonst still
+  ungefärbt und der Fehler wird dann im Chart gesucht statt in den Einstellungen.
+  **Kein Backfill:** NULL = Auslieferungszustand (`DEFAULT_APPEARANCE`, „Indigo-Nacht"), es
+  sieht also für alle unverändert aus. Die vier früheren festen Paletten in `price-chart.tsx`
+  (App/TradingView je hell und dunkel) und der `TV`-Umschalter samt `localStorage` sind damit
+  **entfallen** — TradingView ist jetzt eine von vier **Vorlagen** im Dialog
+  (`components/chart/chart-settings.tsx`), und jeder Wert ist danach einzeln änderbar.
+  Warum in der DB und nicht im Browser: Eine Übung, die auf dem zweiten Rechner anders aussieht
+  als der Ernstfall, übt das Falsche.
 - Guards: **Pre-Trade-Gate** (alle 9 = "ja" nötig zum Aktivieren; **entfällt beim schnellen
   Trade**) · **Plan-Lock**
   (Stop/Invalidation verschieben = Regelbruch; **Ausnahme ab Etappe 6:** nach einem Teilverkauf
@@ -499,6 +581,20 @@ Grep/Read direkt (ohne vorherigen codegraph-Call) nur für:
 Ergebnissen von codegraph vertrauen, keine Grep-Verifikation hinterherschieben.
 
 ## Fallstricke, die schon Zeit gekostet haben
+- **`position: fixed` funktioniert in dieser App nicht „einfach so" — zwei Fallen hintereinander.**
+  Beide zusammen haben dafür gesorgt, dass die Werkzeug-Menüs des Charts rund 1200 px unterhalb
+  ihres Knopfes landeten (teils außerhalb des Bildes) — und weil sie *irgendwo* sichtbar waren,
+  sah es nach „das Werkzeug ist kaputt" aus statt nach einem Positionierungsfehler.
+  **(1) `.rise-in` macht jedes Panel zum Bezugsrahmen.** Die Animation hinterlässt
+  `transform: matrix(1,0,0,1,0,0)` — also *nicht* `none`. Ein Element mit `transform` ist der
+  Containing Block für `fixed` darin. Ein Menü im Chart-Panel richtet sich damit nach dem Panel,
+  nicht nach dem Fenster. **Lösung: `createPortal(..., document.body)`.**
+  **(2) `body > * { position: relative }` (`globals.css`) schlägt die Utility `.fixed`.** Die
+  Regel liegt **außerhalb** der Tailwind-Layer, und ungelayertes CSS gewinnt gegen gelayerte
+  Utilities *unabhängig von der Spezifität*. Ein Portal-Kind von `<body>` wird dadurch
+  `relative`, und `top` zählt plötzlich als Fluss-Versatz. **Lösung: `position: 'fixed'` inline
+  setzen** (Inline schlägt beides). Vorbild: `components/chart/chart-toolbar.tsx` und
+  `components/chart/chart-settings.tsx`. Wer ein Overlay im Chart baut, braucht **beides**.
 - **`'use server'`-Dateien dürfen ausschließlich async Funktionen exportieren.** Turbopack
   behandelt *jeden* Export als Server Action — auch reine `export type { … }`-Re-Exports und
   Konstanten. Der Build bricht mit „A 'use server' file can only export async functions".
