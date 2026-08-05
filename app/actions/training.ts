@@ -38,6 +38,7 @@ import { sanitizeSetupTags, serializeSetupTags, parseSetupTags } from '@/lib/set
 import {
   MAX_ELLIOTT_LEN,
   MAX_NOTE_LEN,
+  MIN_VISIBLE_CANDLES,
   isBlindMode,
   isTrainingMode,
   isTrainingRating,
@@ -95,6 +96,8 @@ export async function getTrainingSession(id: number): Promise<{
     stopMode: string
     stopEvery: number
     endedAt: Date | null
+    /** Gewählter Vorlauf in Kerzen; NULL = die bisherige Formel. */
+    leadIn: number | null
   }
   annotations: Drawing[]
   result: {
@@ -155,6 +158,7 @@ export async function getTrainingSession(id: number): Promise<{
       stopMode: row.stopMode,
       stopEvery: row.stopEvery,
       endedAt: row.endedAt,
+      leadIn: row.leadIn,
     },
     annotations: annotationRows.map((a) => ({
       id: a.id,
@@ -355,6 +359,11 @@ export async function startTrainingSession(input: {
   /** Haltepunkte: 'auto' (alle N Kerzen) oder 'manuell'. Siehe `lib/training-trade.ts`. */
   stopMode?: string
   stopEvery?: number
+  /**
+   * Vorlauf in Kerzen: wie viel Vergangenheit vor der ersten Entscheidung
+   * steht. Ohne Angabe gilt die bisherige Formel — kein Backfill.
+   */
+  leadIn?: number
 }): Promise<{ id: number } | { error: string }> {
   const userId = await getUserId()
 
@@ -416,6 +425,13 @@ export async function startTrainingSession(input: {
       // Übung passend zu machen.
       stopMode: isStopMode(input.stopMode) ? input.stopMode : 'auto',
       stopEvery: clampStopEvery(input.stopEvery),
+      // Geprüft auf dem Server, nicht nur im Formular — der Client ist keine
+      // Prüfstelle. Die endgültige Klemmung an die Kerzenzahl passiert erst,
+      // wenn der Satz da ist (`startIndexMitVorlauf`).
+      leadIn:
+        typeof input.leadIn === 'number' && Number.isFinite(input.leadIn)
+          ? Math.min(2000, Math.max(MIN_VISIBLE_CANDLES, Math.round(input.leadIn)))
+          : null,
     })
     .returning({ id: trainingSession.id })
 
@@ -649,11 +665,21 @@ export async function createTrainingAnnotation(input: {
 export async function updateTrainingAnnotation(input: {
   id: number
   points: DrawingPoint[]
+  /**
+   * Weggelassen heißt „unverändert" — sonst würde jedes Verschieben einer
+   * Übungszeichnung ihr Aussehen mit zurücksetzen.
+   */
+  style?: Drawing['style']
 }): Promise<void> {
   const userId = await getUserId()
   await db
     .update(trainingAnnotation)
-    .set({ points: JSON.stringify(input.points) })
+    .set({
+      points: JSON.stringify(input.points),
+      ...(input.style !== undefined
+        ? { style: input.style ? JSON.stringify(input.style) : null }
+        : {}),
+    })
     .where(and(eq(trainingAnnotation.id, input.id), eq(trainingAnnotation.userId, userId)))
 }
 

@@ -263,6 +263,38 @@ export function randomStartIndex(total: number, r: number): number {
   return lo + Math.floor(clamped * (span + 1))
 }
 
+/**
+ * Wählbarer Vorlauf: wie viel Vergangenheit vor der ersten Entscheidung steht.
+ *
+ * Bis hierher entschied das eine Formel (62 % der Reihe). Bei einem kurzen
+ * Kerzensatz standen damit fünfzig Kerzen da — daraus lässt sich keine
+ * Struktur ableiten, und ohne Struktur ist jede These geraten. Genau deshalb
+ * ist der Vorlauf jetzt eine Entscheidung beim Anlegen und keine Nebenwirkung
+ * der Datenmenge.
+ */
+export const LEAD_IN_OPTIONS: { wert: number; label: string; hinweis: string }[] = [
+  { wert: 120, label: '120', hinweis: 'Knapp — nur die jüngste Bewegung.' },
+  { wert: 250, label: '250', hinweis: 'Genug für Struktur und Niveaus.' },
+  { wert: 450, label: '450', hinweis: 'Übergeordneter Trend wird sichtbar.' },
+  { wert: 800, label: '800', hinweis: 'Voller Kontext, auch für höhere Ebenen.' },
+]
+
+export const DEFAULT_LEAD_IN = 250
+
+/**
+ * Startpunkt aus einem gewünschten Vorlauf.
+ *
+ * Geklemmt an dieselben Ränder wie der Zufallsstart: Es müssen genug Kerzen
+ * sichtbar bleiben (Kontext) UND genug verborgen (sonst gibt es nichts zu
+ * üben). Der Wunsch gewinnt nie gegen diese beiden Grenzen.
+ */
+export function startIndexMitVorlauf(total: number, leadIn: number): number {
+  const lo = Math.min(MIN_VISIBLE_CANDLES, total)
+  const hi = Math.max(lo, total - MIN_HIDDEN_CANDLES)
+  const gewuenscht = Number.isFinite(leadIn) ? Math.round(leadIn) : DEFAULT_LEAD_IN
+  return Math.min(hi, Math.max(lo, gewuenscht))
+}
+
 /** Startpunkt der freien Übung, mit denselben Rändern wie der Zufallsstart. */
 export function defaultStartIndex(total: number): number {
   const lo = Math.min(MIN_VISIBLE_CANDLES, total)

@@ -5,7 +5,7 @@ import { and, eq } from 'drizzle-orm'
 import { Interval, Market, MarketDataError } from '@/lib/market-data'
 import { getCachedCandles } from '@/lib/market-data/cached'
 import { createSymbolResolver, lookupProviderSymbol } from '@/lib/market-data/lookup'
-import { intervalForTimeframe } from '@/lib/chart-timeframes'
+import { intervalForTimeframe, isChartTimeframe } from '@/lib/chart-timeframes'
 import { headers } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 
@@ -65,9 +65,20 @@ export async function GET(req: NextRequest) {
     }
     symbol = row.symbol.toUpperCase()
     market = row.market as Market
-    interval = intervalForTimeframe(row.timeframe)
     stockId = row.stockId ?? null
     verdeckt = row.blind && row.revealedAt == null
+
+    // Analyse von oben nach unten: Der Chart darf eine ANDERE Zeitebene
+    // derselben Übung anfordern — erst den großen Kontext lesen, dann für den
+    // Einstieg heruntergehen. Erlaubt ist ausschließlich die Zeitebene; Symbol
+    // und Markt kommen weiter aus der Übung, sonst wäre die Verdeckung hier zu
+    // umgehen. Unbekannte Werte fallen auf die Zeitebene der Übung zurück.
+    //
+    // Dass eine höhere Ebene keine Zukunft verrät, entscheidet sich NICHT hier,
+    // sondern beim Zuschneiden im Chart (`lib/replay-timeframes.ts`): Die
+    // angebrochene Kerze wird dort aus der Basis-Ebene neu gerechnet.
+    const tf = params.get('tf')
+    interval = intervalForTimeframe(isChartTimeframe(tf) ? tf : row.timeframe)
   }
 
   if (!symbol || symbol.length > 20 || !/^[A-Z0-9./:^=-]+$/.test(symbol)) {

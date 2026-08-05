@@ -1,16 +1,14 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
-import type { BarPrice, IChartApi, ISeriesApi, SeriesType, UTCTimestamp } from 'lightweight-charts'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { BarPrice, IChartApi, ISeriesApi, Logical, SeriesType } from 'lightweight-charts'
 import type { Drawing, DrawingPoint } from '@/app/actions/drawings'
 import type { Candle } from '@/lib/market-data/types'
 import type { DrawTool } from './chart-toolbar'
 import { CHART_COLORS } from './colors'
-
-/** Fib-Retracement-Levels (Frost & Prechter Standard). */
-const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1]
-/** Trendbasierte Fib-Extension-Levels (TradingView-Standard). */
-const FIBEXT_LEVELS = [0, 0.382, 0.618, 1, 1.382, 1.618, 2, 2.618]
+import { barStep, istProjektion, logicalToTime, snapTime, timeToLogical } from '@/lib/chart-coords'
+import { DEFAULT_FIB, DEFAULT_FIBEXT, fibLinien, normalizeFibStil } from '@/lib/fib-levels'
+import { normalizeDrawingStyle, strichArray } from '@/lib/drawing-style'
 
 const WAVE_LABELS: Record<'ew_impulse' | 'ew_correction', string[]> = {
   ew_impulse: ['0', '1', '2', '3', '4', '5'],
@@ -126,39 +124,47 @@ export function DrawingLayer({
     return () => ts.unsubscribeVisibleLogicalRangeChange(handler)
   }, [chart])
 
+  // Zeitraster der aktuell gelieferten Kerzen. Über den logischen Index läuft
+  // ALLES — siehe `lib/chart-coords.ts` für den Grund (Zeichnen in die Zukunft,
+  // Überleben des Zurückspulens).
+  const times = useMemo(() => candles.map((c) => c.time), [candles])
+  const step = useMemo(() => barStep(times), [times])
+  const candleByTime = useMemo(() => {
+    const m = new Map<number, Candle>()
+    for (const c of candles) m.set(c.time, c)
+    return m
+  }, [candles])
+
   const toPx = useCallback(
     (p: DrawingPoint): Pt | null => {
-      const x = chart.timeScale().timeToCoordinate(p.time as UTCTimestamp)
+      const logical = timeToLogical(times, step, p.time)
+      const x = chart.timeScale().logicalToCoordinate(logical as Logical)
       const y = series.priceToCoordinate(p.price)
       if (x == null || y == null) return null
       return { x, y }
     },
-    [chart, series],
+    [chart, series, times, step],
   )
 
   const fromPx = useCallback(
     (x: number, y: number): DrawingPoint | null => {
       const price = series.coordinateToPrice(y)
-      if (price == null || candles.length === 0) return null
-      let time = chart.timeScale().coordinateToTime(x) as number | null
-      if (time == null) {
-        // außerhalb der Daten: auf erste/letzte Kerze klemmen
-        const logical = chart.timeScale().coordinateToLogical(x)
-        time =
-          logical != null && logical < 0
-            ? candles[0].time
-            : candles[candles.length - 1].time
-      } else {
-        // auf nächste Kerzenzeit snappen
-        let best = candles[0].time
-        for (const c of candles) {
-          if (Math.abs(c.time - time) < Math.abs(best - time)) best = c.time
-        }
-        time = best
-      }
-      // Magnet: Preis auf O/H/L/C der Kerze snappen, wenn nah genug (≤ 14 px).
+      if (price == null || times.length === 0) return null
+
+      // Auf den nächsten Balken schnappen — auch RECHTS vom letzten. Vorher
+      // wurde hier auf die letzte Kerze geklemmt; damit war jede Projektion in
+      // die Zukunft unmöglich, also das meiste, wofür man im Replay zeichnet.
+      const logical = chart.timeScale().coordinateToLogical(x)
+      const time =
+        logical != null
+          ? logicalToTime(times, step, Math.round(logical))
+          : snapTime(times, step, times[times.length - 1])
+
+      // Magnet: Preis auf O/H/L/C der Kerze schnappen, wenn nah genug (≤ 14 px).
+      // Hinter der letzten Kerze gibt es nichts zum Anziehen — dort gilt der
+      // Kurs unter dem Zeiger.
       if (magnet) {
-        const candle = candles.find((c) => c.time === time)
+        const candle = candleByTime.get(time)
         if (candle) {
           let bestPrice: number = price
           let bestDist = 14
@@ -174,11 +180,24 @@ export function DrawingLayer({
       }
       return { time, price }
     },
-    [chart, series, candles, magnet],
+    [chart, series, times, step, candleByTime, magnet],
   )
 
   const width = svgRef.current?.clientWidth ?? 0
   const height = svgRef.current?.clientHeight ?? 0
+
+  // Die echten Maße der Achsen. Sie ändern sich mit der Länge der Kurse (und
+  // mit dem Ausblenden der Zeitachse in verdeckten Übungen), deshalb werden sie
+  // bei jedem Rendern erfragt statt einmal geschätzt. Der Aufschlag von 1 px
+  // verhindert, dass die Zeichenebene die Achsenlinie selbst überlappt.
+  let achsenBreite = 70
+  let achsenHoehe = 26
+  try {
+    achsenBreite = Math.round(chart.priceScale('right').width()) + 1
+    achsenHoehe = Math.round(chart.timeScale().height()) + 1
+  } catch {
+    // Ein Chart ohne Achsen darf das Zeichnen nicht kosten — dann die Schätzung.
+  }
 
   /** Strahl: von a durch b bis zum Canvas-Rand verlängern. */
   const extendRay = useCallback(
@@ -274,22 +293,26 @@ export function DrawingLayer({
           if (x >= x1 - SELECT_TOLERANCE && x <= x2 + SELECT_TOLERANCE && y >= y1 - SELECT_TOLERANCE && y <= y2 + SELECT_TOLERANCE) {
             return d.id
           }
-        } else if (d.type === 'fib' && P.length >= 2) {
-          const x1 = Math.min(P[0].x, P[1].x)
-          const x2 = Math.max(P[0].x, P[1].x)
+        } else if ((d.type === 'fib' || d.type === 'fibext') && P.length >= 2) {
+          // Getroffen wird über DIESELBEN Levels, die auch gezeichnet werden —
+          // sonst ließe sich ein selbst ergänztes Level sehen, aber nicht
+          // anklicken, und das Werkzeug fühlte sich weiter kaputt an.
+          const ext = d.type === 'fibext'
+          if (ext && P.length < 3) continue
+          const stil = normalizeFibStil(d.style?.fib, ext ? DEFAULT_FIBEXT : DEFAULT_FIB)
+          const von = ext ? d.points[2].price : d.points[0].price
+          const bis = ext
+            ? d.points[2].price + (d.points[1].price - d.points[0].price)
+            : d.points[1].price
+          const x1 = ext ? P[2].x : Math.min(P[0].x, P[1].x)
+          const x2 = stil.verlaengern
+            ? width
+            : ext
+              ? width
+              : Math.max(P[0].x, P[1].x)
           if (x >= x1 - SELECT_TOLERANCE && x <= x2 + SELECT_TOLERANCE) {
-            for (const lvl of FIB_LEVELS) {
-              const ly = P[0].y + (P[1].y - P[0].y) * lvl
-              if (Math.abs(ly - y) < SELECT_TOLERANCE) return d.id
-            }
-          }
-        } else if (d.type === 'fibext' && P.length >= 3) {
-          const a = d.points[0].price
-          const b = d.points[1].price
-          const c = d.points[2].price
-          if (x >= P[2].x - SELECT_TOLERANCE) {
-            for (const lvl of FIBEXT_LEVELS) {
-              const ly = series.priceToCoordinate(c + (b - a) * lvl)
+            for (const l of fibLinien(stil, von, bis)) {
+              const ly = series.priceToCoordinate(l.preis)
               if (ly != null && Math.abs(ly - y) < SELECT_TOLERANCE) return d.id
             }
           }
@@ -438,8 +461,11 @@ export function DrawingLayer({
         if (startPrice == null || nowPrice == null) return
         const delta = nowPrice - startPrice
 
-        // Waagerecht wird in KERZEN verschoben, nicht in Pixeln: Ein Punkt muss
-        // auf einer Kerzenzeit landen, sonst hat er keinen Platz auf der Achse.
+        // Waagerecht wird in BALKEN verschoben, nicht in Pixeln: Ein Punkt muss
+        // auf einer Rasterposition landen, sonst hat er keinen Platz auf der
+        // Achse. Gerechnet wird über den logischen Index, nicht über einen
+        // Treffer in der Kerzenliste — sonst ließe sich eine Zeichnung, die
+        // einen Punkt in der Zukunft hat, waagerecht gar nicht mehr bewegen.
         const ls = chart.timeScale().coordinateToLogical(drag.startX)
         const ln = chart.timeScale().coordinateToLogical(x)
         let versatz = ls != null && ln != null ? Math.round(ln - ls) : 0
@@ -447,19 +473,17 @@ export function DrawingLayer({
         // Der Versatz wird EINMAL für die ganze Zeichnung begrenzt. Würde jeder
         // Punkt für sich an den Rand geklemmt, liefe der vordere Punkt weiter
         // als der hintere — die Zeichnung würde sich beim Schieben verformen.
-        const idx = drag.startPoints.map((p) => candles.findIndex((c) => c.time === p.time))
-        if (versatz !== 0 && idx.every((i) => i >= 0)) {
-          const min = Math.min(...idx)
-          const max = Math.max(...idx)
-          versatz = Math.max(-min, Math.min(candles.length - 1 - max, versatz))
-        } else {
-          versatz = 0
+        // Nach links ist die erste Kerze die Grenze; nach rechts gibt es keine,
+        // die Projektion darf beliebig weit vorlaufen.
+        const idx = drag.startPoints.map((p) => Math.round(timeToLogical(times, step, p.time)))
+        if (versatz !== 0) {
+          versatz = Math.max(-Math.min(...idx), versatz)
         }
 
         next = drag.startPoints.map((p, k) => {
           const price = p.price + delta
           if (versatz === 0) return { ...p, price }
-          return { time: candles[idx[k] + versatz].time, price }
+          return { time: logicalToTime(times, step, idx[k] + versatz), price }
         })
       }
       onUpdate(drag.id, next)
@@ -566,12 +590,106 @@ export function DrawingLayer({
     )
   }
 
+  /**
+   * Fibonacci zeichnen — Retracement und Extension über denselben Weg.
+   *
+   * Zwei Dinge, die vorher fehlten und das Werkzeug unbrauchbar gemacht haben:
+   * Die Linien laufen jetzt **nach rechts weiter** (sonst sieht man nie, wo der
+   * Kurs, der noch kommt, auf ein Level trifft), und die Beschriftung sitzt am
+   * LINKEN Ende. Rechts lag sie unter der Preisachse, die die Zeichenebene per
+   * `clipPath` freihält — sie war damit oft schlicht abgeschnitten.
+   */
+  const renderFib = (
+    d: Drawing,
+    P: Pt[],
+    stil: ReturnType<typeof normalizeDrawingStyle>,
+    opt: {
+      von: number
+      bis: number
+      linkeKante: number
+      rechteKante: number
+      basis: React.ReactNode
+      handles: React.ReactNode
+    },
+  ) => {
+    const fib = normalizeFibStil(
+      d.style?.fib,
+      d.type === 'fibext' ? DEFAULT_FIBEXT : DEFAULT_FIB,
+    )
+    const linien = fibLinien({ ...fib, farbe: stil.color }, opt.von, opt.bis)
+    // Rechter Rand des zeichenbaren Bereichs: Die Preisachse bleibt per
+    // clipPath frei, dorthin zu zeichnen wäre unsichtbar.
+    const rand = Math.max(opt.linkeKante + 40, width - achsenBreite - 4)
+    const x2 = fib.verlaengern ? rand : Math.max(opt.rechteKante, opt.linkeKante + 40)
+    const x1 = opt.linkeKante
+
+    const mitY = linien.flatMap((l) => {
+      const y = series.priceToCoordinate(l.preis)
+      return y == null ? [] : [{ l, y: y as number }]
+    })
+
+    return (
+      <g key={d.id}>
+        {opt.basis}
+        {/* Flächen zwischen benachbarten Levels — zuerst, damit die Linien darüber liegen. */}
+        {fib.flaeche &&
+          mitY.slice(0, -1).map((e, i) => (
+            <rect
+              key={`f${e.l.wert}`}
+              x={x1}
+              y={Math.min(e.y, mitY[i + 1].y)}
+              width={Math.max(0, x2 - x1)}
+              height={Math.abs(mitY[i + 1].y - e.y)}
+              fill={e.l.farbe}
+              opacity={i % 2 === 0 ? 0.07 : 0.03}
+            />
+          ))}
+        {mitY.map(({ l, y }) => (
+          <g key={l.wert}>
+            <line
+              x1={x1}
+              y1={y}
+              x2={x2}
+              y2={y}
+              stroke={l.farbe}
+              strokeWidth={l.betont ? stil.width + 0.5 : stil.width}
+              strokeDasharray={strichArray(stil.dashed)}
+              opacity={l.betont ? 0.95 : 0.75}
+            />
+            {l.label && (
+              <text
+                x={x1 + 4}
+                y={y - 3}
+                fill={l.farbe}
+                fontSize={9}
+                fontFamily="monospace"
+                opacity={0.95}
+              >
+                {l.label}
+              </text>
+            )}
+          </g>
+        ))}
+        {opt.handles}
+      </g>
+    )
+  }
+
   const renderDrawing = (d: Drawing) => {
-    const color = d.style?.color ?? CHART_COLORS.accent
+    // Gelesen wird immer normalisiert — was in der Datenbank steht, ist
+    // ungeprüft und darf nicht ungefiltert in ein SVG-Attribut.
+    const stil = normalizeDrawingStyle(
+      d.style,
+      d.type === 'fib' || d.type === 'fibext' ? CHART_COLORS.warning : CHART_COLORS.accent,
+    )
+    const color = stil.color
+    const strich = strichArray(stil.dashed)
     const pts = d.points.map(toPx)
     if (pts.some((p) => p == null)) return null
     const P = pts as Pt[]
     const selected = d.id === selectedId
+    /** Ausgewähltes wird kräftiger — sonst sieht man nicht, was man greift. */
+    const sw = (grund = stil.width) => (selected ? grund + 0.75 : grund)
 
     const handles = selected
       ? P.map((p, i) => (
@@ -788,57 +906,33 @@ export function DrawingLayer({
         </g>
       )
     }
-    if (d.type === 'fib') {
-      const x1 = Math.min(P[0].x, P[1].x)
-      const x2 = Math.max(P[0].x, P[1].x)
-      const p0 = d.points[0].price
-      const p1 = d.points[1].price
-      return (
-        <g key={d.id}>
-          {FIB_LEVELS.map((lvl) => {
-            const price = p0 + (p1 - p0) * lvl
-            const y = series.priceToCoordinate(price)
-            if (y == null) return null
-            return (
-              <g key={lvl}>
-                <line x1={x1} y1={y} x2={x2} y2={y} stroke={CHART_COLORS.warning} strokeWidth={lvl === 0 || lvl === 1 ? 1.5 : 1} opacity={lvl === 0.5 ? 0.9 : 0.7} />
-                <text x={x2 + 4} y={y + 3} fill={CHART_COLORS.warning} fontSize={9} fontFamily="monospace">
-                  {lvl.toFixed(3)} · {formatDe(price)}
-                </text>
-              </g>
-            )
-          })}
-          {handles}
-        </g>
-      )
+    if (d.type === 'fib' && P.length >= 2) {
+      return renderFib(d, P, stil, {
+        von: d.points[0].price,
+        bis: d.points[1].price,
+        linkeKante: Math.min(P[0].x, P[1].x),
+        rechteKante: Math.max(P[0].x, P[1].x),
+        basis: null,
+        handles,
+      })
     }
     if (d.type === 'fibext' && P.length >= 3) {
-      const a = d.points[0].price
-      const b = d.points[1].price
-      const c = d.points[2].price
-      const x1 = P[2].x
-      const x2 = Math.max(width - 74, x1 + 60)
-      return (
-        <g key={d.id}>
-          {/* A–B–C-Basislinien */}
-          <line x1={P[0].x} y1={P[0].y} x2={P[1].x} y2={P[1].y} stroke={CHART_COLORS.warning} strokeWidth={1} strokeDasharray="3 3" opacity={0.6} />
-          <line x1={P[1].x} y1={P[1].y} x2={P[2].x} y2={P[2].y} stroke={CHART_COLORS.warning} strokeWidth={1} strokeDasharray="3 3" opacity={0.6} />
-          {FIBEXT_LEVELS.map((lvl) => {
-            const price = c + (b - a) * lvl
-            const y = series.priceToCoordinate(price)
-            if (y == null) return null
-            return (
-              <g key={lvl}>
-                <line x1={x1} y1={y} x2={x2} y2={y} stroke={CHART_COLORS.warning} strokeWidth={lvl === 1 ? 1.5 : 1} opacity={0.75} />
-                <text x={x1 + 4} y={y - 3} fill={CHART_COLORS.warning} fontSize={9} fontFamily="monospace">
-                  {lvl.toFixed(3)} · {formatDe(price)}
-                </text>
-              </g>
-            )
-          })}
-          {handles}
-        </g>
-      )
+      const [a, b, c] = [d.points[0].price, d.points[1].price, d.points[2].price]
+      return renderFib(d, P, stil, {
+        // Ursprung C, Spanne B−A — dieselbe Formel wie beim Retracement,
+        // siehe `lib/fib-levels.ts`.
+        von: c,
+        bis: c + (b - a),
+        linkeKante: P[2].x,
+        rechteKante: P[2].x,
+        basis: (
+          <>
+            <line x1={P[0].x} y1={P[0].y} x2={P[1].x} y2={P[1].y} stroke={color} strokeWidth={1} strokeDasharray="3 3" opacity={0.55} />
+            <line x1={P[1].x} y1={P[1].y} x2={P[2].x} y2={P[2].y} stroke={color} strokeWidth={1} strokeDasharray="3 3" opacity={0.55} />
+          </>
+        ),
+        handles,
+      })
     }
     if (d.type === 'text') {
       return (
@@ -954,8 +1048,14 @@ export function DrawingLayer({
           pointerEvents: interactive ? 'auto' : 'none',
           cursor:
             tool === 'cursor' ? 'default' : tool === 'eraser' ? ERASER_CURSOR : 'crosshair',
-          // Preisachse rechts (~70px) und Zeitachse unten nicht überdecken
-          clipPath: 'inset(0 70px 26px 0)',
+          // Preisachse rechts und Zeitachse unten nicht überdecken — sonst
+          // liegt die Zeichenebene darüber und schluckt die Klicks, mit denen
+          // man die Achsen zieht. Genau daran scheiterte das Zoomen auf der
+          // PREISSKALA: Hier stand vorher ein fester Wert von 70 px, die Achse
+          // ist bei langen Kursen (63.533,80) aber breiter — der Rest lag unter
+          // dem SVG und ließ sich nicht anfassen. Deshalb werden die echten
+          // Maße beim Chart erfragt, nicht geschätzt.
+          clipPath: `inset(0 ${achsenBreite}px ${achsenHoehe}px 0)`,
         }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}

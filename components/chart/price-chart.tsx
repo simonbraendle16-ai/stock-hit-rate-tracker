@@ -17,6 +17,7 @@ import {
   type ISeriesMarkersPluginApi,
   type SeriesMarker,
   type SeriesType,
+  type AutoscaleInfo,
   type Time,
   type UTCTimestamp,
 } from 'lightweight-charts'
@@ -24,6 +25,7 @@ import { useCandles } from './use-candles'
 import { CHART_COLORS } from './colors'
 import { ChartToolbar, type DrawTool } from './chart-toolbar'
 import { DrawingLayer } from './drawing-layer'
+import { DrawingStylePanel } from './drawing-style-panel'
 import { AnalysisImport } from './analysis-import'
 import { IndicatorMenu } from './indicator-menu'
 import { ChartReplayControls } from './chart-replay-controls'
@@ -55,8 +57,20 @@ import {
   deleteTrainingAnnotation,
   deleteAllTrainingAnnotations,
 } from '@/app/actions/training'
+import {
+  DEFAULT_DRAWING_DEFAULTS,
+  stilFuerNeueZeichnung,
+  type DrawingDefaults,
+} from '@/lib/drawing-defaults'
+import { loadDrawingDefaults, saveDrawingDefaults } from '@/app/actions/drawing-defaults'
+import type { FibStil } from '@/lib/fib-levels'
 import type { Candle } from '@/lib/market-data/types'
 import { CHART_TIMEFRAMES, type ChartTimeframe } from '@/lib/chart-timeframes'
+import {
+  intervalSekunden,
+  kerzenBisZeitpunkt,
+  replayEnde,
+} from '@/lib/replay-timeframes'
 import { Button } from '@/components/ui/button'
 import { ChartEmpty, ChartHeader } from '@/components/chart-frame'
 import { CandlestickChart, Camera, Loader2, Maximize2, Minimize2 } from 'lucide-react'
@@ -88,6 +102,23 @@ export type { ChartTimeframe }
 /** Chart-Darstellung (TradingView-Parität, AP 9). */
 type ChartStyle = 'candles' | 'bars' | 'line' | 'area'
 
+/**
+ * Ein Schritt im Zeichen-Journal (Rückgängig/Wiederholen).
+ *
+ * `erstellt` und `geloescht` führen die GANZE Zeichnung mit, nicht nur ihre
+ * Nummer: Zum Wiederholen muss sie neu angelegt werden können, und dabei
+ * vergibt der Server eine neue Nummer.
+ */
+type Zeichenaktion =
+  | { art: 'erstellt'; d: Drawing }
+  | { art: 'geloescht'; d: Drawing }
+  | {
+      art: 'geaendert'
+      id: number
+      vorher: { points: DrawingPoint[]; style: Drawing['style'] }
+      nachher: { points: DrawingPoint[]; style: Drawing['style'] }
+    }
+
 const CHART_STYLES: { id: ChartStyle; label: string }[] = [
   { id: 'candles', label: 'Kerzen' },
   { id: 'bars', label: 'Balken' },
@@ -111,6 +142,7 @@ export function PriceChart({
   replayStart,
   replayMaxVisible,
   replayLockedHint,
+  replayBasisTimeframe,
   onReplayVisibleChange,
   onCandlesLoaded,
   trainingSessionId,
@@ -135,6 +167,12 @@ export function PriceChart({
   /** Obergrenze der sichtbaren Kerzen — der Trainer sperrt damit die Zukunft. */
   replayMaxVisible?: number
   replayLockedHint?: string
+  /**
+   * Die Zeitebene, in der der Replay läuft. Der Fortschritt zählt IMMER in
+   * ihren Kerzen — sonst hieße „zehn Kerzen weiter" auf jeder Ebene etwas
+   * anderes. Fehlt sie, gilt die anfangs eingestellte Ebene.
+   */
+  replayBasisTimeframe?: ChartTimeframe
   onReplayVisibleChange?: (visible: number) => void
   /** Meldet den geladenen Kerzensatz nach oben (der Trainer trägt ihn ein). */
   onCandlesLoaded?: (candles: Candle[]) => void
@@ -177,8 +215,42 @@ export function PriceChart({
   const { candles, loading, error, errorCode } = useCandles(symbol, market, interval, {
     stockId,
     trainingSessionId,
+    timeframe,
   })
   const [replayVisible, setReplayVisible] = useState<number | null>(null)
+
+  // ---- Analyse von oben nach unten -----------------------------------------
+  //
+  // Der Replay läuft immer in EINER Zeitebene — der Basis. Sie bestimmt, wie
+  // weit der Durchlauf gekommen ist. Wird eine andere Ebene angesehen, wird sie
+  // auf genau denselben Moment zugeschnitten (`lib/replay-timeframes.ts`);
+  // sonst zeigte die Tageskerze, in der man gerade steht, ihr fertiges Hoch und
+  // Tief — also die Zukunft.
+  const basisTimeframe: ChartTimeframe = replayBasisTimeframe ?? defaultTimeframe
+  const basisInterval = TIMEFRAMES[basisTimeframe]?.interval ?? interval
+  const brauchtBasis = replayMode && basisTimeframe !== timeframe
+  const basisAbruf = useCandles(symbol, market, basisInterval, {
+    stockId,
+    trainingSessionId,
+    timeframe: basisTimeframe,
+    enabled: brauchtBasis,
+  })
+  const basisRoh = brauchtBasis ? basisAbruf.candles : candles
+  /**
+   * Beim Ebenenwechsel ist der zweite Abruf einen Moment unterwegs. Ohne diesen
+   * Halter fiele der Replay-Stand in dieser Lücke auf „nichts" zurück und der
+   * Durchlauf begänne von vorn — mitten in der Übung. Der Schlüssel sorgt
+   * dafür, dass ein Satz nur für DAS Instrument und DIE Basis-Ebene gilt, zu
+   * der er gehört.
+   */
+  const basisSchluessel = `${symbol}|${market}|${basisTimeframe}`
+  const basisHalter = useRef<{ key: string; candles: Candle[] } | null>(null)
+  if (basisRoh && basisRoh.length > 0) {
+    basisHalter.current = { key: basisSchluessel, candles: basisRoh }
+  }
+  const basisKerzen =
+    basisRoh ??
+    (basisHalter.current?.key === basisSchluessel ? basisHalter.current.candles : null)
 
   // Zeichnungen einer Übung gehen an die Trainer-Aktionen, die des Instruments
   // an die Zeichnungs-Aktionen. Eine Übungslinie hat im echten Chart nichts zu
@@ -196,24 +268,39 @@ export function PriceChart({
   const fluechtig = ephemeralDrawings && stockId == null && !isTraining
   const drawingsEnabled = stockId != null || isTraining || fluechtig
 
+  // Der Replay-Stand wird nur gesetzt, wenn die GRUNDLAGE wechselt (anderes
+  // Instrument oder andere Basis-Ebene) — nicht bei jedem neuen Kerzensatz.
+  // Sonst spränge der Durchlauf beim Wechsel der angesehenen Zeitebene zurück
+  // an den Anfang, und Top-Down-Analyse wäre unmöglich.
+  const replayInitRef = useRef<string | null>(null)
   useEffect(() => {
-    if (!replayMode || !candles || candles.length === 0) {
-      setReplayVisible(null)
+    if (!replayMode || !basisKerzen || basisKerzen.length === 0) {
+      if (!replayMode) {
+        setReplayVisible(null)
+        replayInitRef.current = null
+      }
       return
     }
+    if (replayInitRef.current === basisSchluessel) return
+    replayInitRef.current = basisSchluessel
     setReplayVisible(
       Math.min(
-        candles.length,
-        Math.max(1, replayStart ?? Math.max(30, Math.round(candles.length * 0.62))),
+        basisKerzen.length,
+        Math.max(1, replayStart ?? Math.max(30, Math.round(basisKerzen.length * 0.62))),
       ),
     )
-  }, [replayMode, candles, replayStart])
+  }, [replayMode, basisKerzen, replayStart, basisSchluessel])
 
   // Den geladenen Satz einmal nach oben melden (der Trainer schreibt Umfang und
   // Startpunkt in die Übung).
   useEffect(() => {
-    if (candles && candles.length > 0) onCandlesLoaded?.(candles)
-  }, [candles, onCandlesLoaded])
+    // Gemeldet wird die BASIS-Ebene: Der Trainer schreibt daraus Umfang und
+    // Startpunkt der Übung fest, und beides zählt in Basis-Kerzen. Würde beim
+    // Wechsel auf den Tageschart dessen Reihe gemeldet, verschöbe sich der
+    // gespeicherte Startpunkt der laufenden Übung.
+    const satz = replayMode ? basisKerzen : candles
+    if (satz && satz.length > 0) onCandlesLoaded?.(satz)
+  }, [candles, basisKerzen, replayMode, onCandlesLoaded])
 
   const handleReplayChange = useCallback(
     (v: number) => {
@@ -225,9 +312,14 @@ export function PriceChart({
 
   const chartCandles = useMemo(() => {
     if (!candles) return null
-    if (!replayMode || replayVisible == null) return candles
-    return candles.slice(0, Math.min(candles.length, Math.max(1, replayVisible)))
-  }, [candles, replayMode, replayVisible])
+    if (!replayMode || replayVisible == null || !basisKerzen) return candles
+    const basisS = intervalSekunden(basisInterval)
+    const ende = replayEnde(basisKerzen, replayVisible, basisS)
+    if (ende == null) return candles
+    // Bei gleicher Zeitebene ist das Ergebnis identisch mit dem früheren
+    // `slice(0, sichtbar)` — geprüft in `lib/replay-timeframes.test.ts`.
+    return kerzenBisZeitpunkt(candles, basisKerzen, ende, intervalSekunden(interval), basisS)
+  }, [candles, basisKerzen, replayMode, replayVisible, interval, basisInterval])
 
   // Identität der ANSICHT — nicht der Daten. Nur wenn sie wechselt, darf der
   // sichtbare Bereich neu gesetzt werden. Chart-Typ und Theme stehen bewusst
@@ -251,6 +343,33 @@ export function PriceChart({
   const [seriesVersion, setSeriesVersion] = useState(0)
   const [chartStyle, setChartStyle] = useState<ChartStyle>('candles')
   const [logScale, setLogScale] = useState(false)
+
+  // ---- Preis-Zoom ----------------------------------------------------------
+  //
+  // Im Replay ließ sich der Kurs nicht heranholen: Die Zeitachse zoomt per
+  // Mausrad, die PREISACHSE aber nur durch Ziehen an ihr — und das war weder
+  // auffindbar noch (unter der Zeichenebene) zuverlässig erreichbar. Bei einer
+  // ruhigen Seitwärtsphase sind die Kerzen dann Striche, und man soll daran
+  // eine Struktur erkennen.
+  //
+  // Gemacht wird das über `autoscaleInfoProvider` — die dokumentierte Stelle,
+  // an der eine Serie ihren eigenen Preisbereich bestimmt. Der Faktor staucht
+  // den automatisch ermittelten Bereich um die Mitte: > 1 holt heran, < 1
+  // rückt weg. Kein Eingriff in die Daten, keine zweite Wahrheit — und
+  // „Auto" ist einfach der Faktor 1.
+  const [preisFaktor, setPreisFaktor] = useState(1)
+  const preisFaktorRef = useRef(1)
+  preisFaktorRef.current = preisFaktor
+
+  const preisZoom = useCallback((richtung: number) => {
+    setPreisFaktor((f) => {
+      const next = f * (richtung > 0 ? 1.25 : 1 / 1.25)
+      // Grenzen, damit die Skala nicht in einen Zustand läuft, aus dem heraus
+      // nichts mehr zu sehen ist.
+      return Math.min(20, Math.max(0.1, Math.round(next * 1000) / 1000))
+    })
+  }, [])
+  const preisZoomZurueck = useCallback(() => setPreisFaktor(1), [])
   const [fullscreen, setFullscreen] = useState(false)
   /** Position und Kurs unter dem Zeiger, während ein Level aufgenommen wird. */
   const [pickAt, setPickAt] = useState<{ y: number; price: number } | null>(null)
@@ -288,11 +407,59 @@ export function PriceChart({
   const [drawingsLocked, setDrawingsLocked] = useState(false)
   const [drawingsVisible, setDrawingsVisible] = useState(true)
 
+  // Die eigenen Zeichen-Standards (Fib-Levels, Farbe, Stärke). Sie werden
+  // einmal geholt; scheitert das, gilt der Auslieferungszustand — Zeichnen darf
+  // an einer Einstellungsfrage nicht scheitern.
+  const [zeichenStandards, setZeichenStandards] = useState<DrawingDefaults>(
+    DEFAULT_DRAWING_DEFAULTS,
+  )
+  useEffect(() => {
+    if (!drawingsEnabled) return
+    let aktiv = true
+    loadDrawingDefaults()
+      .then((d) => {
+        if (aktiv) setZeichenStandards(d)
+      })
+      .catch(() => {})
+    return () => {
+      aktiv = false
+    }
+  }, [drawingsEnabled])
+
   // Werkzeugwahl blendet ausgeblendete Zeichnungen automatisch wieder ein.
   const handleToolChange = useCallback((t: DrawTool) => {
     setTool(t)
     if (t !== 'cursor') setDrawingsVisible(true)
   }, [])
+
+  // ---- Rückgängig / Wiederholen --------------------------------------------
+  //
+  // Ein Zeichenwerkzeug ohne Rückgängig zwingt dazu, jeden Strich beim ersten
+  // Mal zu treffen — man traut sich dann nicht, etwas auszuprobieren, und genau
+  // das Ausprobieren ist der Sinn des Übens.
+  //
+  // Geführt wird ein Journal der ÄNDERUNGEN, kein Abbild des ganzen Zustands:
+  // Die Zeichnungen liegen auch auf dem Server, ein zurückgespieltes Abbild
+  // müsste dort alles neu schreiben. Beim Zurücknehmen eines Löschvorgangs
+  // entsteht eine neue Nummer — deshalb ziehen `ersetzeNummer` die Einträge
+  // mit, die noch auf die alte zeigen.
+  const undoStapel = useRef<Zeichenaktion[]>([])
+  const redoStapel = useRef<Zeichenaktion[]>([])
+  const [undoStand, setUndoStand] = useState({ undo: 0, redo: 0 })
+  const staendeMelden = useCallback(() => {
+    setUndoStand({ undo: undoStapel.current.length, redo: redoStapel.current.length })
+  }, [])
+
+  const merken = useCallback(
+    (a: Zeichenaktion) => {
+      undoStapel.current = [...undoStapel.current.slice(-49), a]
+      // Ein neuer Strich beendet den Wiederholen-Faden — sonst stellte man
+      // Änderungen wieder her, die zu einem anderen Verlauf gehören.
+      redoStapel.current = []
+      staendeMelden()
+    },
+    [staendeMelden],
+  )
 
   const handleDeleteAll = useCallback(() => {
     if (!drawingsEnabled) return
@@ -307,6 +474,8 @@ export function PriceChart({
   }, [stockId, trainingSessionId, drawingsEnabled, fluechtig])
   // Debounce-Timer je Zeichnung, damit Verschieben nicht jede Mausbewegung speichert.
   const persistTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map())
+  /** Wann eine Zeichnung zuletzt bewegt wurde — bündelt eine Zieh-Bewegung im Journal. */
+  const letzteBewegung = useRef<Map<number, number>>(new Map())
 
   const handleCreate = useCallback(
     (type: Drawing['type'], points: DrawingPoint[]) => {
@@ -317,28 +486,275 @@ export function PriceChart({
       // Übung, also auch kein Ziel zum Speichern. Die Zeichnung lebt nur in
       // dieser Ansicht — negative Nummern, damit sie sich nie mit gespeicherten
       // Zeichnungen überschneiden.
+      // Eine neue Zeichnung startet mit den EIGENEN Standards — sonst müsste
+      // man seine Fib-Levels bei jeder einzelnen Zeichnung neu einstellen.
+      const style = stilFuerNeueZeichnung(zeichenStandards, type)
+
       if (fluechtig) {
-        const d: Drawing = { id: -Date.now(), type, points, style: null }
+        const d: Drawing = { id: -Date.now(), type, points, style }
         setDrawings((ds) => [...ds, d])
         setSelectedId(d.id)
+        merken({ art: 'erstellt', d })
         return
       }
 
       const p =
         trainingSessionId != null
-          ? createTrainingAnnotation({ sessionId: trainingSessionId, type, points })
-          : createDrawing({ stockId: stockId!, type, points })
+          ? createTrainingAnnotation({ sessionId: trainingSessionId, type, points, style })
+          : createDrawing({ stockId: stockId!, type, points, style })
       p.then((d) => {
         setDrawings((ds) => [...ds, d])
         setSelectedId(d.id)
+        merken({ art: 'erstellt', d })
       }).catch(() => setDrawError('Zeichnung konnte nicht gespeichert werden.'))
     },
-    [stockId, trainingSessionId, drawingsEnabled, fluechtig],
+    [stockId, trainingSessionId, drawingsEnabled, fluechtig, zeichenStandards, merken],
+  )
+
+  /**
+   * Nur das Aussehen ändern — die Punkte bleiben, wie sie sind.
+   *
+   * Getrennt vom Verschieben, weil hier NICHT entprellt werden darf: Ein Klick
+   * auf eine Farbe ist eine einzelne Absicht, keine Folge von Mausbewegungen.
+   */
+  const handleStyleChange = useCallback(
+    (id: number, style: Drawing['style']) => {
+      let punkte: DrawingPoint[] | null = null
+      setDrawings((ds) =>
+        ds.map((d) => {
+          if (d.id !== id) return d
+          punkte = d.points
+          merken({
+            art: 'geaendert',
+            id,
+            vorher: { points: d.points, style: d.style },
+            nachher: { points: d.points, style },
+          })
+          return { ...d, style }
+        }),
+      )
+      if (fluechtig || punkte == null) return
+      const p =
+        trainingSessionId != null
+          ? updateTrainingAnnotation({ id, points: punkte, style })
+          : updateDrawing({ id, points: punkte, style })
+      p.catch(() => setDrawError('Zeichnung konnte nicht gespeichert werden.'))
+    },
+    [trainingSessionId, fluechtig, merken],
+  )
+
+  /**
+   * Einen Journalschritt ausführen — in beide Richtungen dieselbe Mechanik.
+   *
+   * Beim Wiederherstellen einer gelöschten Zeichnung vergibt der Server eine
+   * NEUE Nummer. Alle Journaleinträge, die noch auf die alte zeigen, werden
+   * deshalb mitgezogen; täte man das nicht, liefe der nächste Schritt ins Leere
+   * und „rückgängig" fühlte sich kaputt an.
+   */
+  const ersetzeNummer = useCallback((alt: number, neu: number) => {
+    const tausch = (a: Zeichenaktion): Zeichenaktion => {
+      if (a.art === 'geaendert' && a.id === alt) return { ...a, id: neu }
+      if (a.art !== 'geaendert' && a.d.id === alt) return { ...a, d: { ...a.d, id: neu } }
+      return a
+    }
+    undoStapel.current = undoStapel.current.map(tausch)
+    redoStapel.current = redoStapel.current.map(tausch)
+  }, [])
+
+  const zeichnungWiederherstellen = useCallback(
+    (d: Drawing): Promise<number> => {
+      if (fluechtig) {
+        const neu = { ...d, id: -Date.now() }
+        setDrawings((ds) => [...ds, neu])
+        return Promise.resolve(neu.id)
+      }
+      const p =
+        trainingSessionId != null
+          ? createTrainingAnnotation({
+              sessionId: trainingSessionId,
+              type: d.type,
+              points: d.points,
+              style: d.style,
+            })
+          : createDrawing({
+              stockId: stockId!,
+              type: d.type,
+              points: d.points,
+              style: d.style,
+            })
+      return p.then((neu) => {
+        setDrawings((ds) => [...ds, neu])
+        return neu.id
+      })
+    },
+    [fluechtig, trainingSessionId, stockId],
+  )
+
+  const zeichnungEntfernen = useCallback(
+    (id: number) => {
+      setSelectedId((s) => (s === id ? null : s))
+      setDrawings((ds) => ds.filter((d) => d.id !== id))
+      if (fluechtig) return
+      const p = trainingSessionId != null ? deleteTrainingAnnotation(id) : deleteDrawing(id)
+      p.catch(() => setDrawError('Zeichnung konnte nicht gelöscht werden.'))
+    },
+    [fluechtig, trainingSessionId],
+  )
+
+  const zeichnungSetzen = useCallback(
+    (id: number, stand: { points: DrawingPoint[]; style: Drawing['style'] }) => {
+      setDrawings((ds) =>
+        ds.map((d) => (d.id === id ? { ...d, points: stand.points, style: stand.style } : d)),
+      )
+      if (fluechtig) return
+      const p =
+        trainingSessionId != null
+          ? updateTrainingAnnotation({ id, points: stand.points, style: stand.style })
+          : updateDrawing({ id, points: stand.points, style: stand.style })
+      p.catch(() => setDrawError('Zeichnung konnte nicht gespeichert werden.'))
+    },
+    [fluechtig, trainingSessionId],
+  )
+
+  /**
+   * Einen Eintrag ausführen. `rueckwaerts` = rückgängig machen, sonst
+   * wiederholen. Ein Eintrag beschreibt immer, was PASSIERT ist — daraus
+   * ergeben sich beide Richtungen von selbst.
+   */
+  const schrittAusfuehren = useCallback(
+    (a: Zeichenaktion, rueckwaerts: boolean) => {
+      if (a.art === 'geaendert') {
+        zeichnungSetzen(a.id, rueckwaerts ? a.vorher : a.nachher)
+        return
+      }
+      // erstellt: zurück = löschen, vor = neu anlegen. geloescht: umgekehrt.
+      const anlegen = a.art === 'geloescht' ? rueckwaerts : !rueckwaerts
+      if (anlegen) {
+        zeichnungWiederherstellen(a.d)
+          .then((neu) => ersetzeNummer(a.d.id, neu))
+          .catch(() => setDrawError('Zeichnung konnte nicht wiederhergestellt werden.'))
+      } else {
+        zeichnungEntfernen(a.d.id)
+      }
+    },
+    [zeichnungEntfernen, zeichnungWiederherstellen, zeichnungSetzen, ersetzeNummer],
+  )
+
+  const handleUndo = useCallback(() => {
+    const a = undoStapel.current.pop()
+    if (!a) return
+    redoStapel.current = [...redoStapel.current, a]
+    schrittAusfuehren(a, true)
+    staendeMelden()
+  }, [schrittAusfuehren, staendeMelden])
+
+  const handleRedo = useCallback(() => {
+    const a = redoStapel.current.pop()
+    if (!a) return
+    undoStapel.current = [...undoStapel.current, a]
+    schrittAusfuehren(a, false)
+    staendeMelden()
+  }, [schrittAusfuehren, staendeMelden])
+
+  // Strg+Z / Strg+Umschalt+Z (bzw. Strg+Y). Nicht, wenn ein Feld den Fokus hat.
+  useEffect(() => {
+    if (!drawingsEnabled) return
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return
+      const tag = (e.target as HTMLElement)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      const k = e.key.toLowerCase()
+      if (k === 'z' && !e.shiftKey) {
+        e.preventDefault()
+        handleUndo()
+      } else if ((k === 'z' && e.shiftKey) || k === 'y') {
+        e.preventDefault()
+        handleRedo()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [drawingsEnabled, handleUndo, handleRedo])
+
+  const ausgewaehlteZeichnung = useMemo(
+    () => (selectedId == null ? null : (drawings.find((d) => d.id === selectedId) ?? null)),
+    [drawings, selectedId],
+  )
+
+  /**
+   * Wo das Eigenschaften-Panel sitzt. Muss aus dem Chart-Rahmen gerechnet
+   * werden, weil das Panel am `<body>` hängt und dort nichts über seine Lage im
+   * Layout weiß. Bei Scrollen und Größenänderung wird nachgezogen — sonst
+   * bliebe es stehen, während der Chart wegwandert.
+   */
+  const [panelAnker, setPanelAnker] = useState<{ top: number; left: number } | null>(null)
+  useEffect(() => {
+    if (ausgewaehlteZeichnung == null) {
+      setPanelAnker(null)
+      return
+    }
+    const messen = () => {
+      const el = containerWrapRef.current
+      if (!el) return
+      const r = el.getBoundingClientRect()
+      const breite = 248
+      setPanelAnker({
+        top: Math.max(8, Math.min(r.top + 8, window.innerHeight - 200)),
+        // Rechts an die Preisachse gelegt: Links liegt die Werkzeugleiste, und
+        // über der Chartmitte verdeckte das Panel genau das, was man ansieht.
+        left: Math.max(8, Math.min(r.right - breite - 78, window.innerWidth - breite - 8)),
+      })
+    }
+    messen()
+    window.addEventListener('scroll', messen, true)
+    window.addEventListener('resize', messen)
+    return () => {
+      window.removeEventListener('scroll', messen, true)
+      window.removeEventListener('resize', messen)
+    }
+  }, [ausgewaehlteZeichnung])
+
+  /** Die Fib-Einstellung dieser Zeichnung als eigenen Standard sichern. */
+  const handleSaveDefault = useCallback(
+    (typ: 'fib' | 'fibext', stil: FibStil) => {
+      const next = { ...zeichenStandards, [typ]: stil }
+      setZeichenStandards(next)
+      saveDrawingDefaults(next).catch(() =>
+        setDrawError('Standard konnte nicht gesichert werden.'),
+      )
+    },
+    [zeichenStandards],
   )
 
   const handleUpdate = useCallback(
     (id: number, points: DrawingPoint[]) => {
-      setDrawings((ds) => ds.map((d) => (d.id === id ? { ...d, points } : d)))
+      // Fürs Journal zählt eine ganze Zieh-Bewegung als EIN Schritt, nicht
+      // jede Mausbewegung — sonst müsste man fünfzig Mal zurücknehmen, um eine
+      // Linie an ihren Ausgangsort zu bringen. Erkannt an der Pause zwischen
+      // zwei Aktualisierungen; bewusst nicht am Speicher-Timer, denn im
+      // flüchtigen Modus wird gar nicht gespeichert.
+      const jetzt = Date.now()
+      const laeuftSchon = jetzt - (letzteBewegung.current.get(id) ?? 0) < 700
+      letzteBewegung.current.set(id, jetzt)
+      setDrawings((ds) =>
+        ds.map((d) => {
+          if (d.id !== id) return d
+          if (!laeuftSchon) {
+            merken({
+              art: 'geaendert',
+              id,
+              vorher: { points: d.points, style: d.style },
+              nachher: { points, style: d.style },
+            })
+          } else {
+            const oben = undoStapel.current[undoStapel.current.length - 1]
+            if (oben?.art === 'geaendert' && oben.id === id) {
+              oben.nachher = { points, style: d.style }
+            }
+          }
+          return { ...d, points }
+        }),
+      )
       if (fluechtig) return // nichts zu speichern
       const timers = persistTimers.current
       const prev = timers.get(id)
@@ -362,13 +778,19 @@ export function PriceChart({
   const handleDeleteById = useCallback(
     (id: number) => {
       setSelectedId((s) => (s === id ? null : s))
-      setDrawings((ds) => ds.filter((d) => d.id !== id))
+      setDrawings((ds) => {
+        const weg = ds.find((d) => d.id === id)
+        // Die ganze Zeichnung ins Journal, nicht nur ihre Nummer: Zum
+        // Zurücknehmen muss sie neu angelegt werden können.
+        if (weg) merken({ art: 'geloescht', d: weg })
+        return ds.filter((d) => d.id !== id)
+      })
       if (fluechtig) return
       const p =
         trainingSessionId != null ? deleteTrainingAnnotation(id) : deleteDrawing(id)
       p.catch(() => setDrawError('Zeichnung konnte nicht gelöscht werden.'))
     },
-    [trainingSessionId, fluechtig],
+    [trainingSessionId, fluechtig, merken],
   )
 
   const handleDeleteSelected = useCallback(() => {
@@ -657,6 +1079,40 @@ export function PriceChart({
     })
   }, [logScale, chartReady])
 
+  // Preis-Zoom auf die Serie legen. Der Faktor steckt IM Aufruf und nicht nur
+  // in einem Ref: `applyOptions` ist zugleich das Signal, den Preisbereich neu
+  // zu rechnen — ohne den erneuten Aufruf bliebe die Skala stehen.
+  useEffect(() => {
+    const series = seriesRef.current
+    if (!chartReady || !series) return
+    series.applyOptions({
+      autoscaleInfoProvider: (original: () => AutoscaleInfo | null) => {
+        const res = original()
+        if (!res?.priceRange || preisFaktor === 1) return res
+        const { minValue, maxValue } = res.priceRange
+        const mitte = (minValue + maxValue) / 2
+        const halb = (maxValue - minValue) / 2 / preisFaktor
+        // Ein Bereich der Breite 0 wäre eine unbrauchbare Achse.
+        if (!(halb > 0)) return res
+        return { ...res, priceRange: { minValue: mitte - halb, maxValue: mitte + halb } }
+      },
+    })
+  }, [preisFaktor, chartReady, seriesVersion])
+
+  // Umschalt + Pfeil hoch/runter zoomt den Preis. Beim Üben liegt der Blick im
+  // Chart — derselbe Gedanke wie bei den Replay-Tasten (Leertaste, ← →).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.shiftKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return
+      const tag = (e.target as HTMLElement)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      e.preventDefault()
+      preisZoom(e.key === 'ArrowUp' ? 1 : -1)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [preisZoom])
+
   // Daten + Marker setzen (Mapping je Chart-Typ).
   useEffect(() => {
     const series = seriesRef.current
@@ -892,11 +1348,23 @@ export function PriceChart({
                 title={
                   lockTimeframe
                     ? 'Die Zeitebene gehört zur gespeicherten Übung und steht fest.'
-                    : undefined
+                    : replayMode && tf === basisTimeframe
+                      ? 'Zeitebene des Durchlaufs — hier zählt der Replay seine Kerzen.'
+                      : replayMode
+                        ? 'Andere Zeitebene, auf denselben Moment zugeschnitten. Die angebrochene Kerze wird mitgerechnet, nicht vorweggenommen.'
+                        : undefined
                 }
                 onClick={() => setTimeframe(tf)}
               >
                 {tf}
+                {/* Ein Punkt an der Basis-Ebene: Ohne ihn weiß man beim
+                    Zurückschalten nicht mehr, in welcher Ebene der Durchlauf
+                    eigentlich zählt. */}
+                {replayMode && tf === basisTimeframe && (
+                  <span className="ml-0.5 text-accent" aria-hidden>
+                    ·
+                  </span>
+                )}
               </Button>
             ))}
           </div>
@@ -922,6 +1390,42 @@ export function PriceChart({
           >
             Log
           </Button>
+          {/* Preis-Skala. Ziehen an der Achse zoomt sie — das ist in
+              lightweight-charts eingebaut, war aber nicht auffindbar und lag
+              zeitweise unter der Zeichenebene. Die Knöpfe machen es sichtbar
+              und geben den Weg zurück: Ohne „Auto" bleibt eine einmal von Hand
+              gestauchte Achse für den Rest der Übung schief. */}
+          <div className="flex items-center gap-0.5">
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 w-7 p-0 font-mono text-[13px] leading-none"
+              title="Preis-Skala dehnen (Umschalt + Pfeil hoch)"
+              aria-label="Preis-Skala dehnen"
+              onClick={() => preisZoom(1)}
+            >
+              +
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 w-7 p-0 font-mono text-[13px] leading-none"
+              title="Preis-Skala stauchen (Umschalt + Pfeil runter)"
+              aria-label="Preis-Skala stauchen"
+              onClick={() => preisZoom(-1)}
+            >
+              −
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-1.5 font-mono text-[10px]"
+              title="Preis-Skala zurücksetzen (Doppelklick auf die Achse geht auch)"
+              onClick={preisZoomZurueck}
+            >
+              Auto
+            </Button>
+          </div>
           {/* Das frühere „TV" (ein Umschalter zwischen zwei festen Schemata)
               ist hier aufgegangen: TradingView ist jetzt eine von vier
               Vorlagen, und jeder einzelne Wert ist danach änderbar. */}
@@ -984,6 +1488,10 @@ export function PriceChart({
             onDrawingsVisibleChange={setDrawingsVisible}
             onDeleteAll={handleDeleteAll}
             hasDrawings={drawings.length > 0}
+            onUndo={handleUndo}
+            onRedo={handleRedo}
+            canUndo={undoStand.undo > 0}
+            canRedo={undoStand.redo > 0}
           />
         )}
         <div ref={containerWrapRef} className="relative min-w-0 flex-1">
@@ -1015,6 +1523,23 @@ export function PriceChart({
                 locked={drawingsLocked}
               />
             )}
+          {/* Eigenschaften der ausgewählten Zeichnung. Der Anker wird aus dem
+              Chart-Rahmen berechnet, weil das Panel per Portal am <body> hängt
+              (siehe drawing-style-panel.tsx) und von dort aus nichts über seine
+              Lage im Layout weiß. */}
+          {ausgewaehlteZeichnung && panelAnker && (
+            <DrawingStylePanel
+              key={ausgewaehlteZeichnung.id}
+              drawing={ausgewaehlteZeichnung}
+              top={panelAnker.top}
+              left={panelAnker.left}
+              onChange={(style) => handleStyleChange(ausgewaehlteZeichnung.id, style)}
+              onDelete={handleDeleteSelected}
+              onClose={() => setSelectedId(null)}
+              onSaveDefault={fluechtig ? undefined : handleSaveDefault}
+            />
+          )}
+
           {/* Kurs-Aufnahme: liegt ÜBER der Zeichenebene (z-30), damit ein Klick
               hier keine Zeichnung anlegt. Die Linie folgt dem Zeiger, damit man
               sieht, welchen Kurs man gerade nimmt — eine Zahl allein ließe sich
@@ -1083,9 +1608,12 @@ export function PriceChart({
 
       {/* Die Replay-Leiste sitzt UNTER dem Chart — dort, wo in TradingView die
           Zeitachse liegt und die Hand ohnehin hinfasst. */}
-      {replayMode && candles && replayVisible != null && (
+      {/* Gezählt wird in Kerzen der BASIS-Ebene, nicht der angesehenen: „eine
+          Kerze weiter" muss beim Wechsel auf den Tageschart dasselbe bedeuten
+          wie vorher, sonst springt der Durchlauf. */}
+      {replayMode && basisKerzen && replayVisible != null && (
         <ChartReplayControls
-          total={candles.length}
+          total={basisKerzen.length}
           visible={replayVisible}
           onChange={handleReplayChange}
           start={replayStart}

@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  DEFAULT_LEAD_IN,
+  LEAD_IN_OPTIONS,
   MIN_HIDDEN_CANDLES,
   MIN_VISIBLE_CANDLES,
   defaultStartIndex,
+  startIndexMitVorlauf,
   isBlindMode,
   randomStartIndex,
   requiresElliott,
@@ -153,5 +156,33 @@ describe('trimText', () => {
     expect(trimText(42, 10)).toBeNull()
     expect(trimText('  hallo  ', 10)).toBe('hallo')
     expect(trimText('abcdefghijk', 5)).toBe('abcde')
+  })
+})
+
+describe('startIndexMitVorlauf', () => {
+  it('nimmt den gewünschten Vorlauf, wenn er passt', () => {
+    expect(startIndexMitVorlauf(1000, 250)).toBe(250)
+    expect(startIndexMitVorlauf(1000, 800)).toBe(800)
+  })
+
+  it('lässt immer genug Zukunft übrig', () => {
+    // 300 Kerzen, Vorlauf 800 gewünscht: Es müssen MIN_HIDDEN_CANDLES bleiben.
+    expect(startIndexMitVorlauf(300, 800)).toBe(300 - MIN_HIDDEN_CANDLES)
+  })
+
+  it('lässt immer genug Kontext stehen', () => {
+    expect(startIndexMitVorlauf(1000, 5)).toBe(MIN_VISIBLE_CANDLES)
+  })
+
+  it('kommt mit unsinnigen Eingaben klar', () => {
+    expect(startIndexMitVorlauf(1000, Number.NaN)).toBe(DEFAULT_LEAD_IN)
+    expect(startIndexMitVorlauf(0, 250)).toBe(0)
+  })
+
+  it('bietet nur aufsteigende, sinnvolle Stufen an', () => {
+    const werte = LEAD_IN_OPTIONS.map((o) => o.wert)
+    expect([...werte].sort((a, b) => a - b)).toEqual(werte)
+    expect(werte).toContain(DEFAULT_LEAD_IN)
+    expect(werte.every((w) => w >= MIN_VISIBLE_CANDLES)).toBe(true)
   })
 })

@@ -39,6 +39,26 @@ export interface DrawingPoint {
   text?: string // nur bei type = 'text'
 }
 
+/**
+ * Aussehen einer Zeichnung. Liegt als JSON in einer Textspalte — deshalb ist
+ * eine Erweiterung hier **keine** Migration, und deshalb wird beim Lesen nie
+ * blind vertraut: Farben laufen durch `normalizeDrawingStyle`
+ * (`lib/drawing-style.ts`), Fib-Einstellungen durch `normalizeFibStil`
+ * (`lib/fib-levels.ts`), bevor irgendetwas in ein SVG-Attribut geht.
+ */
+export interface DrawingStyle {
+  color?: string
+  dashed?: boolean
+  label?: string
+  /** Linienstärke in px. */
+  width?: number
+  /**
+   * Fibonacci-Einstellung, nur bei `fib`/`fibext`. Bewusst `unknown`: Was hier
+   * aus der Datenbank kommt, ist ungeprüft und wird erst beim Lesen normalisiert.
+   */
+  fib?: unknown
+}
+
 export interface Drawing {
   id: number
   /**
@@ -49,7 +69,7 @@ export interface Drawing {
   stockId?: number
   type: DrawingType
   points: DrawingPoint[]
-  style: { color?: string; dashed?: boolean; label?: string } | null
+  style: DrawingStyle | null
 }
 
 const VALID_TYPES: DrawingType[] = [

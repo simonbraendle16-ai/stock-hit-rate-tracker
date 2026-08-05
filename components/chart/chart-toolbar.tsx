@@ -17,7 +17,9 @@ import {
   Minus,
   MousePointer2,
   MoveUpRight,
+  Redo2,
   Ruler,
+  Undo2,
   SeparatorVertical,
   Square,
   TrendingDown,
@@ -146,6 +148,10 @@ export function ChartToolbar({
   onDrawingsVisibleChange,
   onDeleteAll,
   hasDrawings,
+  onUndo,
+  onRedo,
+  canUndo,
+  canRedo,
 }: {
   tool: DrawTool
   onToolChange: (t: DrawTool) => void
@@ -159,6 +165,15 @@ export function ChartToolbar({
   onDrawingsVisibleChange: (v: boolean) => void
   onDeleteAll: () => void
   hasDrawings: boolean
+  /**
+   * Rückgängig/Wiederholen. Ohne sie muss jeder Strich beim ersten Mal sitzen
+   * — dann probiert man nichts aus, und genau das Ausprobieren ist der Sinn
+   * des Übens.
+   */
+  onUndo: () => void
+  onRedo: () => void
+  canUndo: boolean
+  canRedo: boolean
 }) {
   // Zuletzt genutztes Tool je Gruppe (bestimmt das Icon des Gruppen-Knopfs).
   const [groupChoice, setGroupChoice] = useState<Record<string, DrawTool>>({})
@@ -244,6 +259,31 @@ export function ChartToolbar({
       {iconBtn('cursor', 'Auswählen', tool === 'cursor', () => onToolChange('cursor'), (
         <MousePointer2 className="size-4" />
       ))}
+
+      {/* Rückgängig steht ganz oben, weil es beim Zeichnen der häufigste Griff
+          nach dem Werkzeug selbst ist. Tastatur: Strg+Z / Strg+Umschalt+Z. */}
+      <Button
+        size="sm"
+        variant="ghost"
+        className="h-8 w-8 p-0 disabled:opacity-30"
+        title="Rückgängig (Strg+Z)"
+        aria-label="Rückgängig"
+        disabled={!canUndo}
+        onClick={onUndo}
+      >
+        <Undo2 className="size-4" />
+      </Button>
+      <Button
+        size="sm"
+        variant="ghost"
+        className="h-8 w-8 p-0 disabled:opacity-30"
+        title="Wiederholen (Strg+Umschalt+Z)"
+        aria-label="Wiederholen"
+        disabled={!canRedo}
+        onClick={onRedo}
+      >
+        <Redo2 className="size-4" />
+      </Button>
 
       {/* Radiergummi steht bewusst neben dem Cursor: Wegräumen ist beim
           Zeichnen genauso häufig wie Auswählen. Der Modus bleibt aktiv, bis

@@ -27,6 +27,7 @@ import {
   defaultStartIndex,
   isBlindMode,
   randomStartIndex,
+  startIndexMitVorlauf,
   type TrainingDirection,
   type TrainingMode,
   type TrainingRating,
@@ -61,6 +62,7 @@ export interface TrainingSessionView {
   /** Ausbaustufe 2 (Migration 0029). */
   stopMode: string
   stopEvery: number
+  leadIn: number | null
   endedAt: Date | null
 }
 
@@ -186,9 +188,16 @@ export function TrainingWorkspace({
       }
       registered.current = true
 
-      const gezogen = isBlindMode(session.mode)
-        ? randomStartIndex(candles.length, Math.random())
-        : defaultStartIndex(candles.length)
+      // Der beim Anlegen gewählte Vorlauf gewinnt — auch bei den verdeckten
+      // Übungen. Verdeckt ist das INSTRUMENT, nicht die Stelle; wer zu wenig
+      // Vergangenheit sieht, rät ohnehin nur. Ohne Angabe (Alt-Übungen) bleibt
+      // es beim bisherigen Verhalten, kein Backfill.
+      const gezogen =
+        session.leadIn != null
+          ? startIndexMitVorlauf(candles.length, session.leadIn)
+          : isBlindMode(session.mode)
+            ? randomStartIndex(candles.length, Math.random())
+            : defaultStartIndex(candles.length)
 
       setStartIndex(gezogen)
       setVisible(gezogen)
@@ -213,7 +222,7 @@ export function TrainingWorkspace({
           /* Das Replay läuft trotzdem — beim nächsten Laden wird es erneut versucht. */
         })
     },
-    [session.id, session.mode, session.startCandleTime, startIndex],
+    [session.id, session.mode, session.startCandleTime, session.leadIn, startIndex],
   )
 
   // Beim ersten Rendern ist der Startpunkt noch unbekannt; bis dahin steht
@@ -434,7 +443,13 @@ export function TrainingWorkspace({
             planLines={planLines}
             initialDrawings={annotations}
             defaultTimeframe={session.timeframe as ChartTimeframe}
-            lockTimeframe
+            // Die Zeitebene ist NICHT mehr gesperrt: Aus fünfzig Kerzen einer
+            // Ebene lässt sich keine Struktur ableiten. Gehandelt wird von oben
+            // nach unten — erst der große Kontext, dann für den Einstieg
+            // herunter. Der Durchlauf zählt dabei weiter in der Ebene der
+            // Übung; die anderen werden auf denselben Moment zugeschnitten
+            // (`lib/replay-timeframes.ts`), damit keine Zukunft durchscheint.
+            replayBasisTimeframe={session.timeframe as ChartTimeframe}
             hideIdentity={verdeckt}
             replayMode
             replayStart={startIndex > 0 ? startIndex : undefined}

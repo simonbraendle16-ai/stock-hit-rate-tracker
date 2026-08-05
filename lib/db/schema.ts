@@ -132,6 +132,11 @@ export const userSettings = pgTable('user_settings', {
   // Gelesen wird ausschließlich über `normalizeAppearance`
   // (`lib/chart-appearance.ts`) — nie roh an den Chart geben.
   chartAppearance: text('chartAppearance'),
+  // Zeichen-Standards als JSON (Migration 0030): mit welchen Fibonacci-Levels,
+  // welcher Farbe und welcher Strichstärke eine NEUE Zeichnung beginnt.
+  // NULL = Auslieferungszustand. Gelesen ausschließlich über
+  // `normalizeDrawingDefaults` (`lib/drawing-defaults.ts`).
+  drawingDefaults: text('drawingDefaults'),
 })
 
 // Ein- und Auszahlungen auf ein DEPOT. Ohne sie rechnet die Rendite gegen
@@ -566,6 +571,10 @@ export const trainingSession = pgTable('training_session', {
   blind: boolean('blind').notNull().default(false),
   candleCount: integer('candleCount').notNull().default(0),
   startIndex: integer('startIndex').notNull().default(0),
+  // Gewünschter Vorlauf in Kerzen (Migration 0030): wie viel Vergangenheit vor
+  // der ersten Entscheidung sichtbar ist. NULL = die bisherige Formel.
+  // Aus einem Chart ohne Vergangenheit lässt sich nichts ableiten — man rät.
+  leadIn: integer('leadIn'),
   firstCandleTime: integer('firstCandleTime'),
   startCandleTime: integer('startCandleTime'),
   lastCandleTime: integer('lastCandleTime'),

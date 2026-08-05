@@ -21,6 +21,19 @@ export interface UseCandlesOptions {
    * dadurch gar nicht erst — „verdeckt" wäre sonst nur ein Anzeige-Trick.
    */
   trainingSessionId?: number
+  /**
+   * Zeitebene, die bei einer Übung ABWEICHEND von der eingestellten geladen
+   * werden soll. Nötig für die Analyse von oben nach unten: Der Server nimmt
+   * Symbol und Markt weiter aus der Übung (das Instrument bleibt verdeckt),
+   * nur das Intervall kommt von hier.
+   */
+  timeframe?: string
+  /**
+   * Aus, solange die Reihe nicht gebraucht wird. Hooks lassen sich nicht
+   * bedingt aufrufen — ein Schalter ist der ehrliche Weg, statt einen zweiten
+   * Abruf mitlaufen zu lassen, den niemand ansieht.
+   */
+  enabled?: boolean
 }
 
 export function useCandles(
@@ -31,7 +44,7 @@ export function useCandles(
 ): CandlesState {
   // Rückwärtsverträglich: früher war der vierte Parameter direkt die stockId.
   const opts: UseCandlesOptions = typeof options === 'number' ? { stockId: options } : options
-  const { stockId, trainingSessionId } = opts
+  const { stockId, trainingSessionId, timeframe, enabled = true } = opts
 
   const [state, setState] = useState<CandlesState>({
     candles: null,
@@ -41,12 +54,19 @@ export function useCandles(
   })
 
   useEffect(() => {
+    if (!enabled) {
+      setState({ candles: null, loading: false, error: null, errorCode: null })
+      return
+    }
     const controller = new AbortController()
     setState((s) => ({ ...s, loading: true, error: null, errorCode: null }))
 
     const params = new URLSearchParams()
     if (trainingSessionId != null) {
       params.set('trainingSessionId', String(trainingSessionId))
+      // Nur die Zeitebene darf von außen kommen — Symbol und Markt bleiben beim
+      // Server, sonst wäre die Verdeckung über diesen Weg zu umgehen.
+      if (timeframe) params.set('tf', timeframe)
     } else {
       params.set('symbol', symbol)
       params.set('market', market)
@@ -79,7 +99,7 @@ export function useCandles(
       })
 
     return () => controller.abort()
-  }, [symbol, market, interval, stockId, trainingSessionId])
+  }, [symbol, market, interval, stockId, trainingSessionId, timeframe, enabled])
 
   return state
 }

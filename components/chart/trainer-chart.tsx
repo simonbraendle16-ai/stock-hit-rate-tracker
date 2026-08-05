@@ -1,6 +1,7 @@
 'use client'
 
 import { PriceChart, type ChartTimeframe } from '@/components/chart/price-chart'
+import { ChartModeTabs } from '@/components/chart/chart-mode-tabs'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Search } from 'lucide-react'
@@ -89,18 +90,24 @@ export function TrainerChart({
         </Button>
       </form>
 
-      <PriceChart
-        key={`${symbol}-${market}-${timeframe}`}
-        symbol={symbol}
-        market={market}
-        defaultTimeframe={timeframe}
-        replayMode
-        // Zeichnen gehört zur Analyse — ohne Werkzeuge ist ein Replay nur ein
-        // Film. Gespeichert wird hier nichts: Diese Seite hält bewusst nichts
-        // fest, und eine Linie ohne Instrument hätte auch keinen Ort.
-        ephemeralDrawings
-        heightClass="h-[440px] sm:h-[560px] xl:h-[min(70vh,760px)]"
-      />
+      {/* TradingView steht hier zur Verfügung, weil das Instrument offen
+          liegt. In der gemessenen, verdeckten Übung fehlt der Umschalter
+          bewusst: Dort würde er den Ticker verraten und die Verdeckung wäre
+          nur noch Dekoration. */}
+      <ChartModeTabs ticker={symbol} market={market} chartUrl={null}>
+        <PriceChart
+          key={`${symbol}-${market}-${timeframe}`}
+          symbol={symbol}
+          market={market}
+          defaultTimeframe={timeframe}
+          replayMode
+          // Zeichnen gehört zur Analyse — ohne Werkzeuge ist ein Replay nur ein
+          // Film. Gespeichert wird hier nichts: Diese Seite hält bewusst nichts
+          // fest, und eine Linie ohne Instrument hätte auch keinen Ort.
+          ephemeralDrawings
+          heightClass="h-[440px] sm:h-[560px] xl:h-[min(70vh,760px)]"
+        />
+      </ChartModeTabs>
 
       <p className="note">
         Zeichnungen bleiben nur in dieser Ansicht — beim Verlassen sind sie weg. Wer sie

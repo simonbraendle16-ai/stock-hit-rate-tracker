@@ -14,7 +14,13 @@ import {
   STOP_MODES,
   type StopMode,
 } from '@/lib/training-trade'
-import { TRAINING_MODES, type TrainingMode } from '@/lib/training'
+import {
+  DEFAULT_LEAD_IN,
+  LEAD_IN_OPTIONS,
+  MIN_VISIBLE_CANDLES,
+  TRAINING_MODES,
+  type TrainingMode,
+} from '@/lib/training'
 import { AlertTriangle, Play } from 'lucide-react'
 
 const MARKETS = [
@@ -57,6 +63,7 @@ export function TrainerStart({
   const [timeframe, setTimeframe] = useState('1h')
   const [stopMode, setStopMode] = useState<StopMode>('auto')
   const [stopEvery, setStopEvery] = useState(DEFAULT_STOP_EVERY)
+  const [leadIn, setLeadIn] = useState(DEFAULT_LEAD_IN)
   const [fehler, setFehler] = useState<string | null>(null)
   const [pending, startTransition] = useTransition()
   const gesamtKerzen = coverage.reduce((s, c) => s + c.candles, 0)
@@ -71,6 +78,7 @@ export function TrainerStart({
         timeframe,
         stopMode,
         stopEvery,
+        leadIn,
       })
       if ('error' in res) {
         setFehler(res.error)
@@ -192,6 +200,49 @@ export function TrainerStart({
           {stopMode === 'auto'
             ? 'Der Replay hält von selbst an und fragt, ob du ein Setup siehst — so verpasst du keine Stelle.'
             : 'Der Replay läuft, bis du selbst Pause drückst.'}
+        </p>
+      </Field>
+
+      {/* Vorlauf. Bis hierher entschied eine Formel, wie viel Vergangenheit vor
+          der ersten Entscheidung steht — bei kurzen Reihen waren das fünfzig
+          Kerzen. Daraus lässt sich keine Struktur ableiten, und ohne Struktur
+          ist jede These geraten. */}
+      <Field
+        label="Vorlauf"
+        as="div"
+        hint="Wie viel Vergangenheit steht, bevor die erste Entscheidung ansteht."
+      >
+        <div className="flex flex-wrap gap-1.5">
+          {LEAD_IN_OPTIONS.map((o) => (
+            <Button
+              key={o.wert}
+              size="sm"
+              variant={o.wert === leadIn ? 'secondary' : 'ghost'}
+              className="h-8 px-2.5 font-mono text-[11px]"
+              title={o.hinweis}
+              onClick={() => setLeadIn(o.wert)}
+            >
+              {o.label}
+            </Button>
+          ))}
+          <label className="flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
+            eigener
+            <input
+              type="number"
+              min={MIN_VISIBLE_CANDLES}
+              max={2000}
+              value={leadIn}
+              onChange={(e) => setLeadIn(Number(e.target.value))}
+              className="input-ocean h-8 w-20 rounded px-2 font-mono text-[11px]"
+            />
+            Kerzen
+          </label>
+        </div>
+        <p className="note mt-1.5">
+          {LEAD_IN_OPTIONS.find((o) => o.wert === leadIn)?.hinweis ??
+            'Eigener Wert — begrenzt durch die vorhandene Historie.'}{' '}
+          Höhere Zeitebenen lassen sich im Chart jederzeit dazuschalten; sie werden
+          auf denselben Moment zugeschnitten.
         </p>
       </Field>
 
