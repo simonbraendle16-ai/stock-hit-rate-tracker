@@ -232,7 +232,12 @@ export function DrawingLayer({
 
   const hitTest = useCallback(
     (x: number, y: number): number | null => {
-      for (const d of drawings) {
+      // Von hinten nach vorn: Gezeichnet wird in Reihenfolge, die zuletzt
+      // angelegte Zeichnung liegt also OBEN. Vorher gewann die älteste, und
+      // man erwischte bei überlappenden Linien zuverlässig die falsche —
+      // sichtbar oben lag eine andere als die, die sich auswählen ließ.
+      for (let i = drawings.length - 1; i >= 0; i--) {
+        const d = drawings[i]
         const pts = d.points.map(toPx)
         if (pts.some((p) => p == null)) continue
         const P = pts as Pt[]
@@ -305,10 +310,13 @@ export function DrawingLayer({
           const ext = d.type === 'fibext'
           if (ext && P.length < 3) continue
           const stil = normalizeFibStil(d.style?.fib, ext ? DEFAULT_FIBEXT : DEFAULT_FIB)
-          const von = ext ? d.points[2].price : d.points[0].price
+          // Dieselbe Ausrichtung wie beim Zeichnen (siehe `renderFib`): beim
+          // Retracement liegt 0 am zweiten Klick. Stünden hier andere Werte,
+          // träfe man neben die Linien, die man sieht.
+          const von = ext ? d.points[2].price : d.points[1].price
           const bis = ext
             ? d.points[2].price + (d.points[1].price - d.points[0].price)
-            : d.points[1].price
+            : d.points[0].price
           const x1 = ext ? P[2].x : Math.min(P[0].x, P[1].x)
           const x2 = stil.verlaengern
             ? width
@@ -350,8 +358,20 @@ export function DrawingLayer({
     const rect = svgRef.current!.getBoundingClientRect()
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
-    const point = fromPx(x, y)
-    if (!point) return
+
+    // Auswählen und Radieren brauchen NUR Pixel — sie fragen `hitTest`, und der
+    // rechnet in Bildschirmkoordinaten.
+    //
+    // Vorher stand hier ein `fromPx(...); if (!point) return` VOR beiden
+    // Zweigen. `fromPx` gibt aber null zurück, sobald der Zeiger auf einer
+    // Höhe liegt, für die die Serie keinen Kurs kennt — über einer
+    // Indikator-Pane, über oder unter der Kursfläche, oder bevor Kerzen da
+    // sind. In genau diesen Bereichen ließ sich deshalb weder etwas anklicken
+    // noch wegradieren, obwohl die Zeichnung sichtbar dort lag. Das ist der
+    // Grund, warum sich die Werkzeuge „mal so, mal so" angefühlt haben.
+    //
+    // Einen Chart-Punkt braucht erst, wer etwas NEUES setzt — der wird unten
+    // geholt.
 
     // Radiergummi: trifft der Klick eine Zeichnung, ist sie weg. Der Modus
     // bleibt an, damit mehrere Zeichnungen hintereinander wegkönnen.
@@ -396,6 +416,10 @@ export function DrawingLayer({
       }
       return
     }
+
+    // Ab hier wird etwas Neues gesetzt — dafür braucht es einen Chart-Punkt.
+    const point = fromPx(x, y)
+    if (!point) return
 
     if (tool === 'hline' || tool === 'vline') {
       onCreate(tool, [point])
@@ -913,8 +937,14 @@ export function DrawingLayer({
     }
     if (d.type === 'fib' && P.length >= 2) {
       return renderFib(d, P, stil, {
-        von: d.points[0].price,
-        bis: d.points[1].price,
+        // TradingView-Konvention: 0 liegt am ZWEITEN Klick (dem Ende der
+        // gemessenen Bewegung), 1 am ersten. Vorher war es umgekehrt — dann
+        // steht „0,618" dort, wo der Trader 0,382 liest, und das Werkzeug
+        // liefert bei jedem Retracement die falsche Marke. Die Formel selbst
+        // (`fibLinien`) bleibt unberührt: Sie bildet immer von → 0 und
+        // bis → 1 ab; welcher Klick welcher ist, entscheidet der Aufrufer.
+        von: d.points[1].price,
+        bis: d.points[0].price,
         linkeKante: Math.min(P[0].x, P[1].x),
         rechteKante: Math.max(P[0].x, P[1].x),
         basis: null,
