@@ -145,6 +145,15 @@ export function TrainingWorkspace({
    */
   const [freigabe, setFreigabe] = useState<number | null>(null)
 
+  /**
+   * Ist der Durchlauf überhaupt losgelassen?
+   *
+   * Getrennt von `freigabe`, weil deren `null` im manuellen Modus „keine
+   * Grenze" bedeutet und vor der ersten Entscheidung „noch nichts frei" — zwei
+   * gegensätzliche Aussagen, die sich in einem Wert nicht unterscheiden lassen.
+   */
+  const [gestartet, setGestartet] = useState(false)
+
   const stopMode: StopMode = isStopMode(session.stopMode) ? session.stopMode : 'auto'
 
   // Nach jedem Festschreiben und jeder Haltepunkt-Antwort die nächste Marke setzen.
@@ -235,14 +244,26 @@ export function TrainingWorkspace({
   /**
    * Obergrenze im neuen Ablauf: erst nichts, dann bis zum nächsten Haltepunkt.
    * Eine beendete Sitzung ist frei — dann gibt es nichts mehr zu verbergen.
+   *
+   * Maßgeblich ist, ob der Durchlauf LOSGELASSEN wurde, nicht die Zahl der
+   * Trades. Vorher hing die Grenze an `trades.length === 0` — und damit ließ
+   * sich der Replay ohne einen geplanten Trade überhaupt nicht bewegen: „Nein —
+   * weiterlaufen" setzte die Freigabe, die Grenze sah sie nie an. Genau die
+   * Enthaltung ist aber eine vollwertige Antwort und die einzige Zahl gegen
+   * Überhandeln; sie darf den Durchlauf nicht blockieren.
+   *
+   * `gestartet` und `freigabe` sind bewusst zwei Dinge: Im manuellen Modus gibt
+   * `naechsteFreigabe` absichtlich `null` zurück — das heißt „keine Grenze",
+   * nicht „nichts freigegeben". Ohne die Trennung wäre der manuelle Modus
+   * dauerhaft gesperrt.
    */
   const neuCap = ended
     ? undefined
-    : trades.length === 0
-      ? startIndex > 0
+    : gestartet
+      ? (freigabe ?? undefined)
+      : startIndex > 0
         ? startIndex
         : undefined
-      : (freigabe ?? undefined)
 
   const cap = altModell ? altCap : neuCap
 
@@ -295,6 +316,8 @@ export function TrainingWorkspace({
 
   /** Nach jedem Schritt: bis zum nächsten Haltepunkt weiter freigeben. */
   const weiterGeben = useCallback(() => {
+    // Auch eine Enthaltung lässt den Durchlauf los — sie ist eine Antwort.
+    setGestartet(true)
     setFreigabe((f) => naechsteFreigabe(Math.max(f ?? 0, visible)))
   }, [naechsteFreigabe, visible])
 
@@ -318,6 +341,7 @@ export function TrainingWorkspace({
       const rows = await listSessionTrades(session.id)
       setTrades(rows)
       // Der erste festgeschriebene Trade öffnet den Replay bis zum ersten Halt.
+      if (rows.length > 0) setGestartet(true)
       setFreigabe((f) => (f == null ? naechsteFreigabe(visible) : f))
     } catch {
       /* Beim nächsten Laden erneut. */
@@ -340,9 +364,10 @@ export function TrainingWorkspace({
   // unbegrenzt weiter, und die Haltepunkte wären mit einem F5 abgeschaltet.
   useEffect(() => {
     if (altModell || ended || trades.length === 0) return
-    if (freigabe != null || startIndex <= 0 || total <= 0) return
+    if (gestartet || startIndex <= 0 || total <= 0) return
+    setGestartet(true)
     setFreigabe(naechsteFreigabe(Math.max(startIndex, visible)))
-  }, [altModell, ended, trades.length, freigabe, startIndex, total, visible, naechsteFreigabe])
+  }, [altModell, ended, trades.length, gestartet, startIndex, total, visible, naechsteFreigabe])
 
   useEffect(() => {
     if (altModell || ended || candles.length === 0 || messungLaeuft.current) return
@@ -458,7 +483,7 @@ export function TrainingWorkspace({
               // Nur solange wirklich nichts festgeschrieben ist. Danach ist die
               // Grenze ein Haltepunkt, keine Sperre — derselbe Text wäre dort
               // schlicht falsch.
-              altModell || trades.length === 0
+              altModell || !gestartet
                 ? 'Erst den Plan festschreiben'
                 : 'Haltepunkt — rechts beantworten'
             }
@@ -472,18 +497,23 @@ export function TrainingWorkspace({
             }
             pickLabel={pickField ? PICK_LABELS[pickField] : undefined}
           />
-          {cap != null && !amHaltepunkt && (
-            <p className="note mt-2">
-              {altModell || trades.length === 0
-                ? 'Der Replay ist gesperrt, bis dein Plan steht. Zeichnen, messen und Werkzeuge benutzen kannst du jetzt schon — die Zeichnungen gehören zu dieser Übung und landen nicht im Chart des Instruments.'
-                : `Der Replay läuft bis zum nächsten Haltepunkt (Kerze ${cap}).`}
-            </p>
-          )}
-          {amHaltepunkt && (
-            <p className="note mt-2 text-warning">
-              Haltepunkt erreicht — beantworte rechts, wie es weitergeht.
-            </p>
-          )}
+          {/* Fester Platz statt Ein- und Ausblenden: Die Zeile wechselt mit
+              jedem Haltepunkt und jeder Freigabe. Wäre sie mal da und mal
+              nicht, verschöbe sich bei jedem Wechsel alles darunter — im
+              Replay sieht das aus, als spränge der Chart. */}
+          <div className="mt-2 min-h-10">
+            {amHaltepunkt ? (
+              <p className="note text-warning">
+                Haltepunkt erreicht — beantworte rechts, wie es weitergeht.
+              </p>
+            ) : cap != null ? (
+              <p className="note">
+                {altModell || !gestartet
+                  ? 'Der Replay ist gesperrt, bis du dich entschieden hast — plane einen Trade oder wähle „Kein Setup". Zeichnen, messen und Werkzeuge benutzen kannst du jetzt schon; die Zeichnungen gehören zu dieser Übung und landen nicht im Chart des Instruments.'
+                  : `Der Replay läuft bis zum nächsten Haltepunkt (Kerze ${cap}).`}
+              </p>
+            ) : null}
+          </div>
         </div>
 
         <div className="xl:col-span-2 xl:min-w-0">

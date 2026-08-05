@@ -71,6 +71,7 @@ import {
   kerzenBisZeitpunkt,
   replayEnde,
 } from '@/lib/replay-timeframes'
+import { replayStand, startFenster } from '@/lib/replay-start'
 import { Button } from '@/components/ui/button'
 import { ChartEmpty, ChartHeader } from '@/components/chart-frame'
 import { CandlestickChart, Camera, Loader2, Maximize2, Minimize2 } from 'lucide-react'
@@ -272,7 +273,16 @@ export function PriceChart({
   // Instrument oder andere Basis-Ebene) — nicht bei jedem neuen Kerzensatz.
   // Sonst spränge der Durchlauf beim Wechsel der angesehenen Zeitebene zurück
   // an den Anfang, und Top-Down-Analyse wäre unmöglich.
-  const replayInitRef = useRef<string | null>(null)
+  //
+  // Mit EINER Ausnahme, und die war der Grund, warum der Trainer unbenutzbar
+  // war: Der Startpunkt einer Übung entsteht erst aus den Kerzen, die genau
+  // dieser Chart lädt (`onCandlesLoaded` → `startIndexMitVorlauf`). Er trifft
+  // also zwangsläufig NACH der ersten Initialisierung ein. Die Sperre lehnte
+  // ihn dann ab, der Chart behielt seinen eigenen Stand von 62 % — und weil
+  // die Obergrenze weiter unten nichts klemmte, lag die Zukunft offen und die
+  // Bedienleiste stand auf „durchgelaufen". Deshalb wird ein nachgereichter
+  // Startpunkt genau einmal nachgezogen; danach greift die Sperre wie zuvor.
+  const replayInitRef = useRef<{ key: string; hatteStart: boolean } | null>(null)
   useEffect(() => {
     if (!replayMode || !basisKerzen || basisKerzen.length === 0) {
       if (!replayMode) {
@@ -281,15 +291,32 @@ export function PriceChart({
       }
       return
     }
-    if (replayInitRef.current === basisSchluessel) return
-    replayInitRef.current = basisSchluessel
+    const init = replayInitRef.current
+    const nachziehen =
+      init?.key === basisSchluessel && !init.hatteStart && replayStart != null
+    if (init?.key === basisSchluessel && !nachziehen) return
+    replayInitRef.current = { key: basisSchluessel, hatteStart: replayStart != null }
     setReplayVisible(
-      Math.min(
-        basisKerzen.length,
-        Math.max(1, replayStart ?? Math.max(30, Math.round(basisKerzen.length * 0.62))),
-      ),
+      replayStand(basisKerzen.length, replayStart ?? null, replayMaxVisible ?? null),
     )
-  }, [replayMode, basisKerzen, replayStart, basisSchluessel])
+  }, [replayMode, basisKerzen, replayStart, replayMaxVisible, basisSchluessel])
+
+  /**
+   * Der geltende Stand — der gespeicherte Wert, geklemmt an Reihe UND
+   * Obergrenze.
+   *
+   * Abgeleitet statt gespeichert, weil die Obergrenze sich bewegt: Sie ist vor
+   * dem Festschreiben der Startpunkt und danach der jeweils nächste
+   * Haltepunkt. Ein zweiter Zustand daneben liefe beim nächsten Haltepunkt
+   * auseinander — und genau dieses Auseinanderlaufen deckte die Zukunft auf.
+   */
+  const replayStandJetzt = useMemo(
+    () =>
+      replayVisible == null || !basisKerzen || basisKerzen.length === 0
+        ? null
+        : replayStand(basisKerzen.length, replayVisible, replayMaxVisible ?? null),
+    [replayVisible, basisKerzen, replayMaxVisible],
+  )
 
   // Den geladenen Satz einmal nach oben melden (der Trainer schreibt Umfang und
   // Startpunkt in die Übung).
@@ -302,24 +329,28 @@ export function PriceChart({
     if (satz && satz.length > 0) onCandlesLoaded?.(satz)
   }, [candles, basisKerzen, replayMode, onCandlesLoaded])
 
+  // Auch hier wird geklemmt: Ein Regler, der über die Obergrenze hinausläuft,
+  // hebt die Sperre auf — und nach oben gemeldet werden darf nur ein Stand, den
+  // die Übung auch freigegeben hat (daran hängen Haltepunkte und Messung).
   const handleReplayChange = useCallback(
     (v: number) => {
-      setReplayVisible(v)
-      onReplayVisibleChange?.(v)
+      const wert = replayStand(basisKerzen?.length ?? 0, v, replayMaxVisible ?? null)
+      setReplayVisible(wert)
+      onReplayVisibleChange?.(wert)
     },
-    [onReplayVisibleChange],
+    [onReplayVisibleChange, basisKerzen, replayMaxVisible],
   )
 
   const chartCandles = useMemo(() => {
     if (!candles) return null
-    if (!replayMode || replayVisible == null || !basisKerzen) return candles
+    if (!replayMode || replayStandJetzt == null || !basisKerzen) return candles
     const basisS = intervalSekunden(basisInterval)
-    const ende = replayEnde(basisKerzen, replayVisible, basisS)
+    const ende = replayEnde(basisKerzen, replayStandJetzt, basisS)
     if (ende == null) return candles
     // Bei gleicher Zeitebene ist das Ergebnis identisch mit dem früheren
     // `slice(0, sichtbar)` — geprüft in `lib/replay-timeframes.test.ts`.
     return kerzenBisZeitpunkt(candles, basisKerzen, ende, intervalSekunden(interval), basisS)
-  }, [candles, basisKerzen, replayMode, replayVisible, interval, basisInterval])
+  }, [candles, basisKerzen, replayMode, replayStandJetzt, interval, basisInterval])
 
   // Identität der ANSICHT — nicht der Daten. Nur wenn sie wechselt, darf der
   // sichtbare Bereich neu gesetzt werden. Chart-Typ und Theme stehen bewusst
@@ -327,7 +358,11 @@ export function PriceChart({
   // dem Chart und behält ihren Zustand — ein Farbwechsel soll den Zoom nicht
   // kosten.
   const viewKey = `${symbol}|${market}|${timeframe}`
-  const viewRef = useRef<string | null>(null)
+  // Neben der Ansicht wird mitgeführt, ob der Replay-Stand beim Setzen des
+  // Ausschnitts schon bekannt war — aus demselben Grund wie oben: Beim ersten
+  // Durchlauf ist er es nicht, und ein Ausschnitt, der auf dem ungeschnittenen
+  // Satz gesetzt wurde, zeigt ans Ende der Historie statt an den Cursor.
+  const viewRef = useRef<{ key: string; hatteReplay: boolean } | null>(null)
   /** Kerzenzahl des letzten Durchlaufs — daran hängt das Mitlaufen im Replay. */
   const lastLenRef = useRef(0)
 
@@ -1148,11 +1183,26 @@ export function PriceChart({
 
     const len = chartCandles.length
 
-    if (viewRef.current !== viewKey) {
+    // Im Replay zählt der Ausschnitt in KERZEN, nicht in Tagen. Das Zeitfenster
+    // der Ebene (`days`) ist dort die falsche Größe: Bei einem Vorlauf von 800
+    // Kerzen auf der 15-Minuten-Ebene deckt es einen Bruchteil davon ab — der
+    // gewählte Kontext, für den der Vorlauf überhaupt existiert, wäre nicht zu
+    // sehen. Gezeigt wird deshalb ein lesbares Fenster am rechten Rand; die
+    // letzte freigegebene Kerze ist die letzte im Bild, dahinter kommt nichts.
+    const replayFenster = replayMode && replayStandJetzt != null
+    const view = viewRef.current
+    const viewNachziehen = view?.key === viewKey && !view.hatteReplay && replayFenster
+
+    if (view?.key !== viewKey || viewNachziehen) {
       // Neue Ansicht (anderes Instrument oder andere Zeitebene): Ausschnitt
-      // einmal auf das gewählte Zeitfenster setzen.
-      viewRef.current = viewKey
-      if (days && len > 1) {
+      // einmal setzen.
+      viewRef.current = { key: viewKey, hatteReplay: replayMode ? replayFenster : true }
+      if (replayFenster && len > 1) {
+        const fenster = startFenster(len)
+        chart
+          .timeScale()
+          .setVisibleLogicalRange({ from: len - fenster, to: len - 0.5 })
+      } else if (days && len > 1) {
         const to = chartCandles[len - 1].time
         const from = Math.max(chartCandles[0].time, to - days * 86400)
         chart.timeScale().setVisibleRange({
@@ -1174,7 +1224,16 @@ export function PriceChart({
     // jeder Replay-Kerze der Zoom des Nutzers weggeworfen.
 
     lastLenRef.current = len
-  }, [chartCandles, days, seriesMarkers, chartStyle, seriesVersion, viewKey])
+  }, [
+    chartCandles,
+    days,
+    seriesMarkers,
+    chartStyle,
+    seriesVersion,
+    viewKey,
+    replayMode,
+    replayStandJetzt,
+  ])
 
   // OHLC-Legende oben links: Werte der Kerze unterm Crosshair (Direkt-DOM,
   // damit Mausbewegungen keine React-Renders auslösen).
@@ -1611,10 +1670,10 @@ export function PriceChart({
       {/* Gezählt wird in Kerzen der BASIS-Ebene, nicht der angesehenen: „eine
           Kerze weiter" muss beim Wechsel auf den Tageschart dasselbe bedeuten
           wie vorher, sonst springt der Durchlauf. */}
-      {replayMode && basisKerzen && replayVisible != null && (
+      {replayMode && basisKerzen && replayStandJetzt != null && (
         <ChartReplayControls
           total={basisKerzen.length}
-          visible={replayVisible}
+          visible={replayStandJetzt}
           onChange={handleReplayChange}
           start={replayStart}
           maxVisible={replayMaxVisible}

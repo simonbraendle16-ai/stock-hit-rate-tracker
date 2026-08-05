@@ -33,7 +33,13 @@ export default async function TrainingSessionPage({
   return (
     <div className="min-h-svh">
       <CockpitHeader userLabel={auth_session.user.name || auth_session.user.email} />
-      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
+      {/* Breiter als die übrigen Seiten (`max-w-7xl` = 1280 px). Dort begrenzt
+          die Breite bewusst die Zeilenlänge — hier steht kein Text, sondern die
+          Arbeitsfläche der Übung. Auf einem 1900-px-Schirm lagen zuvor 680 px
+          brach, während der Chart auf 875 px gedrückt war und die Kerzen
+          entsprechend schmal. Gelesen wird eine Struktur; dafür zählt jede
+          Kerzenbreite. */}
+      <main className="mx-auto max-w-[1800px] px-4 py-6 sm:px-6 sm:py-8">
         <Link
           href="/trainer"
           className="mb-4 inline-flex items-center gap-1 font-mono text-xs text-muted-foreground hover:text-foreground"
