@@ -188,21 +188,33 @@ export function DrawingLayer({
   const height = svgRef.current?.clientHeight ?? 0
 
   // Die echten Maße der Achsen. Sie ändern sich mit der Länge der Kurse (und
-  // mit dem Ausblenden der Zeitachse in verdeckten Übungen), deshalb werden sie
-  // bei jedem Rendern erfragt statt einmal geschätzt. Der Aufschlag von 1 px
-  // verhindert, dass die Zeichenebene die Achsenlinie selbst überlappt.
+  // mit dem Ausblenden der Zeitachse in verdeckten Übungen). Der Aufschlag von
+  // 1 px verhindert, dass die Zeichenebene die Achsenlinie selbst überlappt.
+  //
   // Die Breite kommt aus dem DOM (`preisachsenBreite`): `priceScale().width()`
   // liefert in diesem Chart 0 — und 0 hieß hier „die Achse ist keinen Pixel
-  // breit", also lag die Zeichenebene doch wieder über der ganzen Preisachse
-  // und schluckte die Klicks zum Ziehen. Genau das sollte diese Stelle
-  // verhindern.
-  let achsenBreite = preisachsenBreite(svgRef.current?.parentElement) + 1
-  let achsenHoehe = 26
-  try {
-    achsenHoehe = Math.round(chart.timeScale().height()) + 1
-  } catch {
-    // Ein Chart ohne Zeitachse darf das Zeichnen nicht kosten.
-  }
+  // breit", also lag die Zeichenebene über der ganzen Preisachse und schluckte
+  // die Klicks zum Ziehen.
+  //
+  // Gemessen wird BEWUSST nicht bei jedem Rendern: `getBoundingClientRect`
+  // erzwingt ein Layout, und diese Ebene rendert bei jeder Bewegung der
+  // Zeitachse neu — im Replay also laufend. Das reichte, um die Seite
+  // einfrieren zu lassen. `tick` steigt bei genau diesen Bewegungen, die
+  // Messung hängt daran und passiert damit höchstens einmal je Änderung.
+  const { achsenBreite, achsenHoehe } = useMemo(() => {
+    let hoehe = 26
+    try {
+      hoehe = Math.round(chart.timeScale().height()) + 1
+    } catch {
+      // Ein Chart ohne Zeitachse darf das Zeichnen nicht kosten.
+    }
+    return {
+      achsenBreite: preisachsenBreite(svgRef.current?.parentElement) + 1,
+      achsenHoehe: hoehe,
+    }
+    // `tick` und `width` sind die Auslöser: Beide ändern sich genau dann, wenn
+    // sich die Achsen bewegt haben können.
+  }, [chart, tick, width])
 
   /** Strahl: von a durch b bis zum Canvas-Rand verlängern. */
   const extendRay = useCallback(

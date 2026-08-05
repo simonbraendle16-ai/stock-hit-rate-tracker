@@ -3,6 +3,7 @@ import {
   clampStopEvery,
   computeInterventionCost,
   DEFAULT_STOP_EVERY,
+  fortschrittZeit,
   measureOutcome,
   nextStopAt,
   suggestRating,
@@ -256,5 +257,20 @@ describe('summarizeSession', () => {
   it('zeigt ohne entschiedenen Trade keine Quote', () => {
     expect(summarizeSession([]).quote).toBeNull()
     expect(summarizeSession([{ outcome: null, rMultiple: null }]).quote).toBeNull()
+  })
+})
+
+describe('fortschrittZeit', () => {
+  it('nimmt die spaeteste gesehene Kerze', () => {
+    expect(fortschrittZeit([100, 300, 200])).toBe(300)
+  })
+
+  it('ignoriert fehlende und unbrauchbare Werte', () => {
+    expect(fortschrittZeit([null, 250, undefined, Number.NaN])).toBe(250)
+  })
+
+  it('ergibt null, wenn nichts gesehen wurde', () => {
+    expect(fortschrittZeit([])).toBe(null)
+    expect(fortschrittZeit([null, undefined])).toBe(null)
   })
 })

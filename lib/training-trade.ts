@@ -473,3 +473,31 @@ export function summarizeSession(
   if (out.entschieden > 0) out.quote = (out.ziel / out.entschieden) * 100
   return out
 }
+
+/**
+ * Wie weit eine Sitzung schon aufgedeckt war — als ZEIT der zuletzt gesehenen
+ * Kerze.
+ *
+ * Der Fortschritt lag bis hierher nur im Browser. Ein F5 setzte die Sitzung
+ * damit zurück vor die erste Entscheidung: Der Replay war wieder gesperrt, und
+ * eine erneut gegebene Antwort „kein Setup" landete ein ZWEITES Mal in
+ * `training_checkpoint`. Ausgerechnet die Zahl gegen das Überhandeln wurde so
+ * durch einen Seitenneuladen nach oben verfälscht.
+ *
+ * Gerechnet wird über die Zeit, nicht über einen Index — aus demselben Grund
+ * wie beim Startpunkt der Übung: Ein Index gilt nur in genau dem Kerzensatz,
+ * in dem er entstand, und der Kerzenspeicher wächst.
+ *
+ * Genommen wird das MAXIMUM: Gesehen ist gesehen. Ein früherer Wert wäre
+ * harmlos (man sieht noch einmal hin), ein späterer würde Zukunft aufdecken —
+ * deshalb gehen hier ausschließlich Zeiten ein, die der Nutzer nachweislich
+ * schon vor sich hatte.
+ */
+export function fortschrittZeit(zeiten: readonly (number | null | undefined)[]): number | null {
+  let max: number | null = null
+  for (const z of zeiten) {
+    if (typeof z !== 'number' || !Number.isFinite(z)) continue
+    if (max == null || z > max) max = z
+  }
+  return max
+}

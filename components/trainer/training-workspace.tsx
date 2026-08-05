@@ -86,6 +86,7 @@ export function TrainingWorkspace({
   annotations,
   result,
   initialTrades = [],
+  fortschritt,
 }: {
   session: TrainingSessionView
   annotations: Drawing[]
@@ -97,6 +98,13 @@ export function TrainingWorkspace({
   } | null
   /** Die geübten Trades dieser Sitzung (Ausbaustufe 2). */
   initialTrades?: TrainingTradeView[]
+  /**
+   * Wie weit der Replay schon aufgedeckt war, als Kerzenzeit. Kommt vom Server
+   * (`getSessionProgress`) — ohne ihn stünde die Sitzung nach jedem Neuladen
+   * wieder vor der ersten Entscheidung, und eine erneut gegebene Antwort
+   * zählte doppelt.
+   */
+  fortschritt?: { letzteKerzenzeit: number | null; antworten: number }
 }) {
   const router = useRouter()
   const [status, setStatus] = useState<TrainingStatus>(session.status)
@@ -193,6 +201,17 @@ export function TrainingWorkspace({
             setVisible((v) => (v === startIndex ? index : v))
           }
         }
+
+        // Den bereits aufgedeckten Stand wiederherstellen — über dieselbe
+        // Zeit-statt-Index-Regel wie beim Startpunkt. `Math.max` sorgt dafür,
+        // dass ein Neuladen den Replay nie ZURÜCKzieht; nach vorn geht er hier
+        // ohnehin nur bis dahin, wo der Nutzer nachweislich schon war.
+        const bis = fortschritt?.letzteKerzenzeit
+        if (bis != null) {
+          let idx = candles.findIndex((c) => c.time > bis)
+          if (idx === -1) idx = candles.length
+          if (idx > 0) setVisible((v) => Math.max(v, idx))
+        }
         return
       }
       registered.current = true
@@ -231,7 +250,14 @@ export function TrainingWorkspace({
           /* Das Replay läuft trotzdem — beim nächsten Laden wird es erneut versucht. */
         })
     },
-    [session.id, session.mode, session.startCandleTime, session.leadIn, startIndex],
+    [
+      session.id,
+      session.mode,
+      session.startCandleTime,
+      session.leadIn,
+      startIndex,
+      fortschritt?.letzteKerzenzeit,
+    ],
   )
 
   // Beim ersten Rendern ist der Startpunkt noch unbekannt; bis dahin steht
@@ -363,11 +389,25 @@ export function TrainingWorkspace({
   // schon Trades trägt, muss sie neu gesetzt werden. Ohne das liefe der Replay
   // unbegrenzt weiter, und die Haltepunkte wären mit einem F5 abgeschaltet.
   useEffect(() => {
-    if (altModell || ended || trades.length === 0) return
-    if (gestartet || startIndex <= 0 || total <= 0) return
+    if (altModell || ended || gestartet || startIndex <= 0 || total <= 0) return
+    // Losgelassen wurde die Sitzung, sobald es einen geübten Trade ODER einen
+    // beantworteten Haltepunkt gibt. Der zweite Fall fehlte: Wer nur „kein
+    // Setup" geantwortet hatte, stand nach einem F5 wieder vor der Sperre —
+    // und zählte seine Enthaltung beim erneuten Antworten ein zweites Mal.
+    if (trades.length === 0 && (fortschritt?.antworten ?? 0) === 0) return
     setGestartet(true)
     setFreigabe(naechsteFreigabe(Math.max(startIndex, visible)))
-  }, [altModell, ended, trades.length, gestartet, startIndex, total, visible, naechsteFreigabe])
+  }, [
+    altModell,
+    ended,
+    trades.length,
+    fortschritt?.antworten,
+    gestartet,
+    startIndex,
+    total,
+    visible,
+    naechsteFreigabe,
+  ])
 
   useEffect(() => {
     if (altModell || ended || candles.length === 0 || messungLaeuft.current) return

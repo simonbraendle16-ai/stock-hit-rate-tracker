@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { CockpitHeader } from '@/components/cockpit-header'
 import { TrainingWorkspace } from '@/components/trainer/training-workspace'
 import { getTrainingSession } from '@/app/actions/training'
-import { listSessionTrades } from '@/app/actions/training-trades'
+import { getSessionProgress, listSessionTrades } from '@/app/actions/training-trades'
 import { TRAINING_MODES } from '@/lib/training'
 import { ArrowLeft } from 'lucide-react'
 
@@ -27,6 +27,11 @@ export default async function TrainingSessionPage({
   // Die geübten Trades dieser Sitzung (Migration 0029). Bei Übungen aus der
   // Zeit davor ist die Liste leer — sie laufen weiter im alten Ablauf.
   const trades = await listSessionTrades(sessionId)
+
+  // Wie weit der Replay schon aufgedeckt war. Ohne das stünde die Sitzung nach
+  // jedem Neuladen wieder vor der ersten Entscheidung — und eine erneut
+  // gegebene Antwort zählte doppelt.
+  const fortschritt = await getSessionProgress(sessionId)
 
   const modus = TRAINING_MODES.find((m) => m.id === data.session.mode)
 
@@ -63,6 +68,7 @@ export default async function TrainingSessionPage({
           annotations={data.annotations}
           result={data.result}
           initialTrades={trades}
+          fortschritt={fortschritt}
         />
       </main>
     </div>

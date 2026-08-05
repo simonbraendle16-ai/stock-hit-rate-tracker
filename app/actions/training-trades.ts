@@ -47,6 +47,7 @@ import {
 import {
   MAX_SESSION_TRADES,
   computeInterventionCost,
+  fortschrittZeit,
   isCheckpointDecision,
   measureOutcome,
   validateTradeDraft,
@@ -339,6 +340,52 @@ export async function logTrainingCheckpoint(input: {
   })
 
   return { ok: true }
+}
+
+/**
+ * Wo die Sitzung stehen geblieben ist.
+ *
+ * Der Replay-Fortschritt lag bis hierher ausschließlich im Browser. Ein F5
+ * warf die Sitzung damit zurück vor die erste Entscheidung — der Replay war
+ * wieder gesperrt, und eine erneut gegebene Antwort „kein Setup" landete ein
+ * ZWEITES Mal in `training_checkpoint`. Genau die Zahl gegen das Überhandeln
+ * wurde so durch ein Neuladen nach oben verfälscht.
+ *
+ * Zurückgegeben wird die ZEIT der zuletzt gesehenen Kerze, nicht ein Index:
+ * dieselbe Entscheidung wie beim Startpunkt der Übung (der Kerzenspeicher
+ * wächst, ein Index gilt nur in seinem eigenen Satz).
+ *
+ * Quellen sind ausschließlich Dinge, die der Nutzer nachweislich schon vor
+ * sich hatte — beantwortete Haltepunkte und die Einstiege der geübten Trades.
+ * Ergebniszeiten bleiben bewusst draußen: Sie können aus der Schlussmessung
+ * über die volle Historie stammen und würden Zukunft aufdecken.
+ */
+export async function getSessionProgress(sessionId: number): Promise<{
+  letzteKerzenzeit: number | null
+  antworten: number
+}> {
+  const userId = await getUserId()
+  await loadSession(userId, sessionId)
+
+  const punkte = await db
+    .select({ candleTime: trainingCheckpoint.candleTime })
+    .from(trainingCheckpoint)
+    .where(
+      and(eq(trainingCheckpoint.sessionId, sessionId), eq(trainingCheckpoint.userId, userId)),
+    )
+
+  const trades = await db
+    .select({ entryCandleTime: trainingTrade.entryCandleTime })
+    .from(trainingTrade)
+    .where(and(eq(trainingTrade.sessionId, sessionId), eq(trainingTrade.userId, userId)))
+
+  return {
+    letzteKerzenzeit: fortschrittZeit([
+      ...punkte.map((p) => p.candleTime),
+      ...trades.map((t) => t.entryCandleTime),
+    ]),
+    antworten: punkte.length,
+  }
 }
 
 /**
