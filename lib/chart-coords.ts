@@ -130,3 +130,31 @@ export function snapTime(times: number[], step: number, time: number): number {
 export function istProjektion(times: number[], time: number): boolean {
   return times.length > 0 && time > times[times.length - 1]
 }
+
+/** Schätzung, wenn sich die Achse nicht messen lässt (lange Kurse brauchen mehr). */
+export const ACHSEN_BREITE_FALLBACK = 70
+
+/**
+ * Prüft eine gemessene Breite der Preisachse und gibt sie oder die Schätzung.
+ *
+ * Warum überhaupt geprüft wird: Die Chart-Bibliothek gibt die Breite nicht
+ * verlässlich her. `priceScale().width()` liefert hier **0**, und
+ * `timeScale().width()` schließt einen Teil der Achse mit ein — daraus
+ * gerechnet blieben ein paar Pixel übrig. Beide Wege sahen nach einer Messung
+ * aus und waren doch falsch; gemessen wird die Achse deshalb am DOM (sie ist
+ * die letzte Zelle der Chart-Tabelle). Diese Funktion ist das Sieb davor.
+ *
+ * Eine Breite von 0 ist der gefährlichste Fall: Sie bedeutet „die Achse ist
+ * keinen Pixel breit", und dann legt sich die Zeichenebene über die ganze
+ * Achse und schluckt die Klicks, mit denen man sie zieht. Genau daran ist das
+ * Ziehen an der Preisachse gescheitert. Mehr als die halbe Chartbreite ist
+ * ebenso wenig eine Achse.
+ */
+export function pruefeAchsenBreite(containerBreite: number, gemessen: number): number {
+  if (!Number.isFinite(containerBreite) || !Number.isFinite(gemessen)) {
+    return ACHSEN_BREITE_FALLBACK
+  }
+  const b = Math.round(gemessen)
+  if (b <= 0 || b > containerBreite / 2) return ACHSEN_BREITE_FALLBACK
+  return b
+}

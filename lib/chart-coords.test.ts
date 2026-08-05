@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  ACHSEN_BREITE_FALLBACK,
+  pruefeAchsenBreite,
   barStep,
   istProjektion,
   logicalToTime,
@@ -107,5 +109,29 @@ describe('istProjektion', () => {
     expect(istProjektion(gleich, letzte)).toBe(false)
     expect(istProjektion(gleich, letzte + 1)).toBe(true)
     expect(istProjektion([], 5)).toBe(false)
+  })
+})
+
+describe('pruefeAchsenBreite', () => {
+  it('nimmt eine plausible gemessene Breite', () => {
+    expect(pruefeAchsenBreite(1170, 62)).toBe(62)
+    expect(pruefeAchsenBreite(1170, 90)).toBe(90)
+  })
+
+  it('lehnt 0 ab — der gefaehrlichste Fall', () => {
+    // priceScale().width() liefert genau das; mit 0 laege die Zeichenebene
+    // ueber der ganzen Achse.
+    expect(pruefeAchsenBreite(1170, 0)).toBe(ACHSEN_BREITE_FALLBACK)
+    expect(pruefeAchsenBreite(1170, -5)).toBe(ACHSEN_BREITE_FALLBACK)
+  })
+
+  it('haelt eine halbe Chartbreite nicht fuer eine Achse', () => {
+    expect(pruefeAchsenBreite(1000, 600)).toBe(ACHSEN_BREITE_FALLBACK)
+  })
+
+  it('rundet und faengt unbrauchbare Zahlen ab', () => {
+    expect(pruefeAchsenBreite(1170, 61.6)).toBe(62)
+    expect(pruefeAchsenBreite(Number.NaN, 62)).toBe(ACHSEN_BREITE_FALLBACK)
+    expect(pruefeAchsenBreite(1170, Number.NaN)).toBe(ACHSEN_BREITE_FALLBACK)
   })
 })

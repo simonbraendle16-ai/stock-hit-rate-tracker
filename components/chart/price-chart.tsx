@@ -72,6 +72,7 @@ import {
   replayEnde,
 } from '@/lib/replay-timeframes'
 import { replayStand, startFenster } from '@/lib/replay-start'
+import { preisachsenBreite } from './axis-dom'
 import { Button } from '@/components/ui/button'
 import { ChartEmpty, ChartHeader } from '@/components/chart-frame'
 import { CandlestickChart, Camera, Loader2, Maximize2, Minimize2 } from 'lucide-react'
@@ -851,6 +852,10 @@ export function PriceChart({
 
   // ---- Indikatoren (AP 7) ---------------------------------------------------
   const [indicators, setIndicators] = useState<IndicatorConfig>(DEFAULT_INDICATORS)
+  /** Die Indikator-Serien; der Preis-Zoom muss sie mitziehen (siehe dort). */
+  const overlaySerienRef = useRef<ISeriesApi<SeriesType>[]>([])
+  /** Zählt hoch, wenn die Overlays neu entstanden sind. */
+  const [overlayVersion, setOverlayVersion] = useState(0)
 
   // Gespeicherte Konfiguration erst nach dem Mount laden (kein SSR-Mismatch).
   useEffect(() => {
@@ -939,6 +944,11 @@ export function PriceChart({
       }
     }
 
+    // Die Overlays im Hauptbereich teilen sich die rechte Preisachse mit den
+    // Kerzen. Der Preis-Zoom muss sie deshalb kennen — siehe dort.
+    overlaySerienRef.current = added
+    setOverlayVersion((v) => v + 1)
+
     return () => {
       // Beim Unmount kann der Chart bereits entsorgt sein — dann ist nichts zu tun.
       try {
@@ -946,6 +956,7 @@ export function PriceChart({
       } catch {
         /* Chart disposed */
       }
+      overlaySerienRef.current = []
     }
   }, [chartCandles, indicators, chartReady, palette])
 
@@ -1120,19 +1131,64 @@ export function PriceChart({
   useEffect(() => {
     const series = seriesRef.current
     if (!chartReady || !series) return
-    series.applyOptions({
-      autoscaleInfoProvider: (original: () => AutoscaleInfo | null) => {
-        const res = original()
-        if (!res?.priceRange || preisFaktor === 1) return res
-        const { minValue, maxValue } = res.priceRange
-        const mitte = (minValue + maxValue) / 2
-        const halb = (maxValue - minValue) / 2 / preisFaktor
-        // Ein Bereich der Breite 0 wäre eine unbrauchbare Achse.
-        if (!(halb > 0)) return res
-        return { ...res, priceRange: { minValue: mitte - halb, maxValue: mitte + halb } }
-      },
-    })
-  }, [preisFaktor, chartReady, seriesVersion])
+
+    /*
+     * Der Preis-Zoom muss auf ALLE Serien der rechten Achse, nicht nur auf die
+     * Kerzen.
+     *
+     * Eine Preisskala nimmt den Bereich, den ihre Serien zusammen brauchen —
+     * die VEREINIGUNG. Stauchte man nur die Kerzenserie, blieb die breiteste
+     * andere Serie stehen und die Achse änderte sich um kein Pixel. Genau
+     * deshalb wirkten „+/−", „Auto" und Umschalt+Pfeil bei eingeschalteten
+     * Indikatoren nicht: Die Bollinger-Bänder liegen außen und hielten den
+     * Bereich fest. Ohne Indikatoren wirkte es, mit ihnen nicht — was den
+     * Fehler so lange verdeckt hat.
+     *
+     * Damit die Vereinigung aufgeht, geben alle beteiligten Serien denselben
+     * Bereich zurück. Grundlage ist der Kursbereich der sichtbaren Kerzen:
+     * Er ist das, was man beim Heranholen ansehen will, und er hängt nicht
+     * davon ab, in welcher Reihenfolge die Serien gefragt werden.
+     *
+     * Beim Faktor 1 („Auto") wird nichts angefasst — dann gilt weiter, was der
+     * Chart selbst ausrechnet, samt der Bänder außen herum.
+     */
+    const provider = (original: () => AutoscaleInfo | null): AutoscaleInfo | null => {
+      const res = original()
+      if (preisFaktor === 1 || !chartCandles || chartCandles.length === 0) return res
+      let min = Infinity
+      let max = -Infinity
+      for (const c of chartCandles) {
+        if (c.low < min) min = c.low
+        if (c.high > max) max = c.high
+      }
+      if (!Number.isFinite(min) || !Number.isFinite(max)) return res
+      const mitte = (min + max) / 2
+      const halb = (max - min) / 2 / preisFaktor
+      // Ein Bereich der Breite 0 wäre eine unbrauchbare Achse.
+      if (!(halb > 0)) return res
+      return { priceRange: { minValue: mitte - halb, maxValue: mitte + halb } }
+    }
+
+    for (const s of [series, ...overlaySerienRef.current]) {
+      try {
+        s.applyOptions({ autoscaleInfoProvider: provider })
+      } catch {
+        /* Eine entfernte Serie darf den Zoom nicht kosten. */
+      }
+    }
+
+    // Den Provider zu setzen genügt nicht: Er wird erst beim nächsten
+    // Neuberechnen gefragt, und ein reiner Optionswechsel löst keines aus —
+    // der Chart hielt deshalb stur seinen alten Bereich. `autoScale: true`
+    // ist zugleich das Signal, den Bereich jetzt neu zu bestimmen, und die
+    // Bedingung dafür, dass der Provider überhaupt zuständig ist: Nach einem
+    // Ziehen an der Achse steht die Skala auf manuell und ignoriert ihn.
+    try {
+      series.priceScale().applyOptions({ autoScale: true })
+    } catch {
+      /* Ohne Achse gibt es nichts zu zoomen. */
+    }
+  }, [preisFaktor, chartReady, seriesVersion, overlayVersion, chartCandles])
 
   // Umschalt + Pfeil hoch/runter zoomt den Preis. Beim Üben liegt der Blick im
   // Chart — derselbe Gedanke wie bei den Replay-Tasten (Leertaste, ← →).
@@ -1147,6 +1203,41 @@ export function PriceChart({
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [preisZoom])
+
+  /**
+   * Mausrad ÜBER der Preisachse zoomt nur den Preis — wie in TradingView.
+   *
+   * Über dem Chart selbst zoomt das Rad weiterhin die Zeit; das ist die
+   * Gewohnheit aus jedem Chartprogramm und wird nicht angefasst. Über der
+   * Achse dagegen erwartet die Hand die Preisskala, und bisher scrollte dort
+   * ebenfalls die Zeit — die Preisachse war nur durch Ziehen erreichbar, und
+   * das findet niemand.
+   *
+   * Die Achsenbreite wird beim Chart erfragt statt geschätzt: Sie wächst mit
+   * der Länge der Kurse (63.533,80 ist breiter als 77,26). Ein fester Wert
+   * ließe je nach Instrument einen Streifen der Achse auf dem Zeit-Zoom.
+   *
+   * `passive: false`, weil sonst kein `preventDefault` möglich ist — ohne das
+   * zoomt der Chart die Zeit mit und die Seite scrollt zusätzlich weg.
+   */
+  useEffect(() => {
+    const el = containerWrapRef.current
+    if (!chartReady || !el) return
+
+    const onWheel = (e: WheelEvent) => {
+      const rect = el.getBoundingClientRect()
+      const breite = preisachsenBreite(el)
+      if (e.clientX < rect.right - breite) return
+      e.preventDefault()
+      e.stopPropagation()
+      // Nach oben gedreht (deltaY < 0) heißt heranholen — dieselbe Richtung
+      // wie beim Zeit-Zoom und wie bei Umschalt + Pfeil hoch.
+      preisZoom(e.deltaY < 0 ? 1 : -1)
+    }
+
+    el.addEventListener('wheel', onWheel, { passive: false, capture: true })
+    return () => el.removeEventListener('wheel', onWheel, { capture: true })
+  }, [chartReady, preisZoom])
 
   // Daten + Marker setzen (Mapping je Chart-Typ).
   useEffect(() => {

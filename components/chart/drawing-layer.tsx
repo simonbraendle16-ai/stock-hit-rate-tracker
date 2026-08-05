@@ -7,6 +7,7 @@ import type { Candle } from '@/lib/market-data/types'
 import type { DrawTool } from './chart-toolbar'
 import { CHART_COLORS } from './colors'
 import { barStep, istProjektion, logicalToTime, snapTime, timeToLogical } from '@/lib/chart-coords'
+import { preisachsenBreite } from './axis-dom'
 import { DEFAULT_FIB, DEFAULT_FIBEXT, fibLinien, normalizeFibStil } from '@/lib/fib-levels'
 import { normalizeDrawingStyle, strichArray } from '@/lib/drawing-style'
 
@@ -190,13 +191,17 @@ export function DrawingLayer({
   // mit dem Ausblenden der Zeitachse in verdeckten Übungen), deshalb werden sie
   // bei jedem Rendern erfragt statt einmal geschätzt. Der Aufschlag von 1 px
   // verhindert, dass die Zeichenebene die Achsenlinie selbst überlappt.
-  let achsenBreite = 70
+  // Die Breite kommt aus dem DOM (`preisachsenBreite`): `priceScale().width()`
+  // liefert in diesem Chart 0 — und 0 hieß hier „die Achse ist keinen Pixel
+  // breit", also lag die Zeichenebene doch wieder über der ganzen Preisachse
+  // und schluckte die Klicks zum Ziehen. Genau das sollte diese Stelle
+  // verhindern.
+  let achsenBreite = preisachsenBreite(svgRef.current?.parentElement) + 1
   let achsenHoehe = 26
   try {
-    achsenBreite = Math.round(chart.priceScale('right').width()) + 1
     achsenHoehe = Math.round(chart.timeScale().height()) + 1
   } catch {
-    // Ein Chart ohne Achsen darf das Zeichnen nicht kosten — dann die Schätzung.
+    // Ein Chart ohne Zeitachse darf das Zeichnen nicht kosten.
   }
 
   /** Strahl: von a durch b bis zum Canvas-Rand verlängern. */
