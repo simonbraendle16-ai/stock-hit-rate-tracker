@@ -1,9 +1,9 @@
 // Symbolauflösung und Kurs-Synchronisierung von der Kommandozeile.
 //
 // Nutzung (PowerShell, aus dem Projektordner):
-//   node node_modules/tsx/dist/cli.mjs scripts/sync-symbols.ts
-//   node node_modules/tsx/dist/cli.mjs scripts/sync-symbols.ts --force --max 100
-//   node node_modules/tsx/dist/cli.mjs scripts/sync-symbols.ts --dry
+//   node node_modules/.pnpm/tsx@*/node_modules/tsx/dist/cli.mjs scripts/sync-symbols.ts
+//   node node_modules/.pnpm/tsx@*/node_modules/tsx/dist/cli.mjs scripts/sync-symbols.ts --force --max 100
+//   node node_modules/.pnpm/tsx@*/node_modules/tsx/dist/cli.mjs scripts/sync-symbols.ts --dry
 //
 // Flags:
 //   --force      auch bereits bestätigte Auflösungen neu prüfen
