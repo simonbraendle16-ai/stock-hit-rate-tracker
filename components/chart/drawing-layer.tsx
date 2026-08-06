@@ -103,7 +103,10 @@ export function DrawingLayer({
   locked?: boolean
 }) {
   const svgRef = useRef<SVGSVGElement>(null)
-  const [, setTick] = useState(0)
+  // Der Zähler wird nicht nur zum Neurendern gebraucht, sondern auch als
+  // Abhängigkeit der Achsenmessung weiter unten — deshalb steht er hier mit
+  // Namen und nicht als weggeworfener erster Wert.
+  const [tick, setTick] = useState(0)
   const [pending, setPending] = useState<DrawingPoint[]>([])
   const [hoverPoint, setHoverPoint] = useState<DrawingPoint | null>(null)
   const [textInput, setTextInput] = useState<{ point: DrawingPoint; px: Pt } | null>(null)
