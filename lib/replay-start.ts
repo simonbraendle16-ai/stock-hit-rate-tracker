@@ -72,3 +72,54 @@ export function startFenster(freigegeben: number): number {
   if (!Number.isFinite(freigegeben) || freigegeben <= 0) return 0
   return Math.max(1, Math.min(Math.floor(freigegeben), MAX_START_FENSTER))
 }
+
+/** Wofür der sichtbare Ausschnitt zuletzt gesetzt wurde. */
+export interface AnsichtStand {
+  /** Instrument + Markt + Zeitebene. */
+  key: string
+  /** Stand der Replay-Startpunkt schon fest, als gesetzt wurde? */
+  hatteReplay: boolean
+  /** Zeitstempel der ERSTEN Kerze — die Kennung der Reihe. */
+  ersteZeit: number
+}
+
+/**
+ * Muss der sichtbare Ausschnitt neu gesetzt werden?
+ *
+ * Die dritte Entscheidung, die im `useEffect` nicht nachprüfbar war — und wie
+ * die beiden davor war sie falsch. Sie trennt zwei Vorgänge, die im Chart
+ * gleich aussehen und gegensätzlich behandelt werden müssen:
+ *
+ *  - **Der Replay läuft.** Dieselbe Reihe wächst hinten. Der Ausschnitt wird
+ *    mitgezogen, der Zoom des Nutzers überlebt. Ein Chart, der einen dabei
+ *    wegreißt, ist im Replay unbrauchbar.
+ *  - **Die Zeitebene wechselt.** Die Reihe wird ausgetauscht. Der Ausschnitt
+ *    der alten Reihe passt nicht mehr und muss neu gesetzt werden.
+ *
+ * Bis hierher kannte der Code nur den Schlüssel (`key`) — und der steht beim
+ * Wechsel sofort auf der neuen Ebene, während die Kerzen erst danach eintreffen.
+ * Gemessen: Der Ausschnitt wurde für die 120 zugeschnittenen Kerzen der alten
+ * Ebene gesetzt und beim Eintreffen der 2290 neuen um 2170 Stellen verschoben,
+ * also hinter die Daten. Die höhere Zeitebene lag zusammengedrängt am Rand.
+ * Das ist nicht kosmetisch: „Gehandelt wird von oben nach unten" steht in
+ * `lib/replay-timeframes.ts` als Begründung des ganzen Trainers.
+ *
+ * Die Reihe wird deshalb an ihrer ERSTEN Kerze erkannt, nicht an ihrer Länge:
+ * Beim Abspielen bleibt die erste Kerze stehen, beim Austausch ändert sie sich.
+ * Die Länge taugt nicht — sie ändert sich in beiden Fällen.
+ */
+export function ansichtNeuSetzen(
+  vorher: AnsichtStand | null,
+  jetzt: { key: string; ersteZeit: number; replayFenster: boolean; len: number },
+): boolean {
+  // Ohne Kerzen ist jeder Ausschnitt geraten. Vor allem darf nichts gemerkt
+  // werden: Das verbrauchte die eine Gelegenheit, ihn richtig zu setzen.
+  if (jetzt.len <= 1) return false
+  if (vorher == null) return true
+  if (vorher.key !== jetzt.key) return true
+  // Andere Reihe unter demselben Schlüssel — der Ebenenwechsel.
+  if (vorher.ersteZeit !== jetzt.ersteZeit) return true
+  // Der Startpunkt der Übung entsteht erst aus den Kerzen und trifft daher
+  // nach dem ersten Setzen ein. Dann einmal nachziehen.
+  return !vorher.hatteReplay && jetzt.replayFenster
+}

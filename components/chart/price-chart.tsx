@@ -71,7 +71,7 @@ import {
   kerzenBisZeitpunkt,
   replayEnde,
 } from '@/lib/replay-timeframes'
-import { replayStand, startFenster } from '@/lib/replay-start'
+import { ansichtNeuSetzen, replayStand, startFenster } from '@/lib/replay-start'
 import { preisachsenBreite } from './axis-dom'
 import { Button } from '@/components/ui/button'
 import { ChartEmpty, ChartHeader } from '@/components/chart-frame'
@@ -363,7 +363,26 @@ export function PriceChart({
   // Ausschnitts schon bekannt war — aus demselben Grund wie oben: Beim ersten
   // Durchlauf ist er es nicht, und ein Ausschnitt, der auf dem ungeschnittenen
   // Satz gesetzt wurde, zeigt ans Ende der Historie statt an den Cursor.
-  const viewRef = useRef<{ key: string; hatteReplay: boolean } | null>(null)
+  /**
+   * Wofür der sichtbare Ausschnitt zuletzt gesetzt wurde.
+   *
+   * `ersteZeit` trennt zwei Fälle, die im Code bis hier gleich aussahen und
+   * gegensätzlich behandelt werden müssen:
+   *  - **Der Replay läuft:** dieselbe Reihe WÄCHST hinten. Die erste Kerze
+   *    bleibt, der Ausschnitt wird mitgezogen, der Zoom des Nutzers überlebt.
+   *  - **Die Zeitebene wechselt:** die Reihe wird AUSGETAUSCHT. Die erste Kerze
+   *    ist eine andere, und der Ausschnitt muss neu gesetzt werden.
+   *
+   * Ohne diese Unterscheidung wurde der Wechsel als Weiterlaufen gelesen.
+   * Gemessen: Der Ausschnitt wurde bei 120 Kerzen gesetzt (noch der Zuschnitt
+   * der alten Ebene) und beim Eintreffen der 2290 neuen um 2170 Stellen
+   * verschoben — also hinter die Daten. Die höhere Zeitebene lag damit
+   * zusammengedrängt am Rand und war nicht mehr zu lesen. Genau dafür ist sie
+   * aber da: „gehandelt wird von oben nach unten" (`lib/replay-timeframes.ts`).
+   */
+  const viewRef = useRef<{ key: string; hatteReplay: boolean; ersteZeit: number } | null>(
+    null,
+  )
   /** Kerzenzahl des letzten Durchlaufs — daran hängt das Mitlaufen im Replay. */
   const lastLenRef = useRef(0)
 
@@ -1281,19 +1300,19 @@ export function PriceChart({
     // sehen. Gezeigt wird deshalb ein lesbares Fenster am rechten Rand; die
     // letzte freigegebene Kerze ist die letzte im Bild, dahinter kommt nichts.
     const replayFenster = replayMode && replayStandJetzt != null
-    const view = viewRef.current
-    const viewNachziehen = view?.key === viewKey && !view.hatteReplay && replayFenster
+    const ersteZeit = len > 0 ? chartCandles[0].time : 0
 
-    if (view?.key !== viewKey || viewNachziehen) {
-      // Neue Ansicht (anderes Instrument oder andere Zeitebene): Ausschnitt
-      // einmal setzen.
-      viewRef.current = { key: viewKey, hatteReplay: replayMode ? replayFenster : true }
-      if (replayFenster && len > 1) {
+    // Die Entscheidung selbst steht rein und getestet in `lib/replay-start.ts`.
+    if (ansichtNeuSetzen(viewRef.current, { key: viewKey, ersteZeit, replayFenster, len })) {
+      viewRef.current = {
+        key: viewKey,
+        hatteReplay: replayMode ? replayFenster : true,
+        ersteZeit,
+      }
+      if (replayFenster) {
         const fenster = startFenster(len)
-        chart
-          .timeScale()
-          .setVisibleLogicalRange({ from: len - fenster, to: len - 0.5 })
-      } else if (days && len > 1) {
+        chart.timeScale().setVisibleLogicalRange({ from: len - fenster, to: len - 0.5 })
+      } else if (days) {
         const to = chartCandles[len - 1].time
         const from = Math.max(chartCandles[0].time, to - days * 86400)
         chart.timeScale().setVisibleRange({

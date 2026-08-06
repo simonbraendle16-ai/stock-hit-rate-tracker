@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { MAX_START_FENSTER, replayStand, startFenster } from './replay-start'
+import {
+  MAX_START_FENSTER,
+  ansichtNeuSetzen,
+  replayStand,
+  startFenster,
+  type AnsichtStand,
+} from './replay-start'
 import { DEFAULT_START_FRACTION, MIN_VISIBLE_CANDLES } from './training'
 
 describe('replayStand', () => {
@@ -81,5 +87,73 @@ describe('startFenster', () => {
     expect(startFenster(0)).toBe(0)
     expect(startFenster(-5)).toBe(0)
     expect(startFenster(Number.NaN)).toBe(0)
+  })
+})
+
+describe('ansichtNeuSetzen', () => {
+  const stand = (
+    key: string,
+    ersteZeit: number,
+    hatteReplay = true,
+  ): AnsichtStand => ({ key, ersteZeit, hatteReplay })
+
+  it('setzt beim ersten Datensatz', () => {
+    expect(
+      ansichtNeuSetzen(null, { key: 'A|1h', ersteZeit: 100, replayFenster: true, len: 500 }),
+    ).toBe(true)
+  })
+
+  it('laesst den Ausschnitt beim Abspielen in Ruhe', () => {
+    // Der Replay laeuft: dieselbe Reihe waechst hinten, die erste Kerze bleibt.
+    // Wer hier neu setzt, reisst dem Uebenden bei jeder Kerze den Zoom weg.
+    const vorher = stand('A|1h', 100)
+    for (const len of [121, 130, 400, 3000]) {
+      expect(
+        ansichtNeuSetzen(vorher, { key: 'A|1h', ersteZeit: 100, replayFenster: true, len }),
+      ).toBe(false)
+    }
+  })
+
+  it('setzt neu, wenn die Reihe ausgetauscht wurde (Zeitebenenwechsel)', () => {
+    // Der Kern des Fehlers: Der Schluessel steht beim Wechsel sofort auf der
+    // neuen Ebene, die Kerzen treffen erst danach ein. Erkannt wird der
+    // Austausch an der ersten Kerze.
+    const vorher = stand('A|4h', 100)
+    expect(
+      ansichtNeuSetzen(vorher, { key: 'A|4h', ersteZeit: 55_000, replayFenster: true, len: 2290 }),
+    ).toBe(true)
+  })
+
+  it('setzt neu bei anderem Instrument oder anderer Ebene', () => {
+    const vorher = stand('A|1h', 100)
+    expect(
+      ansichtNeuSetzen(vorher, { key: 'B|1h', ersteZeit: 100, replayFenster: true, len: 500 }),
+    ).toBe(true)
+    expect(
+      ansichtNeuSetzen(vorher, { key: 'A|4h', ersteZeit: 100, replayFenster: true, len: 500 }),
+    ).toBe(true)
+  })
+
+  it('zieht den spaet eintreffenden Replay-Startpunkt einmal nach', () => {
+    const ohneReplay = stand('A|1h', 100, false)
+    expect(
+      ansichtNeuSetzen(ohneReplay, { key: 'A|1h', ersteZeit: 100, replayFenster: true, len: 3000 }),
+    ).toBe(true)
+    // ... aber nur einmal: danach ist `hatteReplay` wahr.
+    expect(
+      ansichtNeuSetzen(stand('A|1h', 100, true), {
+        key: 'A|1h', ersteZeit: 100, replayFenster: true, len: 3000,
+      }),
+    ).toBe(false)
+  })
+
+  it('setzt nichts ohne Kerzen — und merkt sich dadurch auch nichts', () => {
+    // Vorschnelles Merken war der zweite Teil des Fehlers: Es verbrauchte die
+    // Gelegenheit, den Ausschnitt zu setzen, sobald die Kerzen da sind.
+    for (const len of [0, 1]) {
+      expect(
+        ansichtNeuSetzen(null, { key: 'A|4h', ersteZeit: 0, replayFenster: true, len }),
+      ).toBe(false)
+    }
   })
 })
