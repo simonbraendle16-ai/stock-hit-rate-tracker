@@ -11,16 +11,24 @@ import {
   Eraser,
   Eye,
   EyeOff,
+  Flag,
+  Grid3x3,
   Lock,
+  MessageSquare,
+  Tag,
   LockOpen,
   Magnet,
   Minus,
   MousePointer2,
   MoveUpRight,
+  Plus,
   Redo2,
   Ruler,
   Undo2,
   SeparatorVertical,
+  LayoutGrid,
+  Pin,
+  Star,
   Square,
   TrendingDown,
   TrendingUp,
@@ -51,6 +59,24 @@ export type DrawTool =
   | 'measure'
   | 'pricerange'
   | 'daterange'
+  | 'pitchfork'
+  | 'gannbox'
+  | 'fibfan'
+  | 'fibtime'
+  | 'fibcircle'
+  | 'xabcd'
+  | 'headshoulders'
+  | 'pricelabel'
+  | 'callout'
+  | 'marker'
+  | 'ew_triangle'
+  | 'ew_double'
+  | 'ew_triple'
+  | 'infoline'
+  | 'extendedline'
+  | 'trendangle'
+  | 'hray'
+  | 'crossline'
 
 /** Maße des Werkzeug-Flyouts — nur zum Einpassen ins Fenster. */
 const FLYOUT_ROW = 30 // Höhe einer Zeile (h-7 + gap)
@@ -73,8 +99,13 @@ const GROUPS: { name: string; tools: ToolDef[] }[] = [
     tools: [
       { id: 'trendline', label: 'Trendlinie', icon: icon(TrendingUp) },
       { id: 'ray', label: 'Strahl', icon: icon(MoveUpRight) },
+      { id: 'infoline', label: 'Info-Linie (Kurs, %, Balken)', icon: mono('i—') },
+      { id: 'extendedline', label: 'Verlängerte Gerade', icon: mono('↔') },
+      { id: 'trendangle', label: 'Trendwinkel (mit Grad)', icon: mono('∠') },
       { id: 'hline', label: 'Horizontale Linie', icon: icon(Minus) },
+      { id: 'hray', label: 'Horizontaler Strahl', icon: mono('—▸') },
       { id: 'vline', label: 'Vertikale Linie', icon: icon(SeparatorVertical) },
+      { id: 'crossline', label: 'Fadenkreuz-Linie', icon: icon(Plus) },
       { id: 'arrow', label: 'Pfeil', icon: icon(ArrowUpRight) },
       { id: 'channel', label: 'Paralleler Kanal (3 Punkte)', icon: mono('∥') },
     ],
@@ -92,13 +123,32 @@ const GROUPS: { name: string; tools: ToolDef[] }[] = [
     tools: [
       { id: 'fib', label: 'Fib-Retracement', icon: mono('Fib') },
       { id: 'fibext', label: 'Fib-Extension (3 Punkte)', icon: mono('FibE') },
+      { id: 'fibfan', label: 'Fib-Fan (Strahlen)', icon: mono('Fan') },
+      { id: 'fibtime', label: 'Fib-Zeitzonen', icon: mono('FibT') },
+      { id: 'fibcircle', label: 'Fib-Kreise', icon: mono('FibO') },
     ],
   },
   {
-    name: 'Elliott',
+    name: 'Muster',
     tools: [
-      { id: 'ew_impulse', label: 'Elliott-Impuls 0-1-2-3-4-5 (6 Punkte)', icon: mono('1-5') },
-      { id: 'ew_correction', label: 'Elliott-Korrektur 0-A-B-C (4 Punkte)', icon: mono('ABC') },
+      { id: 'ew_impulse', label: 'Elliott-Impuls 0–5 (6 Punkte)', icon: mono('1-5') },
+      { id: 'ew_correction', label: 'Elliott-Korrektur A-B-C (4 Punkte)', icon: mono('ABC') },
+      { id: 'ew_triangle', label: 'Elliott-Dreieck A-B-C-D-E (6 Punkte)', icon: mono('ABCDE') },
+      { id: 'ew_double', label: 'Elliott-Doppelkombo W-X-Y (4 Punkte)', icon: mono('WXY') },
+      { id: 'ew_triple', label: 'Elliott-Dreifachkombo W-X-Y-X-Z (6 P.)', icon: mono('WXYXZ') },
+      { id: 'xabcd', label: 'XABCD-Muster (5 Punkte)', icon: mono('XABCD') },
+      {
+        id: 'headshoulders',
+        label: 'Kopf-Schulter (7 Punkte)',
+        icon: mono('KSK'),
+      },
+    ],
+  },
+  {
+    name: 'Projektion',
+    tools: [
+      { id: 'pitchfork', label: "Andrews' Pitchfork (3 Punkte)", icon: mono('⋔') },
+      { id: 'gannbox', label: 'Gann-Box (2 Punkte)', icon: icon(Grid3x3) },
     ],
   },
   {
@@ -106,19 +156,24 @@ const GROUPS: { name: string; tools: ToolDef[] }[] = [
     tools: [
       {
         id: 'longpos',
-        label: 'Long-Position (Entry → Stop/Target, R:R)',
+        label: 'Long-Position (Entry/Stop/Ziel)',
         icon: <TrendingUp className="size-4 text-positive" />,
       },
       {
         id: 'shortpos',
-        label: 'Short-Position (Entry → Stop/Target, R:R)',
+        label: 'Short-Position (Entry/Stop/Ziel)',
         icon: <TrendingDown className="size-4 text-destructive" />,
       },
     ],
   },
   {
     name: 'Notiz',
-    tools: [{ id: 'text', label: 'Text/Notiz', icon: icon(Type) }],
+    tools: [
+      { id: 'text', label: 'Text/Notiz', icon: icon(Type) },
+      { id: 'callout', label: 'Sprechblase mit Text', icon: icon(MessageSquare) },
+      { id: 'pricelabel', label: 'Kurs-Etikett', icon: icon(Tag) },
+      { id: 'marker', label: 'Marker/Fähnchen', icon: icon(Flag) },
+    ],
   },
   {
     name: 'Messen',
@@ -130,10 +185,23 @@ const GROUPS: { name: string; tools: ToolDef[] }[] = [
   },
 ]
 
+/** Kennung des einen Werkzeug-Menüs (es gibt nur noch dieses). */
+const ALLE = 'alle'
+
+/** Alle Werkzeuge flach — für Favoritenleiste und Nachschlagen. */
+const ALL_TOOLS: ToolDef[] = GROUPS.flatMap((g) => g.tools)
+const TOOL_BY_ID = new Map(ALL_TOOLS.map((t) => [t.id as string, t]))
+
 /**
  * Vertikale Zeichen-Tool-Leiste links am Chart (TradingView-Stil, AP 9/10):
- * Cursor oben, Tool-Gruppen mit Flyout-Untermenüs, darunter Magnet/Sichtbarkeit/
- * Sperre, unten Löschen.
+ * Cursor oben, dann die FAVORITEN als direkte Knöpfe, darunter die Tool-Gruppen
+ * mit Flyout-Untermenüs, dann Magnet/Sichtbarkeit/Sperre, unten Löschen.
+ *
+ * Die Favoritenleiste ist der Grund, warum die Leiste überhaupt umgebaut wurde:
+ * Achtzehn Werkzeuge hinter sieben Gruppen bedeuten für jedes einzelne zwei
+ * Griffe — Gruppe öffnen, Werkzeug wählen. Wer beim Lesen einer Struktur
+ * zwischen Trendlinie, Niveau und Fib wechselt (also immer), ist damit dauernd
+ * in der Leiste statt im Chart.
  */
 export function ChartToolbar({
   tool,
@@ -152,6 +220,10 @@ export function ChartToolbar({
   onRedo,
   canUndo,
   canRedo,
+  favorites,
+  onToggleFavorite,
+  keepTool,
+  onKeepToolChange,
 }: {
   tool: DrawTool
   onToolChange: (t: DrawTool) => void
@@ -174,6 +246,17 @@ export function ChartToolbar({
   onRedo: () => void
   canUndo: boolean
   canRedo: boolean
+  /**
+   * Die Werkzeuge der Favoritenleiste, in ihrer Reihenfolge. Kennungen, die
+   * diese Leiste nicht kennt, werden übersprungen statt zu stören — die
+   * gespeicherte Liste wird bewusst nicht gegen einen festen Bestand geprüft
+   * (siehe `lib/chart-tools.ts`).
+   */
+  favorites: string[]
+  onToggleFavorite: (id: DrawTool) => void
+  /** Bleibt das Werkzeug nach einer fertigen Zeichnung aktiv? */
+  keepTool: boolean
+  onKeepToolChange: (v: boolean) => void
 }) {
   // Zuletzt genutztes Tool je Gruppe (bestimmt das Icon des Gruppen-Knopfs).
   const [groupChoice, setGroupChoice] = useState<Record<string, DrawTool>>({})
@@ -223,6 +306,17 @@ export function ChartToolbar({
     setConfirmDeleteAll(false)
     onDeleteAll()
   }
+
+  /**
+   * Die Favoriten als echte Werkzeuge. Unbekannte Kennungen fallen hier still
+   * heraus — gespeichert bleiben sie trotzdem, damit ein zurückgenommenes
+   * Werkzeug die Liste des Nutzers nicht dauerhaft beschädigt.
+   */
+  const favoriten = favorites
+    .map((id) => TOOL_BY_ID.get(id))
+    .filter((t): t is ToolDef => t != null)
+
+  const offen = openGroup != null
 
   const selectTool = (groupName: string, t: DrawTool) => {
     setGroupChoice((p) => ({ ...p, [groupName]: t }))
@@ -297,44 +391,67 @@ export function ChartToolbar({
         tool === 'eraser' ? 'text-destructive' : undefined,
       )}
 
-      {GROUPS.map((group) => {
-        const current =
-          group.tools.find((t) => t.id === groupChoice[group.name]) ?? group.tools[0]
-        const groupActive = group.tools.some((t) => t.id === tool)
-        const isOpen = openGroup?.name === group.name
-        return (
-          <Button
-            key={group.name}
-            size="sm"
-            variant={groupActive ? 'secondary' : 'ghost'}
-            className="h-8 w-8 shrink-0 p-0"
-            title={group.tools.length > 1 ? `${group.name} — ${current.label}` : current.label}
-            aria-label={group.name}
-            onClick={(e) => {
-              if (group.tools.length === 1) {
-                selectTool(group.name, group.tools[0].id)
-              } else if (isOpen) {
-                setOpenGroup(null)
-              } else {
-                const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
-                // Das Menü öffnet auf Höhe seines Knopfes — aber die unteren
-                // Gruppen (Fibonacci, Elliott, Position, Notiz, Messen) liefen
-                // damit unten aus dem Bild und waren praktisch nicht bedienbar.
-                // Deshalb wird es am Fensterrand nach oben geschoben.
-                const hoehe = FLYOUT_HEAD + group.tools.length * FLYOUT_ROW
-                const platz = window.innerHeight - FLYOUT_MARGIN - hoehe
-                setOpenGroup({
-                  name: group.name,
-                  top: Math.max(FLYOUT_MARGIN, Math.min(r.top, platz)),
-                  left: r.right + 4,
-                })
-              }
-            }}
-          >
-            {current.icon}
-          </Button>
-        )
-      })}
+      {/* Die Favoriten: ein Griff statt zwei. Sie stehen oben, weil sie im
+          Betrieb die meistbenutzten Knöpfe sind — direkt unter dem Zeiger. */}
+      {favoriten.length > 0 && (
+        <>
+          <div className="my-1 h-px w-5 bg-border" />
+          {favoriten.map((t) => (
+            <Button
+              key={`fav-${t.id}`}
+              size="sm"
+              variant={tool === t.id ? 'secondary' : 'ghost'}
+              className="h-8 w-8 shrink-0 p-0"
+              title={`${t.label} — Favorit (Rechtsklick entfernt ihn)`}
+              aria-label={`${t.label} — Favorit`}
+              onClick={() => onToolChange(t.id)}
+              // Dritter Weg: Rechtsklick nimmt den Favoriten wieder heraus, ohne
+              // den Umweg über das Menü.
+              onContextMenu={(e) => {
+                e.preventDefault()
+                onToggleFavorite(t.id)
+              }}
+            >
+              {t.icon}
+            </Button>
+          ))}
+        </>
+      )}
+
+      <div className="my-1 h-px w-5 bg-border" />
+
+      {/* EIN Knopf für alle Werkzeuge statt sieben Gruppenknöpfe.
+          Grund: Mit der Favoritenleiste darüber wurde die Leiste länger als
+          jeder Chart hoch ist — Magnet, Sperre und Löschen lagen unterhalb des
+          Bildes und waren nur noch durch Scrollen erreichbar. Für ein
+          nicht-favorisiertes Werkzeug sind es weiterhin zwei Griffe, also kein
+          Verlust; alles, was man oft braucht, liegt jetzt als Favorit oben. */}
+      <Button
+        size="sm"
+        variant={offen ? 'secondary' : 'ghost'}
+        className="h-8 w-8 shrink-0 p-0"
+        title="Alle Werkzeuge — Stern setzt einen Favoriten"
+        aria-label="Alle Werkzeuge"
+        aria-expanded={offen}
+        onClick={(e) => {
+          if (offen) {
+            setOpenGroup(null)
+            return
+          }
+          const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+          // Das Menü öffnet auf Höhe seines Knopfes, wird am unteren
+          // Fensterrand aber nach oben geschoben — sonst liefe es aus dem Bild.
+          const hoehe = FLYOUT_HEAD + (ALL_TOOLS.length + GROUPS.length) * FLYOUT_ROW
+          const platz = window.innerHeight - FLYOUT_MARGIN - hoehe
+          setOpenGroup({
+            name: ALLE,
+            top: Math.max(FLYOUT_MARGIN, Math.min(r.top, platz)),
+            left: r.right + 4,
+          })
+        }}
+      >
+        <LayoutGrid className="size-4" />
+      </Button>
 
       {/* Das Flyout hängt am <body>, NICHT hier im Baum.
           Grund: Die Chart-Karte trägt `.rise-in`, und deren `transform` bleibt
@@ -347,7 +464,11 @@ export function ChartToolbar({
         createPortal(
           <div
             ref={flyoutRef}
-            className="panel-raised z-50 flex w-64 flex-col gap-0.5 overflow-y-auto p-1.5"
+            // Zwei Spalten: Einspaltig war das Menü mit 33 Werkzeugen fast 900 px
+            // hoch und füllte damit das ganze Fenster — man sah nie die Struktur,
+            // sondern immer nur einen Ausschnitt, und der Stern rechts am Eintrag
+            // ging darin unter.
+            className="panel-raised z-50 grid w-[36rem] grid-cols-2 gap-x-2 gap-y-0.5 overflow-y-auto p-2"
             style={{
               // `position` MUSS inline stehen: In `globals.css` gilt
               // `body > * { position: relative }`, und diese Regel liegt
@@ -361,19 +482,81 @@ export function ChartToolbar({
               maxHeight: `calc(100vh - ${openGroup.top + FLYOUT_MARGIN}px)`,
             }}
           >
-            <p className="eyebrow px-2 py-1">{openGroup.name}</p>
-            {GROUPS.find((g) => g.name === openGroup.name)?.tools.map((t) => (
-              <Button
-                key={t.id}
-                size="sm"
-                variant={tool === t.id ? 'secondary' : 'ghost'}
-                className="h-7 justify-start gap-2 px-2 font-mono text-[11px]"
-                onClick={() => selectTool(openGroup.name, t.id)}
-              >
-                <span className="flex w-5 justify-center">{t.icon}</span>
-                {t.label}
-              </Button>
-            ))}
+            <div className="col-span-2 mb-1 flex items-center gap-2 px-1">
+              <p className="eyebrow">Werkzeuge</p>
+              <span className="grow" />
+              {/* Der Hinweis stand vorher klein und grau ganz oben und wurde
+                  überlesen — deshalb steht er jetzt mit dem Symbol daneben, das
+                  er erklärt. */}
+              <span className="inline-flex items-center gap-1 font-mono text-[10px] text-muted-foreground">
+                <Star className="size-3.5 text-warning" />
+                anklicken = in die Favoritenleiste
+              </span>
+            </div>
+            {GROUPS.flatMap((g) => [
+              <p key={`h-${g.name}`} className="col-span-2 eyebrow px-1 pb-0.5 pt-2 opacity-70">
+                {g.name}
+              </p>,
+              ...g.tools.map((t) => {
+              const istFavorit = favorites.includes(t.id)
+              return (
+                // Zwei Schaltflächen nebeneinander, nicht eine mit Stern darin:
+                // Ein Stern INNERHALB des Werkzeug-Knopfes würde beim Anklicken
+                // auch das Werkzeug wählen und das Menü schließen — man käme
+                // nie zum Setzen des Sterns.
+                <div
+                  key={t.id}
+                  className="flex items-center gap-0.5"
+                  // Zweiter Weg: Rechtsklick irgendwo auf der Zeile schaltet den
+                  // Favoriten. Ein einziger 14-px-Stern am rechten Rand war zu
+                  // wenig — er wurde schlicht nicht gefunden.
+                  onContextMenu={(e) => {
+                    e.preventDefault()
+                    onToggleFavorite(t.id)
+                  }}
+                >
+                  <Button
+                    size="sm"
+                    variant={tool === t.id ? 'secondary' : 'ghost'}
+                    className="h-8 min-w-0 flex-1 justify-start gap-2 px-2 font-mono text-[11px]"
+                    onClick={() => selectTool(g.name, t.id)}
+                  >
+                    <span className="flex w-5 shrink-0 justify-center">{t.icon}</span>
+                    <span className="truncate">{t.label}</span>
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    // Größer, mit sichtbarem Rahmen und im gesetzten Zustand
+                    // kräftig gefüllt: Der Stern ist jetzt ein Bedienelement und
+                    // keine Verzierung mehr.
+                    className={`h-8 w-8 shrink-0 rounded border p-0 ${
+                      istFavorit
+                        ? 'border-warning/60 bg-warning/10'
+                        : 'border-border/60 hover:border-warning/60'
+                    }`}
+                    title={istFavorit ? 'Aus den Favoriten nehmen' : 'Zu den Favoriten'}
+                    aria-label={istFavorit ? 'Aus den Favoriten nehmen' : 'Zu den Favoriten'}
+                    aria-pressed={istFavorit}
+                    onClick={(e) => {
+                      // Das Menü bleibt offen: Wer Favoriten legt, legt meist
+                      // mehrere.
+                      e.stopPropagation()
+                      onToggleFavorite(t.id)
+                    }}
+                  >
+                    <Star
+                      className={`size-4 ${
+                        istFavorit
+                          ? 'fill-warning text-warning'
+                          : 'text-muted-foreground/70'
+                      }`}
+                    />
+                  </Button>
+                </div>
+              )
+              }),
+            ])}
           </div>,
           document.body,
         )}
@@ -383,6 +566,18 @@ export function ChartToolbar({
       {iconBtn('magnet', magnet ? 'Magnet aus' : 'Magnet: auf O/H/L/C snappen', magnet, () => onMagnetChange(!magnet), (
         <Magnet className="size-4" />
       ))}
+      {/* Ohne diesen Schalter sprang das Werkzeug nach JEDER Zeichnung zurück
+          auf den Zeiger — fünf Niveaus einzeichnen hieß fünfmal in die Leiste
+          greifen. */}
+      {iconBtn(
+        'keep',
+        keepTool
+          ? 'Werkzeug bleibt aktiv — abschalten (springt dann nach jeder Zeichnung zurück)'
+          : 'Werkzeug nach dem Zeichnen aktiv lassen',
+        keepTool,
+        () => onKeepToolChange(!keepTool),
+        <Pin className="size-4" />,
+      )}
       {iconBtn(
         'visible',
         drawingsVisible ? 'Zeichnungen ausblenden' : 'Zeichnungen einblenden',

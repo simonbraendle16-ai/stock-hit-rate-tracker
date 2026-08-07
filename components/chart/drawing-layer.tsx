@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { BarPrice, IChartApi, ISeriesApi, Logical, SeriesType } from 'lightweight-charts'
 import type { Drawing, DrawingPoint } from '@/app/actions/drawings'
 import type { Candle } from '@/lib/market-data/types'
@@ -10,25 +11,55 @@ import { barStep, istProjektion, logicalToTime, snapTime, timeToLogical } from '
 import { preisachsenBreite } from './axis-dom'
 import { DEFAULT_FIB, DEFAULT_FIBEXT, fibLinien, normalizeFibStil } from '@/lib/fib-levels'
 import { normalizeDrawingStyle, strichArray } from '@/lib/drawing-style'
+import {
+  gesteAuswerten,
+  istZeichenwerkzeug,
+  istZug,
+  vorschauPunkte,
+  werkzeugBleibt,
+} from '@/lib/drawing-interaction'
+import {
+  flaechenForm,
+  istLinienTyp,
+  linienEnden,
+  linienForm,
+  type EndCap,
+} from '@/lib/line-form'
 
-const WAVE_LABELS: Record<'ew_impulse' | 'ew_correction', string[]> = {
+type WaveTool = 'ew_impulse' | 'ew_correction' | 'ew_triangle' | 'ew_double' | 'ew_triple'
+
+/**
+ * Die fünf Elliott-Zählungen aus TradingView. Der Startpunkt trägt bewusst
+ * keine Beschriftung ('0' bzw. leer) — beschriftet werden die Wendepunkte.
+ */
+const WAVE_LABELS: Record<WaveTool, string[]> = {
   ew_impulse: ['0', '1', '2', '3', '4', '5'],
   ew_correction: ['0', 'A', 'B', 'C'],
+  ew_triangle: ['0', 'A', 'B', 'C', 'D', 'E'],
+  ew_double: ['0', 'W', 'X', 'Y'],
+  ew_triple: ['0', 'W', 'X', 'Y', 'X', 'Z'],
 }
 
-/** Tools mit 2 Klick-Punkten. */
-const TWO_POINT: DrawTool[] = [
-  'trendline',
-  'ray',
-  'rect',
-  'fib',
-  'ellipse',
-  'arrow',
-  'pricerange',
-  'daterange',
-]
-/** Tools mit 3 Klick-Punkten. */
-const THREE_POINT: DrawTool[] = ['channel', 'fibext']
+const WAVE_TOOLS = Object.keys(WAVE_LABELS) as WaveTool[]
+const istWelle = (t: string): t is WaveTool => (WAVE_TOOLS as string[]).includes(t)
+
+/** Fib-Fan: die Anteile, durch die die Strahlen laufen. */
+const FIB_FAN = [0.236, 0.382, 0.5, 0.618, 0.786]
+/** Fib-Zeitzonen: echte Fibonacci-Zahlen, nicht die Retracement-Anteile. */
+const FIB_TIME = [1, 2, 3, 5, 8, 13, 21, 34]
+/** Fib-Kreise: Anteile des Radius A→B. */
+const FIB_CIRCLE = [0.382, 0.5, 0.618, 1, 1.618]
+/** Gann-Box: die klassischen Drittel und die Hälfte. */
+const GANN_TEILE = [1 / 3, 0.5, 2 / 3]
+const XABCD_LABELS = ['X', 'A', 'B', 'C', 'D']
+/** Kopf-Schulter: beschriftet werden nur die Extrempunkte. */
+const HS_LABELS = ['', 'LS', '', 'K', '', 'RS', '']
+
+// Die frühere Aufteilung in TWO_POINT/THREE_POINT ist entfallen: Wie viele
+// Punkte ein Werkzeug hat UND ob es sich in einer Ziehbewegung aufziehen lässt,
+// steht jetzt gemeinsam in `TOOL_SPECS` (`lib/drawing-interaction.ts`). Zwei
+// Listen nebeneinander waren die Stelle, an der beim Erweitern regelmäßig eine
+// vergessen wurde.
 
 /**
  * Wie nah der Zeiger an einer Zeichnung sein muss, um sie zu treffen.
@@ -84,6 +115,10 @@ export function DrawingLayer({
   onDelete,
   magnet = false,
   locked = false,
+  keepTool = false,
+  onClone,
+  onOpenStyle,
+  onLockedChange,
 }: {
   chart: IChartApi
   series: ISeriesApi<SeriesType>
@@ -101,6 +136,14 @@ export function DrawingLayer({
   magnet?: boolean
   /** Zeichnungen gesperrt: auswählen ja, verschieben nein. */
   locked?: boolean
+  /** Das Werkzeug bleibt nach einer fertigen Zeichnung aktiv. */
+  keepTool?: boolean
+  /** Eine Zeichnung verdoppeln (Rechtsklick-Menü und Strg+D). */
+  onClone?: (id: number) => void
+  /** Den Stil-Dialog zu einer Zeichnung öffnen (Rechtsklick → Einstellungen). */
+  onOpenStyle?: (id: number) => void
+  /** Zeichnungen sperren/entsperren (Rechtsklick-Menü). */
+  onLockedChange?: (v: boolean) => void
 }) {
   const svgRef = useRef<SVGSVGElement>(null)
   // Der Zähler wird nicht nur zum Neurendern gebraucht, sondern auch als
@@ -109,6 +152,24 @@ export function DrawingLayer({
   const [tick, setTick] = useState(0)
   const [pending, setPending] = useState<DrawingPoint[]>([])
   const [hoverPoint, setHoverPoint] = useState<DrawingPoint | null>(null)
+  /**
+   * Die laufende Zeigergeste mit einem Zeichenwerkzeug.
+   *
+   * Sie liegt bewusst im State und nicht in einem Ref: Die Vorschau muss beim
+   * Ziehen mitlaufen, und ohne Rendern sieht man beim Aufziehen einer Linie
+   * nichts — genau das war der Grund, warum sich das Zeichnen wie Raten
+   * anfühlte. `gezogen` schlägt höchstens einmal je Geste um, kostet also
+   * genau ein zusätzliches Rendern.
+   */
+  const [zug, setZug] = useState<{
+    start: DrawingPoint
+    startPx: Pt
+    gezogen: boolean
+  } | null>(null)
+  /** Was unter dem Zeiger liegt (nur im Auswahl-Modus). */
+  const [hoverId, setHoverId] = useState<number | null>(null)
+  /** Das offene Rechtsklick-Menü: welche Zeichnung, an welcher Fensterstelle. */
+  const [kontext, setKontext] = useState<{ id: number; x: number; y: number } | null>(null)
   const [textInput, setTextInput] = useState<{ point: DrawingPoint; px: Pt } | null>(null)
   const [measure, setMeasure] = useState<{ a: DrawingPoint; b: DrawingPoint | null; frozen: boolean } | null>(null)
   const [brushPts, setBrushPts] = useState<DrawingPoint[] | null>(null)
@@ -258,12 +319,31 @@ export function DrawingLayer({
         const P = pts as Pt[]
         if (d.type === 'hline') {
           if (Math.abs(P[0].y - y) < SELECT_TOLERANCE) return d.id
+        } else if (d.type === 'hray') {
+          if (Math.abs(P[0].y - y) < SELECT_TOLERANCE && x >= P[0].x - SELECT_TOLERANCE) {
+            return d.id
+          }
         } else if (d.type === 'vline') {
           if (Math.abs(P[0].x - x) < SELECT_TOLERANCE) return d.id
-        } else if ((d.type === 'trendline' || d.type === 'arrow') && P.length >= 2) {
+        } else if (d.type === 'crossline') {
+          if (
+            Math.abs(P[0].y - y) < SELECT_TOLERANCE ||
+            Math.abs(P[0].x - x) < SELECT_TOLERANCE
+          ) {
+            return d.id
+          }
+        } else if (istLinienTyp(d.type) && P.length >= 2) {
+          // Getroffen wird über DIESELBE Form, die auch gezeichnet wird — sonst
+          // ließe sich ein verlängerter Teil sehen, aber nicht anklicken.
+          const { von, bis } = linienEnden(
+            P[0],
+            P[1],
+            linienForm(d.type, d.style).extend,
+            (q, r) => extendRay(q, r),
+          )
+          if (distToSegment({ x, y }, von, bis) < SELECT_TOLERANCE) return d.id
+        } else if (d.type === 'trendangle' && P.length >= 2) {
           if (distToSegment({ x, y }, P[0], P[1]) < SELECT_TOLERANCE) return d.id
-        } else if (d.type === 'ray' && P.length >= 2) {
-          if (distToSegment({ x, y }, P[0], extendRay(P[0], P[1])) < SELECT_TOLERANCE) return d.id
         } else if (d.type === 'channel' && P.length >= 3) {
           const off = channelOffset(P)
           if (
@@ -280,7 +360,7 @@ export function DrawingLayer({
           for (let i = 1; i < P.length; i++) {
             if (distToSegment({ x, y }, P[i - 1], P[i]) < SELECT_TOLERANCE) return d.id
           }
-        } else if ((d.type === 'ew_impulse' || d.type === 'ew_correction') && P.length >= 2) {
+        } else if (istWelle(d.type) && P.length >= 2) {
           for (let i = 1; i < P.length; i++) {
             if (distToSegment({ x, y }, P[i - 1], P[i]) < SELECT_TOLERANCE + 2) return d.id
           }
@@ -419,7 +499,11 @@ export function DrawingLayer({
           }
         }
       }
-      const hit = hitTest(x, y)
+      // Der genaue Treffertest entscheidet; kommt er zu keinem Ergebnis, gilt
+      // die Zeichnung, über deren Greifzone der Zeiger steht. Ohne diesen
+      // Rückfall ginge ein Klick verloren, der sichtbar auf einer Zeichnung
+      // sitzt — etwa in der Fläche eines Fib-Gitters.
+      const hit = hitTest(x, y) ?? hoverId
       onSelect(hit)
       if (hit != null && !locked) {
         const d = drawings.find((dd) => dd.id === hit)!
@@ -436,42 +520,26 @@ export function DrawingLayer({
     const point = fromPx(x, y)
     if (!point) return
 
-    if (tool === 'hline' || tool === 'vline') {
-      onCreate(tool, [point])
-      onToolDone()
-    } else if (TWO_POINT.includes(tool)) {
-      if (pending.length === 0) {
-        setPending([point])
-      } else {
-        onCreate(tool as Drawing['type'], [pending[0], point])
-        setPending([])
-        onToolDone()
-      }
-    } else if (THREE_POINT.includes(tool)) {
-      const next = [...pending, point]
-      if (next.length < 3) {
-        setPending(next)
-      } else {
-        onCreate(tool as Drawing['type'], next)
-        setPending([])
-        onToolDone()
-      }
-    } else if (tool === 'ew_impulse' || tool === 'ew_correction') {
-      const need = WAVE_LABELS[tool].length
-      const next = [...pending, point]
-      if (next.length < need) {
-        setPending(next)
-      } else {
-        onCreate(tool, next)
-        setPending([])
-        onToolDone()
-      }
-    } else if (tool === 'brush') {
+    // Ein Zeichenwerkzeug beginnt hier NUR die Geste. Ob daraus ein Klick oder
+    // ein Zug wird, entscheidet erst das Loslassen — deshalb wird an dieser
+    // Stelle nichts mehr angelegt. Vorher setzte jeder Druck sofort einen
+    // Punkt, und damit war ein Aufziehen in einer Bewegung gar nicht möglich:
+    // Eine Trendlinie kostete zwei getrennte Klicks, ein Elliott-Zug sechs.
+    if (istZeichenwerkzeug(tool)) {
+      setZug({ start: point, startPx: { x, y }, gezogen: false })
+      setHoverPoint(point)
+      svgRef.current!.setPointerCapture(e.pointerId)
+      return
+    }
+
+    if (tool === 'brush') {
       setBrushPts([point])
       svgRef.current!.setPointerCapture(e.pointerId)
     } else if (tool === 'longpos' || tool === 'shortpos') {
       createPosition(point, tool === 'longpos')
-    } else if (tool === 'text') {
+    } else if (tool === 'text' || tool === 'callout') {
+      // Beide brauchen einen Text, bevor es sie gibt — deshalb derselbe Ablauf
+      // und nicht die Gestenauswertung.
       setTextInput({ point, px: { x, y } })
     } else if (tool === 'measure') {
       if (!measure || measure.frozen) {
@@ -534,6 +602,18 @@ export function DrawingLayer({
       return
     }
 
+    // Die laufende Zeichengeste: Vorschau mitziehen und einmalig festhalten,
+    // dass aus dem Druck ein Zug geworden ist.
+    if (zug) {
+      const point = fromPx(x, y)
+      if (!point) return
+      setHoverPoint(point)
+      if (!zug.gezogen && istZug(zug.startPx, { x, y })) {
+        setZug({ ...zug, gezogen: true })
+      }
+      return
+    }
+
     if (tool === 'brush' && brushPts) {
       const point = fromPx(x, y)
       if (!point) return
@@ -548,6 +628,12 @@ export function DrawingLayer({
       setHoverPoint(fromPx(x, y))
     } else if (tool === 'measure' && measure && !measure.frozen) {
       setMeasure({ ...measure, b: fromPx(x, y), frozen: false })
+    } else if (tool === 'cursor') {
+      // Rückmeldung beim Überfahren: Ohne sie ist einer Zeichnung nicht
+      // anzusehen, dass sie greifbar ist — man klickt, trifft nicht und hält
+      // das Werkzeug für kaputt.
+      const treffer = hitTest(x, y)
+      setHoverId((h) => (h === treffer ? h : treffer))
     }
   }
 
@@ -556,6 +642,30 @@ export function DrawingLayer({
       svgRef.current!.releasePointerCapture(e.pointerId)
       dragRef.current = null
     }
+
+    // Hier fällt die Entscheidung Klick oder Zug — beides führt durch dieselbe
+    // reine Funktion (`lib/drawing-interaction.ts`), damit es nicht wieder zwei
+    // Meinungen darüber gibt, wann eine Zeichnung fertig ist.
+    if (zug) {
+      svgRef.current!.releasePointerCapture(e.pointerId)
+      const rect = svgRef.current!.getBoundingClientRect()
+      const ende = fromPx(e.clientX - rect.left, e.clientY - rect.top) ?? zug.start
+      const ergebnis = gesteAuswerten(tool, pending, zug.start, ende, zug.gezogen)
+      setZug(null)
+      if (ergebnis.art === 'anlegen') {
+        onCreate(tool as Drawing['type'], ergebnis.punkte)
+        setPending([])
+        setHoverPoint(null)
+        // Das Werkzeug bleibt auf Wunsch aktiv. Vorher sprang es IMMER auf den
+        // Zeiger zurück — wer fünf Niveaus einzeichnen wollte, griff fünfmal
+        // in die Leiste.
+        if (!werkzeugBleibt(tool, keepTool)) onToolDone()
+      } else if (ergebnis.art === 'weiter') {
+        setPending(ergebnis.punkte)
+      }
+      return
+    }
+
     if (tool === 'brush' && brushPts) {
       svgRef.current!.releasePointerCapture(e.pointerId)
       if (brushPts.length >= 2) onCreate('brush', brushPts)
@@ -564,25 +674,52 @@ export function DrawingLayer({
     }
   }
 
-  // Escape bricht ab, Werkzeugwechsel räumt auf.
+  // Escape bricht ab, Entf löscht die Auswahl, Werkzeugwechsel räumt auf.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // In einem Eingabefeld gehört die Tastatur dem Feld. Der Schutz fehlte
+      // hier bisher; mit der Entf-Taste wäre das nicht mehr harmlos gewesen —
+      // ein Druck im Notizfeld hätte eine Zeichnung gelöscht.
+      const ziel = e.target as HTMLElement | null
+      const tag = ziel?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || ziel?.isContentEditable) {
+        return
+      }
+
+      if (e.key === 'Delete' && selectedId != null && !locked) {
+        e.preventDefault()
+        onDelete?.(selectedId)
+        onSelect(null)
+        return
+      }
+
+      // Strg+D klont — dieselbe Belegung wie in TradingView.
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd' && selectedId != null && !locked) {
+        e.preventDefault()
+        onClone?.(selectedId)
+        return
+      }
+
       if (e.key === 'Escape') {
         setPending([])
         setHoverPoint(null)
+        setZug(null)
         setMeasure(null)
         setTextInput(null)
         setBrushPts(null)
+        setKontext(null)
         onSelect(null)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onSelect])
+  }, [onSelect, selectedId, locked, onDelete, onClone])
 
   useEffect(() => {
     setPending([])
     setHoverPoint(null)
+    setZug(null)
+    setHoverId(null)
     setBrushPts(null)
     if (tool !== 'measure') setMeasure(null)
     if (tool !== 'text') setTextInput(null)
@@ -724,7 +861,9 @@ export function DrawingLayer({
     // ungeprüft und darf nicht ungefiltert in ein SVG-Attribut.
     const stil = normalizeDrawingStyle(
       d.style,
-      d.type === 'fib' || d.type === 'fibext' ? CHART_COLORS.warning : CHART_COLORS.accent,
+      // Alles Fibonacci trägt dieselbe Farbe — sonst sähen Retracement und Fan
+      // im selben Chart nach zwei verschiedenen Dingen aus.
+      d.type.startsWith('fib') ? CHART_COLORS.warning : CHART_COLORS.accent,
     )
     const color = stil.color
     const strich = strichArray(stil.dashed)
@@ -760,39 +899,79 @@ export function DrawingLayer({
         </g>
       )
     }
-    if (d.type === 'trendline') {
-      return (
-        <g key={d.id}>
-          <line x1={P[0].x} y1={P[0].y} x2={P[1].x} y2={P[1].y} stroke={color} strokeWidth={selected ? 2 : 1.5} strokeDasharray={d.style?.dashed ? '4 3' : undefined} />
-          {handles}
+    /**
+     * EIN Renderer für alle Linien-Werkzeuge.
+     *
+     * Vorher standen hier drei fast gleiche Blöcke für `trendline`, `arrow` und
+     * `ray` (und weiter unten zwei weitere für `extendedline` und `infoline`).
+     * Ob eine Linie verlängert wird, eine Spitze trägt oder Kennzahlen zeigt,
+     * ist ab hier eine EIGENSCHAFT und kein eigener Typ mehr — nachträglich
+     * änderbar, genau wie in TradingViews Einstellungsdialog.
+     */
+    if (istLinienTyp(d.type) && P.length >= 2) {
+      const form = linienForm(d.type, d.style)
+      const { von, bis } = linienEnden(P[0], P[1], form.extend, (q, r) => extendRay(q, r))
+
+      /** Pfeilspitze oder Punkt an einem Ende, ausgerichtet auf die Linie. */
+      const kappe = (an: Pt, richtungVon: Pt, art: EndCap, key: string) => {
+        if (art === 'none') return null
+        if (art === 'dot') {
+          return <circle key={key} cx={an.x} cy={an.y} r={3.5} fill={color} />
+        }
+        const w = Math.atan2(an.y - richtungVon.y, an.x - richtungVon.x)
+        const g = 9
+        const l = { x: an.x - g * Math.cos(w - Math.PI / 7), y: an.y - g * Math.sin(w - Math.PI / 7) }
+        const r = { x: an.x - g * Math.cos(w + Math.PI / 7), y: an.y - g * Math.sin(w + Math.PI / 7) }
+        return (
+          <polygon key={key} points={`${an.x},${an.y} ${l.x},${l.y} ${r.x},${r.y}`} fill={color} />
+        )
+      }
+
+      let kennzahlen: React.ReactNode = null
+      if (form.stats) {
+        const a = d.points[0]
+        const b = d.points[1]
+        const delta = b.price - a.price
+        const proz = a.price !== 0 ? (delta / a.price) * 100 : 0
+        const balken = Math.abs(
+          Math.round(timeToLogical(times, step, b.time)) -
+            Math.round(timeToLogical(times, step, a.time)),
+        )
+        const txt = `${delta >= 0 ? '+' : ''}${formatDe(delta, 4)} · ${proz >= 0 ? '+' : ''}${proz.toFixed(2)} % · ${balken} B`
+        const mx = (P[0].x + P[1].x) / 2
+        const my = (P[0].y + P[1].y) / 2
+        kennzahlen = (
+          <g>
+            <rect x={mx - txt.length * 3.1 - 5} y={my - 18} width={txt.length * 6.2 + 10} height={16} rx={3} fill={color} fillOpacity={0.18} stroke={color} strokeWidth={0.8} />
+            <text x={mx} y={my - 6} fill={color} fontSize={10} fontFamily="monospace" textAnchor="middle">
+              {txt}
+            </text>
+          </g>
+        )
+      }
+
+      const etikett = (p: Pt, preis: number, key: string) => (
+        <g key={key}>
+          <rect x={p.x + 6} y={p.y - 8} width={formatDe(preis, 4).length * 6.2 + 8} height={16} rx={3} fill={color} fillOpacity={0.2} stroke={color} strokeWidth={0.7} />
+          <text x={p.x + 10} y={p.y + 4} fill={color} fontSize={9.5} fontFamily="monospace">
+            {formatDe(preis, 4)}
+          </text>
         </g>
       )
-    }
-    if (d.type === 'arrow' && P.length >= 2) {
-      const angle = Math.atan2(P[1].y - P[0].y, P[1].x - P[0].x)
-      const size = 9
-      const tip = P[1]
-      const left = {
-        x: tip.x - size * Math.cos(angle - Math.PI / 7),
-        y: tip.y - size * Math.sin(angle - Math.PI / 7),
-      }
-      const right = {
-        x: tip.x - size * Math.cos(angle + Math.PI / 7),
-        y: tip.y - size * Math.sin(angle + Math.PI / 7),
-      }
+
+      const mitte = { x: (P[0].x + P[1].x) / 2, y: (P[0].y + P[1].y) / 2 }
+
       return (
         <g key={d.id}>
-          <line x1={P[0].x} y1={P[0].y} x2={P[1].x} y2={P[1].y} stroke={color} strokeWidth={selected ? 2 : 1.5} />
-          <polygon points={`${tip.x},${tip.y} ${left.x},${left.y} ${right.x},${right.y}`} fill={color} />
-          {handles}
-        </g>
-      )
-    }
-    if (d.type === 'ray' && P.length >= 2) {
-      const end = extendRay(P[0], P[1])
-      return (
-        <g key={d.id}>
-          <line x1={P[0].x} y1={P[0].y} x2={end.x} y2={end.y} stroke={color} strokeWidth={selected ? 2 : 1.5} strokeDasharray={d.style?.dashed ? '4 3' : undefined} />
+          <line x1={von.x} y1={von.y} x2={bis.x} y2={bis.y} stroke={color} strokeWidth={sw()} strokeDasharray={strich} />
+          {kappe(P[0], P[1], form.leftEnd, 'k0')}
+          {kappe(P[1], P[0], form.rightEnd, 'k1')}
+          {kennzahlen}
+          {form.priceLabels && etikett(P[0], d.points[0].price, 'e0')}
+          {form.priceLabels && etikett(P[1], d.points[1].price, 'e1')}
+          {form.middlePoint && (
+            <circle cx={mitte.x} cy={mitte.y} r={3} fill={CHART_COLORS.foreground} stroke={color} />
+          )}
           {handles}
         </g>
       )
@@ -828,7 +1007,7 @@ export function DrawingLayer({
         </g>
       )
     }
-    if ((d.type === 'ew_impulse' || d.type === 'ew_correction') && P.length >= 2) {
+    if (istWelle(d.type) && P.length >= 2) {
       const labels = WAVE_LABELS[d.type]
       const col = d.style?.color ?? CHART_COLORS.foreground
       const path = P.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')
@@ -865,20 +1044,35 @@ export function DrawingLayer({
       )
     }
     if (d.type === 'rect' && P.length >= 2) {
+      // Form nach TradingViews Rechteck-Dialog: Erweitern · Grenze · Mittlere
+      // Linie · Hintergrund. Vorher war die Füllung fest verdrahtet — damit
+      // ließ sich ein Rechteck weder als reine Zone noch als reiner Rahmen
+      // benutzen.
+      const ff = flaechenForm(d.type, d.style)
       const x1 = Math.min(P[0].x, P[1].x)
       const y1 = Math.min(P[0].y, P[1].y)
+      const bw = Math.abs(P[1].x - P[0].x)
+      const bh = Math.abs(P[1].y - P[0].y)
+      // Verlängert wird waagerecht — eine Zone gilt ab ihrem Rand weiter, nicht
+      // nach oben oder unten.
+      const vx1 = ff.extend === 'left' || ff.extend === 'both' ? 0 : x1
+      const vx2 = ff.extend === 'right' || ff.extend === 'both' ? width : x1 + bw
       return (
         <g key={d.id}>
           <rect
-            x={x1}
+            x={vx1}
             y={y1}
-            width={Math.abs(P[1].x - P[0].x)}
-            height={Math.abs(P[1].y - P[0].y)}
-            fill={color}
-            fillOpacity={0.08}
-            stroke={color}
+            width={Math.max(0, vx2 - vx1)}
+            height={bh}
+            fill={ff.background ? color : 'none'}
+            fillOpacity={ff.background ? 0.08 : 0}
+            stroke={ff.border ? color : 'none'}
             strokeWidth={selected ? 2 : 1}
+            strokeDasharray={strich}
           />
+          {ff.middleLine && (
+            <line x1={vx1} y1={y1 + bh / 2} x2={vx2} y2={y1 + bh / 2} stroke={color} strokeWidth={1} strokeDasharray="4 3" opacity={0.7} />
+          )}
           {handles}
         </g>
       )
@@ -996,6 +1190,258 @@ export function DrawingLayer({
         </g>
       )
     }
+
+    // ---- Werkzeuge aus dem TradingView-Satz, die bis hierher fehlten --------
+
+    if (d.type === 'hray') {
+      // Vom Punkt nach RECHTS — der Unterschied zur waagerechten Linie ist,
+      // dass sie die Vergangenheit nicht behauptet.
+      return (
+        <g key={d.id}>
+          <line x1={P[0].x} y1={P[0].y} x2={width} y2={P[0].y} stroke={color} strokeWidth={sw(1)} strokeDasharray={strich} />
+          <text x={P[0].x + 4} y={P[0].y - 4} fill={color} fontSize={10} fontFamily="monospace">
+            {d.style?.label ?? formatDe(d.points[0].price, 6)}
+          </text>
+          {handles}
+        </g>
+      )
+    }
+
+    if (d.type === 'crossline') {
+      return (
+        <g key={d.id}>
+          <line x1={0} y1={P[0].y} x2={width} y2={P[0].y} stroke={color} strokeWidth={sw(1)} strokeDasharray={strich} opacity={0.9} />
+          <line x1={P[0].x} y1={0} x2={P[0].x} y2={height} stroke={color} strokeWidth={sw(1)} strokeDasharray={strich} opacity={0.9} />
+          <text x={P[0].x + 4} y={P[0].y - 4} fill={color} fontSize={10} fontFamily="monospace">
+            {d.style?.label ?? formatDe(d.points[0].price, 6)}
+          </text>
+          {handles}
+        </g>
+      )
+    }
+
+    if (d.type === 'trendangle' && P.length >= 2) {
+      // Der Winkel wird in PIXELN gemessen, nicht in Kurs je Zeit — genau wie
+      // bei TradingView. Ein Winkel in Dateneinheiten hätte keine Bedeutung:
+      // Er hinge am Zoom, und 45° wären je nach Ausschnitt etwas anderes.
+      const dx = P[1].x - P[0].x
+      const dy = P[1].y - P[0].y
+      const grad = (-Math.atan2(dy, dx) * 180) / Math.PI
+      const r = 34
+      const ende = { x: P[0].x + Math.min(r, Math.abs(dx) || r) * Math.sign(dx || 1), y: P[0].y }
+      return (
+        <g key={d.id}>
+          <line x1={P[0].x} y1={P[0].y} x2={P[1].x} y2={P[1].y} stroke={color} strokeWidth={sw(1.5)} strokeDasharray={strich} />
+          {/* Die Waagerechte als Bezug — ohne sie ist nicht zu sehen, wogegen
+              gemessen wird. */}
+          <line x1={P[0].x} y1={P[0].y} x2={ende.x} y2={ende.y} stroke={color} strokeWidth={0.8} strokeDasharray="3 3" opacity={0.6} />
+          <text x={P[0].x + (dx >= 0 ? 8 : -8)} y={P[0].y - 8} fill={color} fontSize={10} fontFamily="monospace" textAnchor={dx >= 0 ? 'start' : 'end'}>
+            {grad.toFixed(1)}°
+          </text>
+          {handles}
+        </g>
+      )
+    }
+
+    if (d.type === 'fibfan' && P.length >= 2) {
+      const [a, b] = P
+      return (
+        <g key={d.id}>
+          <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={color} strokeWidth={1} strokeDasharray="3 3" opacity={0.5} />
+          {FIB_FAN.map((r) => {
+            const ziel = { x: b.x, y: a.y + (b.y - a.y) * r }
+            const e = extendRay(a, ziel)
+            return (
+              <g key={r}>
+                <line x1={a.x} y1={a.y} x2={e.x} y2={e.y} stroke={color} strokeWidth={sw(1)} strokeDasharray={strich} opacity={0.85} />
+                <text x={ziel.x + 3} y={ziel.y - 2} fill={color} fontSize={9} fontFamily="monospace" opacity={0.85}>
+                  {r}
+                </text>
+              </g>
+            )
+          })}
+          {handles}
+        </g>
+      )
+    }
+
+    if (d.type === 'fibtime' && P.length >= 2) {
+      const dx = P[1].x - P[0].x
+      return (
+        <g key={d.id}>
+          {FIB_TIME.map((f) => {
+            const x = P[0].x + dx * f
+            // Was aus dem Bild läuft, wird nicht gezeichnet — sonst stünden bei
+            // einem kleinen Grundabstand vierzig Linien übereinander am Rand.
+            if (x < -2 || x > width + 2) return null
+            return (
+              <g key={f}>
+                <line x1={x} y1={0} x2={x} y2={height} stroke={color} strokeWidth={sw(1)} strokeDasharray={strich} opacity={0.75} />
+                <text x={x + 3} y={12} fill={color} fontSize={9} fontFamily="monospace" opacity={0.85}>
+                  {f}
+                </text>
+              </g>
+            )
+          })}
+          {handles}
+        </g>
+      )
+    }
+
+    if (d.type === 'fibcircle' && P.length >= 2) {
+      // Ellipsen statt Kreisen: Waagerecht zählt Zeit, senkrecht Preis — ein
+      // echter Kreis in Pixeln wäre in den Daten keiner.
+      const rx = Math.abs(P[1].x - P[0].x)
+      const ry = Math.abs(P[1].y - P[0].y)
+      return (
+        <g key={d.id}>
+          {FIB_CIRCLE.map((r) => (
+            <ellipse key={r} cx={P[0].x} cy={P[0].y} rx={rx * r} ry={ry * r} fill="none" stroke={color} strokeWidth={sw(1)} strokeDasharray={strich} opacity={0.8} />
+          ))}
+          <line x1={P[0].x} y1={P[0].y} x2={P[1].x} y2={P[1].y} stroke={color} strokeWidth={1} opacity={0.5} />
+          {handles}
+        </g>
+      )
+    }
+
+    if (d.type === 'gannbox' && P.length >= 2) {
+      const x1 = Math.min(P[0].x, P[1].x)
+      const x2 = Math.max(P[0].x, P[1].x)
+      const y1 = Math.min(P[0].y, P[1].y)
+      const y2 = Math.max(P[0].y, P[1].y)
+      const bw = x2 - x1
+      const bh = y2 - y1
+      return (
+        <g key={d.id}>
+          <rect x={x1} y={y1} width={bw} height={bh} fill={color} fillOpacity={0.05} stroke={color} strokeWidth={sw(1)} />
+          {GANN_TEILE.map((f) => (
+            <g key={f}>
+              <line x1={x1} y1={y1 + bh * f} x2={x2} y2={y1 + bh * f} stroke={color} strokeWidth={0.8} strokeDasharray="3 3" opacity={0.55} />
+              <line x1={x1 + bw * f} y1={y1} x2={x1 + bw * f} y2={y2} stroke={color} strokeWidth={0.8} strokeDasharray="3 3" opacity={0.55} />
+            </g>
+          ))}
+          <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={color} strokeWidth={1} opacity={0.7} />
+          <line x1={x1} y1={y2} x2={x2} y2={y1} stroke={color} strokeWidth={1} opacity={0.7} />
+          {handles}
+        </g>
+      )
+    }
+
+    if (d.type === 'pitchfork' && P.length >= 3) {
+      // Reihenfolge der Punkte: Die Ziehbewegung setzt die Basis B→C, der
+      // dritte Klick den Scheitel A (siehe TOOL_SPECS).
+      const B = P[0]
+      const C = P[1]
+      const A = P[2]
+      const M = { x: (B.x + C.x) / 2, y: (B.y + C.y) / 2 }
+      const mEnd = extendRay(A, M)
+      const dx = mEnd.x - A.x
+      const dy = mEnd.y - A.y
+      return (
+        <g key={d.id}>
+          <line x1={B.x} y1={B.y} x2={C.x} y2={C.y} stroke={color} strokeWidth={sw(1)} opacity={0.7} />
+          <line x1={A.x} y1={A.y} x2={mEnd.x} y2={mEnd.y} stroke={color} strokeWidth={sw(1.6)} />
+          <line x1={B.x} y1={B.y} x2={B.x + dx} y2={B.y + dy} stroke={color} strokeWidth={sw(1)} strokeDasharray={strich} opacity={0.9} />
+          <line x1={C.x} y1={C.y} x2={C.x + dx} y2={C.y + dy} stroke={color} strokeWidth={sw(1)} strokeDasharray={strich} opacity={0.9} />
+          {handles}
+        </g>
+      )
+    }
+
+    if (d.type === 'xabcd' && P.length >= 2) {
+      const pfad = P.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')
+      return (
+        <g key={d.id}>
+          <path d={pfad} fill="none" stroke={color} strokeWidth={sw(1.6)} strokeDasharray={strich} />
+          {/* Die beiden Sehnen X–B und A–C: an ihnen liest man die Verhältnisse
+              ab, um die es beim harmonischen Muster überhaupt geht. */}
+          {P.length >= 3 && (
+            <line x1={P[0].x} y1={P[0].y} x2={P[2].x} y2={P[2].y} stroke={color} strokeWidth={0.8} strokeDasharray="3 3" opacity={0.55} />
+          )}
+          {P.length >= 4 && (
+            <line x1={P[1].x} y1={P[1].y} x2={P[3].x} y2={P[3].y} stroke={color} strokeWidth={0.8} strokeDasharray="3 3" opacity={0.55} />
+          )}
+          {P.length >= 5 && (
+            <line x1={P[2].x} y1={P[2].y} x2={P[4].x} y2={P[4].y} stroke={color} strokeWidth={0.8} strokeDasharray="3 3" opacity={0.55} />
+          )}
+          {P.map((p, i) => (
+            <text key={i} x={p.x + 4} y={p.y - 4} fill={color} fontSize={10} fontFamily="monospace" fontWeight="bold">
+              {XABCD_LABELS[i] ?? ''}
+            </text>
+          ))}
+          {handles}
+        </g>
+      )
+    }
+
+    if (d.type === 'headshoulders' && P.length >= 2) {
+      const pfad = P.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')
+      // Die Nackenlinie durch die beiden Täler ist der eigentliche Inhalt des
+      // Musters — an ihr hängt der Bruch, nicht am Kopf.
+      const nacken = P.length >= 5 ? extendRay(P[2], P[4]) : null
+      return (
+        <g key={d.id}>
+          <path d={pfad} fill="none" stroke={color} strokeWidth={sw(1.6)} strokeDasharray={strich} />
+          {nacken && (
+            <line x1={P[2].x} y1={P[2].y} x2={nacken.x} y2={nacken.y} stroke={color} strokeWidth={sw(1.2)} strokeDasharray="5 3" opacity={0.9} />
+          )}
+          {P.map((p, i) =>
+            HS_LABELS[i] ? (
+              <text key={i} x={p.x} y={p.y - 6} fill={color} fontSize={10} fontFamily="monospace" fontWeight="bold" textAnchor="middle">
+                {HS_LABELS[i]}
+              </text>
+            ) : null,
+          )}
+          {handles}
+        </g>
+      )
+    }
+
+    if (d.type === 'pricelabel') {
+      const txt = d.style?.label ?? formatDe(d.points[0].price, 6)
+      const bw = txt.length * 6.2 + 12
+      return (
+        <g key={d.id}>
+          <line x1={P[0].x} y1={P[0].y} x2={P[0].x + 10} y2={P[0].y} stroke={color} strokeWidth={sw(1)} />
+          <rect x={P[0].x + 10} y={P[0].y - 9} width={bw} height={18} rx={3} fill={color} fillOpacity={0.18} stroke={color} strokeWidth={sw(1)} />
+          <text x={P[0].x + 16} y={P[0].y + 4} fill={color} fontSize={10} fontFamily="monospace">
+            {txt}
+          </text>
+          {handles}
+        </g>
+      )
+    }
+
+    if (d.type === 'marker') {
+      const x = P[0].x
+      const y = P[0].y
+      return (
+        <g key={d.id}>
+          <line x1={x} y1={y} x2={x} y2={y - 20} stroke={color} strokeWidth={sw(1.4)} />
+          <path d={`M${x},${y - 20} L${x + 15},${y - 15.5} L${x},${y - 11} Z`} fill={color} />
+          <circle cx={x} cy={y} r={2.5} fill={color} />
+          {handles}
+        </g>
+      )
+    }
+
+    if (d.type === 'callout') {
+      const txt = d.points[0].text ?? ''
+      const bw = Math.max(44, txt.length * 6.2 + 14)
+      const bx = P[0].x + 14
+      const by = P[0].y - 38
+      return (
+        <g key={d.id}>
+          <path d={`M${P[0].x},${P[0].y} L${bx},${by + 24} L${bx + 10},${by + 15}`} fill="none" stroke={color} strokeWidth={sw(1)} />
+          <rect x={bx} y={by} width={bw} height={22} rx={4} fill={color} fillOpacity={0.18} stroke={color} strokeWidth={sw(1)} />
+          <text x={bx + 7} y={by + 15} fill={CHART_COLORS.foreground} fontSize={10} fontFamily="monospace">
+            {txt}
+          </text>
+          {handles}
+        </g>
+      )
+    }
+
     return null
   }
 
@@ -1007,8 +1453,12 @@ export function DrawingLayer({
       return <path d={path} fill="none" stroke={CHART_COLORS.accent} strokeWidth={1.8} strokeLinecap="round" />
     }
 
-    if (pending.length === 0 || !hoverPoint) return null
-    const P = [...pending, hoverPoint].map(toPx)
+    // Die Vorschau folgt jetzt derselben Quelle wie das Anlegen. Vorher hing
+    // sie allein an `pending` — beim Aufziehen in einer Geste steht dort aber
+    // noch nichts, und man hätte blind gezogen.
+    const V = vorschauPunkte(tool, pending, zug?.start ?? null, hoverPoint, zug?.gezogen ?? false)
+    if (V.length < 2) return null
+    const P = V.map(toPx)
     if (P.some((p) => p == null)) return null
     const Q = P as Pt[]
     const a = Q[Q.length - 2]
@@ -1062,6 +1512,57 @@ export function DrawingLayer({
     return <line x1={a.x} y1={a.y} x2={end.x} y2={end.y} stroke={CHART_COLORS.accent} strokeWidth={1} strokeDasharray="4 3" />
   }
 
+  /**
+   * Kurs-Etiketten an der Preisachse, solange gezeichnet wird.
+   *
+   * Abgeschaut bei TradingView: Dort werden beim Ziehen einer Linie der
+   * Startpreis UND der Preis unter dem Zeiger an der Achse hervorgehoben. Ohne
+   * das zieht man auf gut Glück und liest den Kurs erst hinterher ab — was
+   * genau der Grund ist, warum man einen Stop lieber abtippt, statt ihn zu
+   * setzen. Die gestrichelte Hilfslinie zeigt dazu die Höhe über die ganze
+   * Breite.
+   */
+  const renderVorschauAchsen = () => {
+    const punkte = [zug?.start, hoverPoint].filter(
+      (p): p is DrawingPoint => p != null && istZeichenwerkzeug(tool),
+    )
+    if (punkte.length === 0 || width === 0) return null
+    // Der Startpunkt ist beim reinen Überfahren noch keiner — dann steht nur
+    // der Zeigerpreis da.
+    const gesehen = new Set<number>()
+    return (
+      <g style={{ pointerEvents: 'none' }}>
+        {punkte.map((p, i) => {
+          if (gesehen.has(p.price)) return null
+          gesehen.add(p.price)
+          const px = toPx(p)
+          if (!px) return null
+          const txt = formatDe(p.price, 4)
+          const bw = txt.length * 6.4 + 10
+          const x = Math.max(0, width - achsenBreite - bw - 2)
+          return (
+            <g key={i}>
+              <line
+                x1={0}
+                y1={px.y}
+                x2={width - achsenBreite}
+                y2={px.y}
+                stroke={CHART_COLORS.accent}
+                strokeWidth={0.8}
+                strokeDasharray="3 4"
+                opacity={i === 0 ? 0.45 : 0.75}
+              />
+              <rect x={x} y={px.y - 9} width={bw} height={18} rx={3} fill={CHART_COLORS.accent} opacity={i === 0 ? 0.7 : 1} />
+              <text x={x + bw / 2} y={px.y + 4} fill={CHART_COLORS.background} fontSize={10} fontFamily="monospace" textAnchor="middle">
+                {txt}
+              </text>
+            </g>
+          )
+        })}
+      </g>
+    )
+  }
+
   const renderMeasure = () => {
     if (!measure?.b) return null
     const a = toPx(measure.a)
@@ -1070,24 +1571,119 @@ export function DrawingLayer({
     return renderRangeBox('measure', a, b, measure.a, measure.b, 'price')
   }
 
-  // Nur abfangen, wenn gezeichnet wird oder eine Auswahl aktiv ist — sonst
-  // bleibt das SVG durchlässig, damit Pan/Zoom des Charts funktionieren.
-  const interactive = tool !== 'cursor' || selectedId != null
+  /**
+   * Wie breit die unsichtbare Greifzone um eine Zeichnung ist.
+   *
+   * Sie ist der Kern des Umbaus. Vorher gab es sie nicht, und daraus folgten
+   * zwei Übel, die sich gegenseitig bedingten:
+   *
+   * 1. **Ohne Auswahl war die ganze Ebene durchlässig** (`pointerEvents:
+   *    'none'`), damit Pan und Zoom des Charts funktionieren. Damit kam nie ein
+   *    Zeigerereignis an — kein Überfahren, keine Anfasser, keine Rückmeldung.
+   *    Ausgewählt wurde über einen Umweg-Listener am Elternknoten, der erst
+   *    beim `click` feuert.
+   * 2. **Mit Auswahl lag die Ebene über dem GANZEN Chart** und schluckte alles.
+   *    Solange etwas ausgewählt war, ließ sich der Chart nicht mehr schieben.
+   *
+   * Jetzt ist das SVG im Auswahl-Modus durchlässig und nur diese Zonen fangen
+   * Ereignisse: Über einer Zeichnung gehört der Zeiger der Zeichnung, daneben
+   * dem Chart. Genau so verhält sich TradingView.
+   */
+  const HIT_ZONE = 20
 
-  // Im durchlässigen Zustand: Auswahl per Klick auf dem Chart-Wrapper (Events
-  // laufen am SVG vorbei zum Chart-Canvas und bubbeln zum Wrapper hoch).
-  useEffect(() => {
-    if (interactive || drawings.length === 0) return
-    const parent = svgRef.current?.parentElement
-    if (!parent) return
-    const onClick = (e: MouseEvent) => {
-      const rect = svgRef.current!.getBoundingClientRect()
-      const hit = hitTest(e.clientX - rect.left, e.clientY - rect.top)
-      if (hit != null) onSelect(hit)
+  const zonenEreignisse = (id: number) => ({
+    onPointerEnter: () => setHoverId(id),
+    onPointerLeave: () => setHoverId((h) => (h === id ? null : h)),
+  })
+
+  /** Die unsichtbare Greifzone einer Zeichnung. */
+  const renderHitZone = (d: Drawing) => {
+    const pts = d.points.map(toPx)
+    if (pts.some((p) => p == null)) return null
+    const P = pts as Pt[]
+    const strich = {
+      fill: 'none',
+      stroke: 'transparent',
+      strokeWidth: HIT_ZONE,
+      strokeLinejoin: 'round' as const,
+      strokeLinecap: 'round' as const,
+      style: { pointerEvents: 'stroke' as const, cursor: locked ? 'pointer' : 'move' },
+      ...zonenEreignisse(d.id),
     }
-    parent.addEventListener('click', onClick)
-    return () => parent.removeEventListener('click', onClick)
-  }, [interactive, drawings.length, hitTest, onSelect])
+
+    if (d.type === 'hline') {
+      return <line key={`z${d.id}`} {...strich} x1={0} y1={P[0].y} x2={width} y2={P[0].y} />
+    }
+    if (d.type === 'hray') {
+      return <line key={`z${d.id}`} {...strich} x1={P[0].x} y1={P[0].y} x2={width} y2={P[0].y} />
+    }
+    if (d.type === 'vline') {
+      return <line key={`z${d.id}`} {...strich} x1={P[0].x} y1={0} x2={P[0].x} y2={height} />
+    }
+    if (d.type === 'crossline') {
+      // Beide Achsen greifbar — sonst fasst man die senkrechte Hälfte nie an.
+      return (
+        <g key={`z${d.id}`}>
+          <line {...strich} x1={0} y1={P[0].y} x2={width} y2={P[0].y} />
+          <line {...strich} x1={P[0].x} y1={0} x2={P[0].x} y2={height} />
+        </g>
+      )
+    }
+    if (istLinienTyp(d.type) && P.length >= 2) {
+      // Dieselbe Form wie beim Zeichnen und beim Treffertest.
+      const { von, bis } = linienEnden(
+        P[0],
+        P[1],
+        linienForm(d.type, d.style).extend,
+        (q, r) => extendRay(q, r),
+      )
+      return <line key={`z${d.id}`} {...strich} x1={von.x} y1={von.y} x2={bis.x} y2={bis.y} />
+    }
+    // Flächige Werkzeuge: überall hineinfassen können, nicht nur am Rand.
+    if (
+      d.type === 'rect' ||
+      d.type === 'ellipse' ||
+      d.type === 'pricerange' ||
+      d.type === 'daterange' ||
+      d.type === 'longpos' ||
+      d.type === 'shortpos' ||
+      d.type === 'fib' ||
+      d.type === 'fibext'
+    ) {
+      const xs = P.map((p) => p.x)
+      const ys = P.map((p) => p.y)
+      const x1 = Math.min(...xs) - 6
+      const y1 = Math.min(...ys) - 6
+      return (
+        <rect
+          key={`z${d.id}`}
+          x={x1}
+          y={y1}
+          width={Math.max(...xs) - Math.min(...xs) + 12}
+          height={Math.max(...ys) - Math.min(...ys) + 12}
+          fill="transparent"
+          stroke="none"
+          style={{ pointerEvents: 'all', cursor: locked ? 'pointer' : 'move' }}
+          {...zonenEreignisse(d.id)}
+        />
+      )
+    }
+    // Alles Übrige ist ein Streckenzug (Trendlinie, Pfeil, Kanal, Freihand,
+    // Wellenzüge, Text-Anker).
+    const pfad = P.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(
+      ' ',
+    )
+    return <path key={`z${d.id}`} {...strich} d={pfad} />
+  }
+
+  /**
+   * Fängt die Ebene selbst Ereignisse ab?
+   *
+   * Beim Zeichnen ja — dort gehört jeder Punkt des Charts dem Werkzeug. Im
+   * Auswahl-Modus nein: Dort entscheiden die Greifzonen oben, und der Chart
+   * bleibt schiebbar.
+   */
+  const interactive = tool !== 'cursor'
 
   return (
     <>
@@ -1110,9 +1706,24 @@ export function DrawingLayer({
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
+        onContextMenu={(e) => {
+          // Nur über einer Zeichnung — sonst gehört das Rechtsklick-Menü dem
+          // Browser, und man käme im Chart nicht mehr an „Bild speichern".
+          const r = svgRef.current!.getBoundingClientRect()
+          const treffer = hitTest(e.clientX - r.left, e.clientY - r.top) ?? hoverId
+          if (treffer == null) return
+          e.preventDefault()
+          onSelect(treffer)
+          setKontext({ id: treffer, x: e.clientX, y: e.clientY })
+        }}
       >
         {drawings.map(renderDrawing)}
+        {/* Die Greifzonen liegen ÜBER den Zeichnungen, damit die oberste
+            Zeichnung auch die ist, die man anfasst — und sie sind die einzigen
+            Elemente, die im Auswahl-Modus Ereignisse fangen. */}
+        {tool === 'cursor' && <g>{drawings.map(renderHitZone)}</g>}
         {renderPending()}
+        {renderVorschauAchsen()}
         {renderMeasure()}
         {height > 0 && null}
       </svg>
@@ -1126,16 +1737,107 @@ export function DrawingLayer({
             if (e.key === 'Enter') {
               const value = (e.target as HTMLInputElement).value.trim()
               if (value) {
-                onCreate('text', [{ ...textInput.point, text: value }])
+                onCreate(tool === 'callout' ? 'callout' : 'text', [
+                  { ...textInput.point, text: value },
+                ])
               }
               setTextInput(null)
-              onToolDone()
+              if (!werkzeugBleibt(tool, keepTool)) onToolDone()
             }
             if (e.key === 'Escape') setTextInput(null)
           }}
           onBlur={() => setTextInput(null)}
         />
       )}
+
+      {/* Rechtsklick-Menü — nachgebaut nach TradingViews Kontextmenü an einer
+          Zeichnung (Einstellungen · Klon · Sperren · Entfernen).
+
+          Es hängt am <body> und trägt `position` INLINE. Beides ist nötig, und
+          beides hat in diesem Projekt schon einmal Zeit gekostet:
+          (1) `.rise-in` lässt am Panel ein `transform: matrix(1,0,0,1,0,0)`
+              stehen — ein Element mit transform ist der Bezugsrahmen für
+              `fixed`, das Menü richtete sich also nach dem Panel statt nach dem
+              Fenster.
+          (2) `body > * { position: relative }` in globals.css liegt außerhalb
+              der Tailwind-Layer und schlägt die Utility `.fixed` unabhängig von
+              der Spezifität. */}
+      {kontext &&
+        createPortal(
+          <>
+            <div
+              style={{ position: 'fixed', inset: 0, zIndex: 59 }}
+              onPointerDown={() => setKontext(null)}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                setKontext(null)
+              }}
+              aria-hidden
+            />
+            <div
+              className="panel-raised flex w-52 flex-col gap-0.5 p-1.5"
+              style={{
+                position: 'fixed',
+                zIndex: 60,
+                // Am rechten und unteren Rand einklappen, sonst läuft das Menü
+                // aus dem Bild.
+                left: Math.min(kontext.x, window.innerWidth - 220),
+                top: Math.min(kontext.y, window.innerHeight - 190),
+              }}
+            >
+              {[
+                {
+                  label: 'Einstellungen …',
+                  hint: '',
+                  aktion: () => onOpenStyle?.(kontext.id),
+                  aus: !onOpenStyle,
+                },
+                {
+                  label: 'Klonen',
+                  hint: 'Strg+D',
+                  aktion: () => onClone?.(kontext.id),
+                  aus: !onClone || locked,
+                },
+                {
+                  label: locked ? 'Zeichnungen entsperren' : 'Zeichnungen sperren',
+                  hint: '',
+                  aktion: () => onLockedChange?.(!locked),
+                  aus: !onLockedChange,
+                },
+              ]
+                .filter((e) => !e.aus)
+                .map((e) => (
+                  <button
+                    key={e.label}
+                    type="button"
+                    className="flex h-7 items-center justify-between rounded px-2 text-left font-mono text-[11px] hover:bg-muted"
+                    onClick={() => {
+                      e.aktion()
+                      setKontext(null)
+                    }}
+                  >
+                    <span>{e.label}</span>
+                    {e.hint && <span className="opacity-50">{e.hint}</span>}
+                  </button>
+                ))}
+              <div className="my-0.5 h-px bg-border" />
+              <button
+                type="button"
+                className="flex h-7 items-center justify-between rounded px-2 text-left font-mono text-[11px] text-destructive hover:bg-muted disabled:opacity-40"
+                disabled={locked}
+                onClick={() => {
+                  onDelete?.(kontext.id)
+                  onSelect(null)
+                  setKontext(null)
+                }}
+              >
+                <span>Entfernen</span>
+                <span className="opacity-50">Entf</span>
+              </button>
+            </div>
+          </>,
+          document.body,
+        )}
     </>
   )
 }

@@ -32,6 +32,28 @@ export type DrawingType =
   | 'ew_correction' // Elliott-Korrektur 0-A-B-C (4 Punkte)
   | 'pricerange' // Preis-Range (2 Punkte, Delta/%)
   | 'daterange' // Zeit-Range (2 Punkte, Balken/Dauer)
+  // Etappe „Werkzeuge wie TradingView": die Werkzeuge, die bis dahin fehlten.
+  | 'pitchfork' // Andrews' Pitchfork (3 Punkte: A + Basis B/C)
+  | 'gannbox' // Gann-Box (2 Punkte = Bounding-Box, Raster 1/3 · 1/2 · 2/3)
+  | 'fibfan' // Fib-Fan — Strahlen aus A durch die Fib-Höhen von A→B
+  | 'fibtime' // Fib-Zeitzonen — senkrechte Linien im Fibonacci-Abstand
+  | 'fibcircle' // Fib-Kreise — Kreisbögen um A mit den Fib-Anteilen von A→B
+  | 'xabcd' // XABCD-Muster (5 Punkte)
+  | 'headshoulders' // Kopf-Schulter (7 Punkte: LS, T1, K, T2, RS + Nackenlinie)
+  | 'pricelabel' // Kurs-Etikett (1 Punkt, zeigt den Kurs)
+  | 'callout' // Sprechblase mit Text (1 Punkt)
+  | 'marker' // Marker/Fähnchen (1 Punkt)
+  // Die übrigen drei Elliott-Zählungen aus TradingView. Sie fehlten als
+  // einzige der fünf — und Elliott ist in dieser App keine Randnotiz.
+  | 'ew_triangle' // Elliott-Dreieckswelle A-B-C-D-E (6 Punkte)
+  | 'ew_double' // Elliott-Doppelkombo W-X-Y (4 Punkte)
+  | 'ew_triple' // Elliott-Dreifachkombo W-X-Y-X-Z (6 Punkte)
+  // Die restlichen Linien aus TradingViews „Linien"-Gruppe.
+  | 'infoline' // Strecke mit Kurs-, Prozent- und Balkenangabe (2 Punkte)
+  | 'extendedline' // Gerade, in BEIDE Richtungen verlängert (2 Punkte)
+  | 'trendangle' // Strecke mit Winkelangabe gegen die Waagerechte (2 Punkte)
+  | 'hray' // Horizontaler Strahl — ab dem Punkt nach rechts (1 Punkt)
+  | 'crossline' // Fadenkreuz: waagerecht + senkrecht durch einen Punkt
 
 export interface DrawingPoint {
   time: number // Unix-Sekunden
@@ -57,6 +79,30 @@ export interface DrawingStyle {
    * aus der Datenbank kommt, ist ungeprüft und wird erst beim Lesen normalisiert.
    */
   fib?: unknown
+  /**
+   * Form einer Linie — verlängern, Endpunkt-Marker, Kennzahlen, Kurs-Etiketten.
+   *
+   * Damit werden `ray`, `arrow` und `infoline` zu VOREINSTELLUNGEN eines Typs
+   * statt zu eigenen Zeichnungen: Eine gezogene Strecke lässt sich nachträglich
+   * verlängern, statt sie löschen und neu ziehen zu müssen. Gelesen wird
+   * ausschließlich über `linienForm` (`lib/line-form.ts`) — auch das hier ist
+   * ungeprüftes JSON aus der Datenbank.
+   *
+   * Keine Migration nötig: Der Stil liegt ohnehin als JSON in einer Textspalte.
+   */
+  extend?: unknown
+  leftEnd?: unknown
+  rightEnd?: unknown
+  stats?: unknown
+  priceLabels?: unknown
+  middlePoint?: unknown
+  /**
+   * Form einer Fläche (Rechteck) — Rahmen, Füllung und Mittellinie einzeln.
+   * Gelesen über `flaechenForm` (`lib/line-form.ts`).
+   */
+  border?: unknown
+  background?: unknown
+  middleLine?: unknown
 }
 
 export interface Drawing {
@@ -91,14 +137,47 @@ const VALID_TYPES: DrawingType[] = [
   'ew_correction',
   'pricerange',
   'daterange',
+  'pitchfork',
+  'gannbox',
+  'fibfan',
+  'fibtime',
+  'fibcircle',
+  'xabcd',
+  'headshoulders',
+  'pricelabel',
+  'callout',
+  'marker',
+  'ew_triangle',
+  'ew_double',
+  'ew_triple',
+  'infoline',
+  'extendedline',
+  'trendangle',
+  'hray',
+  'crossline',
 ]
 
-/** Maximale Punktzahl je Typ (Brush = Freihand-Pfad, Elliott = Wellenzug). */
+/**
+ * Maximale Punktzahl je Typ.
+ *
+ * Stand bis hierher hart auf 4 (außer Freihand und Elliott) — und war damit
+ * genau die Stelle, an der ein neues Werkzeug mit mehr Punkten still am Server
+ * scheiterte. Die Ausnahmen stehen deshalb jetzt als Tabelle da, nicht als
+ * `if`-Kette.
+ */
+const MAX_POINTS: Partial<Record<DrawingType, number>> = {
+  brush: 500,
+  ew_impulse: 6,
+  ew_correction: 4,
+  headshoulders: 7,
+  xabcd: 5,
+  ew_triangle: 6,
+  ew_double: 4,
+  ew_triple: 6,
+}
+
 function maxPoints(type: DrawingType): number {
-  if (type === 'brush') return 500
-  if (type === 'ew_impulse') return 6
-  if (type === 'ew_correction') return 4
-  return 4
+  return MAX_POINTS[type] ?? 4
 }
 
 function parseDrawing(row: typeof chartDrawing.$inferSelect): Drawing {

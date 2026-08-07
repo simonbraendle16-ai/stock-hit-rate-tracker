@@ -8,7 +8,11 @@ import { ThesisForm } from './thesis-form'
 import { VerdictForm } from './verdict-form'
 import { TrainingSummary } from './training-summary'
 import { SessionPanel } from './session-panel'
-import { listSessionTrades, resolveTrainingTrade } from '@/app/actions/training-trades'
+import {
+  listSessionTrades,
+  logTrainingCheckpoint,
+  resolveTrainingTrade,
+} from '@/app/actions/training-trades'
 import {
   PICK_LABELS,
   isStopMode,
@@ -348,6 +352,43 @@ export function TrainingWorkspace({
   }, [naechsteFreigabe, visible])
 
   /**
+   * Play am Startpunkt lässt den Durchlauf los — und zählt das als Enthaltung.
+   *
+   * Bis hierher war Play in genau diesem Moment abgeschaltet: Der Regler endete
+   * an der Sperre, der Griff stand am rechten Anschlag, und es sah aus, als
+   * begänne die Übung an ihrem Ende. Wer loslegen wollte, musste erst begreifen,
+   * dass er einen Trade planen oder „Nein — weiterlaufen" drücken soll.
+   *
+   * Play einfach freizuschalten wäre allerdings ein stiller Datenverlust
+   * gewesen: Losspielen, ohne am Startpunkt etwas zu entscheiden, IST die
+   * Aussage „hier sehe ich kein Setup" — und genau diese Enthaltungen sind die
+   * einzige Zahl gegen das Überhandeln. Sie wird deshalb festgehalten, nicht
+   * übersprungen; der Hinweis sagt offen, was gerade gebucht wurde.
+   */
+  const durchlaufLoslassen = useCallback(() => {
+    if (gestartet || altModell || ended) return
+    // Erst loslassen, dann buchen: Der Replay soll nicht auf das Netz warten.
+    weiterGeben()
+    logTrainingCheckpoint({
+      sessionId: session.id,
+      tradeId: null,
+      candleTime: sichtbareKerzenzeit,
+      decision: 'kein_setup',
+    })
+      .then(() => {
+        toast.info('Durchlauf gestartet', {
+          description:
+            'Am Startpunkt kein Setup — das zählt als Enthaltung. Beim nächsten Haltepunkt wird wieder gefragt.',
+        })
+      })
+      .catch(() => {
+        // Der Durchlauf läuft trotzdem. Verschwiegen wird der Verlust nicht:
+        // Eine nicht gezählte Enthaltung verfälscht die Statistik nach unten.
+        toast.error('Enthaltung konnte nicht gespeichert werden.')
+      })
+  }, [gestartet, altModell, ended, weiterGeben, session.id, sichtbareKerzenzeit])
+
+  /**
    * Berührt der aufgedeckte Kurs Stop oder Ziel, misst die App von selbst.
    *
    * Erkannt wird im Browser (über die SICHTBAREN Kerzen), gemessen wird auf dem
@@ -520,13 +561,16 @@ export function TrainingWorkspace({
             replayStart={startIndex > 0 ? startIndex : undefined}
             replayMaxVisible={cap}
             replayLockedHint={
-              // Nur solange wirklich nichts festgeschrieben ist. Danach ist die
-              // Grenze ein Haltepunkt, keine Sperre — derselbe Text wäre dort
-              // schlicht falsch.
-              altModell || !gestartet
-                ? 'Erst den Plan festschreiben'
-                : 'Haltepunkt — rechts beantworten'
+              // Beim alten, einstufigen Ablauf gibt es nichts loszulassen — dort
+              // steht wirklich erst die These. Im neuen Ablauf startet Play den
+              // Durchlauf selbst; dann kann die Grenze nur noch ein Haltepunkt
+              // sein, und „erst festschreiben" wäre dort schlicht falsch.
+              altModell ? 'Erst die These festschreiben' : 'Haltepunkt — rechts beantworten'
             }
+            // Der alte Ablauf kennt kein Loslassen per Play: Dort ist die These
+            // das Ereignis, das den Replay öffnet.
+            replayReleased={altModell || ended || gestartet}
+            onReplayRelease={altModell ? undefined : durchlaufLoslassen}
             onReplayVisibleChange={setVisible}
             onCandlesLoaded={handleCandles}
             heightClass="h-[440px] sm:h-[560px] xl:h-[min(74vh,820px)]"
@@ -548,9 +592,11 @@ export function TrainingWorkspace({
               </p>
             ) : cap != null ? (
               <p className="note">
-                {altModell || !gestartet
-                  ? 'Der Replay ist gesperrt, bis du dich entschieden hast — plane einen Trade oder wähle „Kein Setup". Zeichnen, messen und Werkzeuge benutzen kannst du jetzt schon; die Zeichnungen gehören zu dieser Übung und landen nicht im Chart des Instruments.'
-                  : `Der Replay läuft bis zum nächsten Haltepunkt (Kerze ${cap}).`}
+                {altModell
+                  ? 'Der Replay ist gesperrt, bis die These festgeschrieben ist. Zeichnen, messen und Werkzeuge benutzen kannst du jetzt schon; die Zeichnungen gehören zu dieser Übung und landen nicht im Chart des Instruments.'
+                  : !gestartet
+                    ? 'Plane einen Trade, wähle „Kein Setup" — oder drücke einfach Play: Dann läuft der Replay ab hier weiter und der Startpunkt zählt als Enthaltung. Zeichnen und messen kannst du jetzt schon; die Zeichnungen gehören zu dieser Übung und landen nicht im Chart des Instruments.'
+                    : `Der Replay läuft bis zum nächsten Haltepunkt (Kerze ${cap}).`}
               </p>
             ) : null}
           </div>

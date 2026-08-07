@@ -22,6 +22,13 @@ import {
   ZEICHEN_STAERKEN,
 } from '@/lib/drawing-style'
 import { CHART_COLORS } from './colors'
+import {
+  flaechenForm,
+  istLinienTyp,
+  linienForm,
+  type EndCap,
+  type Extend,
+} from '@/lib/line-form'
 
 const TYP_NAMEN: Record<string, string> = {
   hline: 'Horizontale Linie',
@@ -43,6 +50,19 @@ const TYP_NAMEN: Record<string, string> = {
   pricerange: 'Preis-Range',
   daterange: 'Zeit-Range',
 }
+
+const EXTEND_LABELS: { id: Extend; label: string; hinweis: string }[] = [
+  { id: 'none', label: 'aus', hinweis: 'Strecke — endet an beiden Punkten' },
+  { id: 'left', label: '←', hinweis: 'Nach links verlängern' },
+  { id: 'right', label: '→', hinweis: 'Nach rechts verlängern (Strahl)' },
+  { id: 'both', label: '↔', hinweis: 'Beidseitig — die Gerade' },
+]
+
+const END_LABELS: { id: EndCap; label: string }[] = [
+  { id: 'none', label: '—' },
+  { id: 'arrow', label: '▸' },
+  { id: 'dot', label: '•' },
+]
 
 const BESCHRIFTUNGEN: { id: FibBeschriftung; label: string }[] = [
   { id: 'beides', label: 'Beides' },
@@ -119,6 +139,12 @@ export function DrawingStylePanel({
   const [gesichert, setGesichert] = useState(false)
 
   const istFib = drawing.type === 'fib' || drawing.type === 'fibext'
+  const istLinie = istLinienTyp(drawing.type)
+  const form = linienForm(drawing.type, drawing.style)
+  // Nur das Rechteck: Preis- und Zeit-Range leben von ihrer Füllung, dort wäre
+  // „Füllung aus" eine leere Behauptung.
+  const istFlaeche = drawing.type === 'rect'
+  const flaeche = flaechenForm(drawing.type, drawing.style)
   const stil = normalizeDrawingStyle(
     drawing.style,
     istFib ? CHART_COLORS.warning : CHART_COLORS.accent,
@@ -221,6 +247,126 @@ export function DrawingStylePanel({
           gestrichelt
         </Schalter>
       </div>
+
+      {/* Linien-Form — nachgebaut nach TradingViews Style-Reiter.
+          Das ist der Kern der Etappe „Tiefe statt Breite": Ob eine Linie
+          verlängert wird, eine Spitze trägt oder Kennzahlen zeigt, war bei uns
+          bis hierher der TYP der Zeichnung. Wer eine Strecke gezogen hatte und
+          sie danach als Strahl wollte, musste löschen und neu ziehen. */}
+      {istLinie && (
+        <div className="space-y-2 border-t border-border/40 pt-2">
+          <div>
+            <p className="note mb-1">Verlängern</p>
+            <div className="flex gap-1">
+              {EXTEND_LABELS.map((e) => (
+                <Button
+                  key={e.id}
+                  size="sm"
+                  variant={form.extend === e.id ? 'secondary' : 'ghost'}
+                  className="h-6 flex-1 px-1 font-mono text-[10px]"
+                  title={e.hinweis}
+                  onClick={() => setzen({ extend: e.id })}
+                >
+                  {e.label}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="note mb-1">Anfang</p>
+              <div className="flex gap-1">
+                {END_LABELS.map((c) => (
+                  <Button
+                    key={c.id}
+                    size="sm"
+                    variant={form.leftEnd === c.id ? 'secondary' : 'ghost'}
+                    className="h-6 flex-1 px-1 font-mono text-[10px]"
+                    onClick={() => setzen({ leftEnd: c.id })}
+                  >
+                    {c.label}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="note mb-1">Ende</p>
+              <div className="flex gap-1">
+                {END_LABELS.map((c) => (
+                  <Button
+                    key={c.id}
+                    size="sm"
+                    variant={form.rightEnd === c.id ? 'secondary' : 'ghost'}
+                    className="h-6 flex-1 px-1 font-mono text-[10px]"
+                    onClick={() => setzen({ rightEnd: c.id })}
+                  >
+                    {c.label}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-1">
+            <Schalter an={form.stats} onClick={() => setzen({ stats: !form.stats })}>
+              Kurs, % und Balken
+            </Schalter>
+            <Schalter
+              an={form.priceLabels}
+              onClick={() => setzen({ priceLabels: !form.priceLabels })}
+            >
+              Kurs-Etiketten
+            </Schalter>
+            <Schalter
+              an={form.middlePoint}
+              onClick={() => setzen({ middlePoint: !form.middlePoint })}
+            >
+              Mittelpunkt
+            </Schalter>
+          </div>
+        </div>
+      )}
+
+      {/* Fläche — nachgebaut nach TradingViews Rechteck-Dialog. */}
+      {istFlaeche && (
+        <div className="space-y-2 border-t border-border/40 pt-2">
+          <div>
+            <p className="note mb-1">Verlängern</p>
+            <div className="flex gap-1">
+              {EXTEND_LABELS.map((e) => (
+                <Button
+                  key={e.id}
+                  size="sm"
+                  variant={flaeche.extend === e.id ? 'secondary' : 'ghost'}
+                  className="h-6 flex-1 px-1 font-mono text-[10px]"
+                  title={e.hinweis}
+                  onClick={() => setzen({ extend: e.id })}
+                >
+                  {e.label}
+                </Button>
+              ))}
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-1">
+            <Schalter an={flaeche.border} onClick={() => setzen({ border: !flaeche.border })}>
+              Rahmen
+            </Schalter>
+            <Schalter
+              an={flaeche.background}
+              onClick={() => setzen({ background: !flaeche.background })}
+            >
+              Füllung
+            </Schalter>
+            <Schalter
+              an={flaeche.middleLine}
+              onClick={() => setzen({ middleLine: !flaeche.middleLine })}
+            >
+              Mittellinie
+            </Schalter>
+          </div>
+        </div>
+      )}
 
       {fib && (
         <>

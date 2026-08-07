@@ -24,6 +24,12 @@ import {
 import { useCandles } from './use-candles'
 import { CHART_COLORS } from './colors'
 import { ChartToolbar, type DrawTool } from './chart-toolbar'
+import { loadChartTools, saveChartTools } from '@/app/actions/chart-tools'
+import {
+  DEFAULT_TOOL_PREFS,
+  toggleFavorite,
+  type ChartToolPrefs,
+} from '@/lib/chart-tools'
 import { DrawingLayer } from './drawing-layer'
 import { DrawingStylePanel } from './drawing-style-panel'
 import { AnalysisImport } from './analysis-import'
@@ -144,6 +150,8 @@ export function PriceChart({
   replayStart,
   replayMaxVisible,
   replayLockedHint,
+  replayReleased,
+  onReplayRelease,
   replayBasisTimeframe,
   onReplayVisibleChange,
   onCandlesLoaded,
@@ -169,6 +177,16 @@ export function PriceChart({
   /** Obergrenze der sichtbaren Kerzen — der Trainer sperrt damit die Zukunft. */
   replayMaxVisible?: number
   replayLockedHint?: string
+  /**
+   * Ist der Durchlauf der Übung schon losgelassen? Ohne Angabe „ja" — Charts
+   * außerhalb des Trainers haben nichts loszulassen.
+   */
+  replayReleased?: boolean
+  /**
+   * Den Durchlauf loslassen, wenn Play am Startpunkt gedrückt wird. Der Trainer
+   * hält das als Enthaltung fest — siehe `training-workspace.tsx`.
+   */
+  onReplayRelease?: () => void
   /**
    * Die Zeitebene, in der der Replay läuft. Der Fortschritt zählt IMMER in
    * ihren Kerzen — sonst hieße „zehn Kerzen weiter" auf jeder Ebene etwas
@@ -458,9 +476,43 @@ export function PriceChart({
   const [drawings, setDrawings] = useState<Drawing[]>(initialDrawings)
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [drawError, setDrawError] = useState<string | null>(null)
-  const [magnet, setMagnet] = useState(false)
   const [drawingsLocked, setDrawingsLocked] = useState(false)
   const [drawingsVisible, setDrawingsVisible] = useState(true)
+
+  /**
+   * Favoriten, „Werkzeug bleibt aktiv" und Magnet — am Nutzer gespeichert
+   * (Migration 0031), nicht im Browser. Eine Übung, die auf dem zweiten Rechner
+   * anders bedient wird als der Ernstfall, übt das Falsche.
+   *
+   * Bis die Einstellung geladen ist, gilt der Auslieferungszustand; scheitert
+   * das Laden, bleibt es dabei. Zeichnen darf an einer Einstellungsfrage nicht
+   * scheitern.
+   */
+  const [toolPrefs, setToolPrefs] = useState<ChartToolPrefs>(DEFAULT_TOOL_PREFS)
+  useEffect(() => {
+    if (!drawingsEnabled) return
+    let lebt = true
+    loadChartTools()
+      .then((p) => {
+        if (lebt) setToolPrefs(p)
+      })
+      .catch(() => {
+        /* Auslieferungszustand bleibt. */
+      })
+    return () => {
+      lebt = false
+    }
+  }, [drawingsEnabled])
+
+  /** Sofort im Bild, danach sichern — eine Leiste soll nicht auf das Netz warten. */
+  const toolPrefsSetzen = useCallback((next: ChartToolPrefs) => {
+    setToolPrefs(next)
+    saveChartTools(next).catch(() =>
+      setDrawError('Werkzeug-Einstellung konnte nicht gesichert werden.'),
+    )
+  }, [])
+
+  const magnet = toolPrefs.magnet
 
   // Die eigenen Zeichen-Standards (Fib-Levels, Farbe, Stärke). Sie werden
   // einmal geholt; scheitert das, gilt der Auslieferungszustand — Zeichnen darf
@@ -654,6 +706,29 @@ export function PriceChart({
       p.catch(() => setDrawError('Zeichnung konnte nicht gelöscht werden.'))
     },
     [fluechtig, trainingSessionId],
+  )
+
+  /**
+   * Eine Zeichnung klonen (Kontextmenü und Strg+D) — wie TradingViews „Klon".
+   *
+   * Die Kopie liegt deckungsgleich über dem Original und ist sofort ausgewählt;
+   * der nächste Zug schiebt sie weg. Ein erfundener Versatz wäre die
+   * Alternative gewesen — aber „um wie viel" ist bei einer waagerechten Linie
+   * eine andere Frage als bei einem Elliott-Zug, und geraten sitzt die Kopie
+   * dann garantiert falsch.
+   */
+  const zeichnungKlonen = useCallback(
+    (id: number) => {
+      const d = drawings.find((x) => x.id === id)
+      if (!d) return
+      zeichnungWiederherstellen(d)
+        .then((neu) => {
+          setSelectedId(neu)
+          merken({ art: 'erstellt', d: { ...d, id: neu } })
+        })
+        .catch(() => setDrawError('Kopie konnte nicht angelegt werden.'))
+    },
+    [drawings, zeichnungWiederherstellen, merken],
   )
 
   const zeichnungSetzen = useCallback(
@@ -1650,7 +1725,16 @@ export function PriceChart({
             hasSelection={selectedId != null}
             onDeleteSelected={handleDeleteSelected}
             magnet={magnet}
-            onMagnetChange={setMagnet}
+            onMagnetChange={(v) => toolPrefsSetzen({ ...toolPrefs, magnet: v })}
+            favorites={toolPrefs.favorites}
+            onToggleFavorite={(id) =>
+              toolPrefsSetzen({
+                ...toolPrefs,
+                favorites: toggleFavorite(toolPrefs.favorites, id),
+              })
+            }
+            keepTool={toolPrefs.keepTool}
+            onKeepToolChange={(v) => toolPrefsSetzen({ ...toolPrefs, keepTool: v })}
             locked={drawingsLocked}
             onLockedChange={setDrawingsLocked}
             drawingsVisible={drawingsVisible}
@@ -1690,6 +1774,10 @@ export function PriceChart({
                 onDelete={handleDeleteById}
                 magnet={magnet}
                 locked={drawingsLocked}
+                keepTool={toolPrefs.keepTool}
+                onClone={zeichnungKlonen}
+                onLockedChange={setDrawingsLocked}
+                onOpenStyle={setSelectedId}
               />
             )}
           {/* Eigenschaften der ausgewählten Zeichnung. Der Anker wird aus dem
@@ -1788,6 +1876,8 @@ export function PriceChart({
           start={replayStart}
           maxVisible={replayMaxVisible}
           lockedHint={replayLockedHint}
+          released={replayReleased}
+          onRelease={onReplayRelease}
         />
       )}
     </div>

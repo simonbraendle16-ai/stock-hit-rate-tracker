@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   MAX_START_FENSTER,
+  REGLER_MIN,
   ansichtNeuSetzen,
+  playAktion,
+  replaySkala,
   replayStand,
   startFenster,
   type AnsichtStand,
@@ -155,5 +158,73 @@ describe('ansichtNeuSetzen', () => {
         ansichtNeuSetzen(null, { key: 'A|4h', ersteZeit: 0, replayFenster: true, len }),
       ).toBe(false)
     }
+  })
+})
+
+describe('replaySkala', () => {
+  it('spannt über die GANZE Reihe, auch wenn gesperrt ist', () => {
+    // Der Fehler, um den es hier geht: Vor dem Loslassen war die Obergrenze der
+    // Startpunkt, und der Regler endete dort. Der Griff stand am rechten
+    // Anschlag — die Übung sah aus, als begänne sie am Ende.
+    const s = replaySkala(1000, 250, 250)
+    expect(s.max).toBe(1000)
+    expect(s.wert).toBe(250)
+    expect(s.grenze).toBe(250)
+    expect(s.gesperrt).toBe(true)
+  })
+
+  it('meldet den gesperrten Anteil für die Schraffur', () => {
+    const s = replaySkala(1000, 250, 250)
+    // Von den 970 anwählbaren Kerzen (30 … 1000) liegen 750 hinter der Sperre.
+    expect(s.sperrAnteil).toBeCloseTo(750 / 970, 6)
+  })
+
+  it('ohne Obergrenze ist nichts gesperrt', () => {
+    const s = replaySkala(1000, 400, null)
+    expect(s.gesperrt).toBe(false)
+    expect(s.sperrAnteil).toBe(0)
+    expect(s.grenze).toBe(1000)
+    expect(s.wert).toBe(400)
+  })
+
+  it('klemmt einen Stand jenseits der Freigabe auf die Freigabe', () => {
+    expect(replaySkala(1000, 900, 300).wert).toBe(300)
+  })
+
+  it('hält den kleinsten Stand ein', () => {
+    expect(replaySkala(1000, 5, null).wert).toBe(REGLER_MIN)
+    expect(replaySkala(1000, 5, null).min).toBe(REGLER_MIN)
+  })
+
+  it('verträgt eine kurze Reihe ohne Division durch null', () => {
+    const s = replaySkala(20, 20, 20)
+    expect(s.min).toBe(20)
+    expect(s.max).toBe(20)
+    expect(s.sperrAnteil).toBe(0)
+  })
+
+  it('verträgt eine leere Reihe', () => {
+    const s = replaySkala(0, 0, null)
+    expect(s.max).toBe(0)
+    expect(s.wert).toBe(0)
+    expect(s.gesperrt).toBe(false)
+  })
+})
+
+describe('playAktion', () => {
+  it('spielt, solange Luft bis zur Freigabe ist', () => {
+    expect(playAktion(250, 300, true)).toBe('spielen')
+    expect(playAktion(250, 300, false)).toBe('spielen')
+  })
+
+  it('lässt den noch nicht losgelassenen Durchlauf los', () => {
+    // Genau der Moment beim Öffnen einer Übung: Stand = Freigabe = Startpunkt.
+    expect(playAktion(250, 250, false)).toBe('loslassen')
+  })
+
+  it('tut am Haltepunkt eines laufenden Durchlaufs nichts', () => {
+    // Die Frage daneben ist der Sinn des Haltepunkts — Play darf sie nicht
+    // überspringen.
+    expect(playAktion(300, 300, true)).toBe('blockiert')
   })
 })

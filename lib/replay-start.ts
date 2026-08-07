@@ -73,6 +73,95 @@ export function startFenster(freigegeben: number): number {
   return Math.max(1, Math.min(Math.floor(freigegeben), MAX_START_FENSTER))
 }
 
+/**
+ * Der kleinste Stand, den die Bedienleiste anbietet.
+ *
+ * Unter dreißig Kerzen ist ein Chart kein Chart mehr. Der Wert stand bisher als
+ * nackte 30 in der Leiste; er gehört hierher, weil die Skala aus derselben
+ * Quelle kommen muss wie die Klemmung — sonst zeigt der Regler einen Bereich
+ * an, den `replayStand` gar nicht annimmt.
+ */
+export const REGLER_MIN = 30
+
+/**
+ * Die Skala der Replay-Leiste: worüber der Regler spannt und was davon gesperrt
+ * ist.
+ *
+ * Bis hierher war der Maximalwert des Reglers die **Obergrenze** der Übung,
+ * nicht die Reihe. Vor dem Loslassen ist diese Obergrenze exakt der Startpunkt
+ * — der Griff stand damit beim Öffnen am rechten Anschlag und Play war
+ * abgeschaltet. Es sah aus wie „die Übung beginnt am Ende", war aber die
+ * Sperre, die sich die Skala mit dem Fortschritt teilte.
+ *
+ * Sperre und Skala sind deshalb ab hier zwei Dinge: Der Regler spannt immer
+ * über die **ganze** Reihe, und der gesperrte Teil wird als solcher gezeigt,
+ * statt die Achse zu verkürzen. Verborgen bleibt die Zukunft trotzdem — sie
+ * wird nur nicht mehr weggelogen.
+ */
+export interface ReplaySkala {
+  /** Kleinster anwählbarer Stand. */
+  min: number
+  /** Größter Wert der Achse — immer die volle Reihe. */
+  max: number
+  /** Der geltende Stand, geklemmt an die Freigabe. */
+  wert: number
+  /** Bis hierher ist freigegeben; darüber liegt die Sperre. */
+  grenze: number
+  /** Steht überhaupt eine Sperre? */
+  gesperrt: boolean
+  /** Anteil der Leiste (0–1), der gesperrt ist — für die Schraffur. */
+  sperrAnteil: number
+}
+
+export function replaySkala(
+  total: number,
+  visible: number,
+  cap: number | null | undefined,
+): ReplaySkala {
+  const reihe = Number.isFinite(total) && total > 0 ? Math.floor(total) : 0
+  const min = Math.min(reihe, REGLER_MIN)
+  const grenze = replayStand(reihe, cap ?? reihe, cap)
+  const wert = Math.min(Math.max(replayStand(reihe, visible, cap), min), Math.max(grenze, min))
+  const spanne = reihe - min
+
+  return {
+    min,
+    max: Math.max(reihe, min),
+    wert,
+    grenze: Math.max(grenze, min),
+    gesperrt: grenze < reihe,
+    sperrAnteil: spanne > 0 ? Math.min(1, Math.max(0, (reihe - grenze) / spanne)) : 0,
+  }
+}
+
+/**
+ * Was ein Druck auf Play bewirken soll.
+ *
+ * Play war bisher abgeschaltet, sobald der Stand die Freigabe erreicht hatte —
+ * und beim Öffnen einer Übung ist das der Normalfall. Ein toter Knopf erklärt
+ * aber nichts; er sieht aus wie ein Fehler. Also bekommt Play drei Bedeutungen,
+ * und zwar genau eine je Lage:
+ *
+ * - `spielen` — es ist Luft bis zur Freigabe, die Kerzen laufen.
+ * - `loslassen` — der Durchlauf wurde noch nie losgelassen. Der Druck lässt ihn
+ *   los; das ist dieselbe Aussage wie „Nein — weiterlaufen" und wird auch so
+ *   festgehalten (siehe `training-workspace.tsx`). Ohne diese Buchung wäre die
+ *   Enthaltung verschwunden, und Enthaltungen sind die einzige Zahl gegen
+ *   Überhandeln.
+ * - `blockiert` — der Durchlauf läuft, steht aber an einem Haltepunkt. Hier
+ *   darf Play nichts tun: Die Frage daneben ist der Sinn des Haltepunkts.
+ */
+export type PlayAktion = 'spielen' | 'loslassen' | 'blockiert'
+
+export function playAktion(
+  stand: number,
+  grenze: number,
+  losgelassen: boolean,
+): PlayAktion {
+  if (Number.isFinite(stand) && Number.isFinite(grenze) && stand < grenze) return 'spielen'
+  return losgelassen ? 'blockiert' : 'loslassen'
+}
+
 /** Wofür der sichtbare Ausschnitt zuletzt gesetzt wurde. */
 export interface AnsichtStand {
   /** Instrument + Markt + Zeitebene. */

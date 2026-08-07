@@ -1,0 +1,45 @@
+-- Werkzeug-Einstellungen: Favoriten, festgehaltenes Werkzeug, Magnet.
+--
+-- AUSGANGSLAGE
+-- Die Zeichenwerkzeuge lagen in sieben Gruppen hinter Flyout-Menüs. Achtzehn
+-- Werkzeuge waren vorhanden, aber jedes einzelne kostete zwei Griffe: erst die
+-- Gruppe öffnen, dann das Werkzeug wählen. Wer beim Lesen einer Struktur
+-- abwechselnd Trendlinie, Niveau und Fib benutzt — also der Normalfall —, war
+-- damit ständig in der Leiste statt im Chart. Dazu sprang das Werkzeug nach
+-- JEDER fertigen Zeichnung zurück auf den Zeiger; fünf Niveaus einzuzeichnen
+-- hieß fünfmal denselben Weg.
+--
+-- WARUM DAS NICHT KOSMETIK IST
+-- Diese App ist dafür gebaut, dass eine Struktur im Chart gelesen wird, bevor
+-- Geld im Markt ist. Ein Werkzeugweg, der bei jedem Strich unterbricht, führt
+-- dazu, dass die Analyse gar nicht erst aufs Blatt kommt — und eine nicht
+-- gezeichnete Struktur ist eine nicht geprüfte These. Das ist dieselbe Sorte
+-- Fehler, gegen die hier sonst überall Leitplanken stehen.
+--
+-- WARUM IN DER DATENBANK UND NICHT IM localStorage
+-- Dieselbe Begründung wie beim Chart-Aussehen (Migration 0028): localStorage
+-- hängt an einem Gerät und einem Browser. Wer am Laptop seine Favoriten legt
+-- und am zweiten Rechner übt, findet dort eine andere Leiste — und eine Übung,
+-- die anders bedient wird als der Ernstfall, übt das Falsche.
+--
+-- WARUM EIN TEXTFELD MIT JSON UND KEINE DREI SPALTEN
+-- Es sind heute drei Werte (Favoritenliste, „Werkzeug bleibt aktiv", Magnet).
+-- Jeder als eigene Spalte hieße: jede weitere Einstellung ist eine weitere
+-- Migration — und die Werkzeugliste wächst noch. Gelesen wird ausschließlich
+-- über `normalizeToolPrefs` (`lib/chart-tools.ts`), das jedes Feld einzeln
+-- prüft und Fehlendes mit dem Standard auffüllt.
+--
+-- WARUM DIE FAVORITEN NICHT GEGEN EINEN FESTEN BESTAND GEPRÜFT WERDEN
+-- Die Kennungen laufen nur durch eine Formprüfung, nicht gegen die heute
+-- bekannten Werkzeuge. Sonst verlöre eine gespeicherte Liste beim Rollback
+-- einer Erweiterung still ihre Einträge. Was die Leiste nicht kennt, blendet
+-- sie aus; gespeichert bleibt es.
+--
+-- KEIN BACKFILL: NULL heißt „Auslieferungszustand" (`DEFAULT_TOOL_PREFS`) —
+-- Trendlinie, waagerechte Linie, Fib und Long-Position. Also genau die vier,
+-- mit denen ein Plan entsteht.
+--
+-- Additiv und idempotent, mehrfach ausführbar.
+
+ALTER TABLE "user_settings"
+  ADD COLUMN IF NOT EXISTS "chartTools" text;

@@ -137,6 +137,10 @@ export const userSettings = pgTable('user_settings', {
   // NULL = Auslieferungszustand. Gelesen ausschließlich über
   // `normalizeDrawingDefaults` (`lib/drawing-defaults.ts`).
   drawingDefaults: text('drawingDefaults'),
+  // Werkzeug-Einstellungen als JSON (Migration 0031): Favoritenleiste,
+  // „Werkzeug bleibt aktiv", Magnet. NULL = Auslieferungszustand. Gelesen
+  // ausschließlich über `normalizeToolPrefs` (`lib/chart-tools.ts`).
+  chartTools: text('chartTools'),
 })
 
 // Ein- und Auszahlungen auf ein DEPOT. Ohne sie rechnet die Rendite gegen
