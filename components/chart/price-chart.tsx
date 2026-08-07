@@ -32,6 +32,8 @@ import {
 } from '@/lib/chart-tools'
 import { DrawingLayer } from './drawing-layer'
 import { DrawingStylePanel } from './drawing-style-panel'
+import { DrawingStyleBar, type AuswahlRahmen } from './drawing-style-bar'
+import { barStep } from '@/lib/chart-coords'
 import { AnalysisImport } from './analysis-import'
 import { IndicatorMenu } from './indicator-menu'
 import { ChartReplayControls } from './chart-replay-controls'
@@ -812,6 +814,44 @@ export function PriceChart({
   )
 
   /**
+   * Wo die ausgewählte Zeichnung im Fenster liegt — Anker der schwebenden
+   * Stil-Leiste. Gemeldet von der Zeichenebene, weil nur sie Zeit/Kurs in Pixel
+   * umrechnen kann.
+   *
+   * Verglichen wird VOR dem Setzen: Die Ebene meldet bei jeder Bewegung der
+   * Zeitachse, und ein blindes `setState` je Meldung wäre im Replay ein
+   * Rendern je Kerze für eine Leiste, die sich meist gar nicht bewegt.
+   */
+  const [auswahlRahmen, setAuswahlRahmen] = useState<AuswahlRahmen | null>(null)
+  const rahmenMelden = useCallback((box: AuswahlRahmen | null) => {
+    setAuswahlRahmen((alt) => {
+      if (alt === box) return alt
+      if (!alt || !box) return box
+      const gleich =
+        Math.abs(alt.left - box.left) < 0.5 &&
+        Math.abs(alt.top - box.top) < 0.5 &&
+        Math.abs(alt.right - box.right) < 0.5 &&
+        Math.abs(alt.bottom - box.bottom) < 0.5
+      return gleich ? alt : box
+    })
+  }, [])
+
+  /**
+   * Ist der volle Eigenschaften-Dialog offen?
+   *
+   * Er geht seit der schwebenden Leiste NUR noch auf Verlangen auf (Zahnrad
+   * oder Rechtsklick → Einstellungen). Vorher erschien er bei jeder Auswahl und
+   * verdeckte mit 248 px genau den Teil des Charts, in dem die Zeichnung liegt
+   * — man wählte etwas aus, um es anzusehen, und sah es dann nicht mehr.
+   */
+  const [stilOffen, setStilOffen] = useState(false)
+  useEffect(() => setStilOffen(false), [selectedId])
+
+  /** Zeitraster der gezeigten Kerzen — für die Balkenzahl im Koordinaten-Feld. */
+  const zeichenZeiten = useMemo(() => (chartCandles ?? []).map((c) => c.time), [chartCandles])
+  const zeichenStep = useMemo(() => barStep(zeichenZeiten), [zeichenZeiten])
+
+  /**
    * Wo das Eigenschaften-Panel sitzt. Muss aus dem Chart-Rahmen gerechnet
    * werden, weil das Panel am `<body>` hängt und dort nichts über seine Lage im
    * Layout weiß. Bei Scrollen und Größenänderung wird nachgezogen — sonst
@@ -848,6 +888,25 @@ export function PriceChart({
   const handleSaveDefault = useCallback(
     (typ: 'fib' | 'fibext', stil: FibStil) => {
       const next = { ...zeichenStandards, [typ]: stil }
+      setZeichenStandards(next)
+      saveDrawingDefaults(next).catch(() =>
+        setDrawError('Standard konnte nicht gesichert werden.'),
+      )
+    },
+    [zeichenStandards],
+  )
+
+  /**
+   * Farbe und Stärke dieser Zeichnung als Standard für neue sichern („…" in der
+   * schwebenden Leiste).
+   *
+   * Das ist unsere Antwort auf TradingViews „Templates" — bewusst EIN Standard
+   * je Werkzeug statt eines zweiten, benannten Vorrats an Stilen. Zwei Quellen
+   * dafür, wie eine neue Zeichnung aussieht, liefen unweigerlich auseinander.
+   */
+  const handleSaveStilDefault = useCallback(
+    (farbe: string, staerke: number) => {
+      const next = { ...zeichenStandards, farbe, staerke }
       setZeichenStandards(next)
       saveDrawingDefaults(next).catch(() =>
         setDrawError('Standard konnte nicht gesichert werden.'),
@@ -1777,14 +1836,37 @@ export function PriceChart({
                 keepTool={toolPrefs.keepTool}
                 onClone={zeichnungKlonen}
                 onLockedChange={setDrawingsLocked}
-                onOpenStyle={setSelectedId}
+                onOpenStyle={(id) => {
+                  setSelectedId(id)
+                  setStilOffen(true)
+                }}
+                onSelectionBox={rahmenMelden}
               />
             )}
+
+          {/* Die schwebende Stil-Leiste an der Zeichnung — die häufigen
+              Handgriffe dort, wo das Objekt liegt. Alles Seltenere steckt
+              hinter dem Zahnrad im Panel darunter. */}
+          {ausgewaehlteZeichnung && auswahlRahmen && drawingsVisible && (
+            <DrawingStyleBar
+              key={`bar-${ausgewaehlteZeichnung.id}`}
+              drawing={ausgewaehlteZeichnung}
+              rahmen={auswahlRahmen}
+              onChange={(style) => handleStyleChange(ausgewaehlteZeichnung.id, style)}
+              onOpenSettings={() => setStilOffen(true)}
+              onDelete={handleDeleteSelected}
+              onClone={() => zeichnungKlonen(ausgewaehlteZeichnung.id)}
+              locked={drawingsLocked}
+              onLockedChange={setDrawingsLocked}
+              onSaveDefault={fluechtig ? undefined : handleSaveStilDefault}
+            />
+          )}
+
           {/* Eigenschaften der ausgewählten Zeichnung. Der Anker wird aus dem
               Chart-Rahmen berechnet, weil das Panel per Portal am <body> hängt
               (siehe drawing-style-panel.tsx) und von dort aus nichts über seine
               Lage im Layout weiß. */}
-          {ausgewaehlteZeichnung && panelAnker && (
+          {ausgewaehlteZeichnung && panelAnker && stilOffen && (
             <DrawingStylePanel
               key={ausgewaehlteZeichnung.id}
               drawing={ausgewaehlteZeichnung}
@@ -1792,8 +1874,15 @@ export function PriceChart({
               left={panelAnker.left}
               onChange={(style) => handleStyleChange(ausgewaehlteZeichnung.id, style)}
               onDelete={handleDeleteSelected}
-              onClose={() => setSelectedId(null)}
+              onClose={() => setStilOffen(false)}
               onSaveDefault={fluechtig ? undefined : handleSaveDefault}
+              times={zeichenZeiten}
+              step={zeichenStep}
+              onPointsChange={
+                drawingsLocked
+                  ? undefined
+                  : (points) => handleUpdate(ausgewaehlteZeichnung.id, points)
+              }
             />
           )}
 

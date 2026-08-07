@@ -5,6 +5,11 @@ import { and, eq } from 'drizzle-orm'
 import { Interval, Market, MarketDataError } from '@/lib/market-data'
 import { getCachedCandles } from '@/lib/market-data/cached'
 import { createSymbolResolver, lookupProviderSymbol } from '@/lib/market-data/lookup'
+import {
+  istGueltigerTicker,
+  istGueltigesAnbieterSymbol,
+  unaufgeloestMeldung,
+} from '@/lib/market-data/symbol-syntax'
 import { intervalForTimeframe, isChartTimeframe } from '@/lib/chart-timeframes'
 import { headers } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
@@ -81,7 +86,10 @@ export async function GET(req: NextRequest) {
     interval = intervalForTimeframe(isChartTimeframe(tf) ? tf : row.timeframe)
   }
 
-  if (!symbol || symbol.length > 20 || !/^[A-Z0-9./:^=-]+$/.test(symbol)) {
+  // Großzügig auf dem ROHEN Ticker (er wird gleich übersetzt), eng erst auf dem
+  // Anbieter-Symbol weiter unten. Siehe `lib/market-data/symbol-syntax.ts` —
+  // dort steht auch, welche Werte hier zuvor stillschweigend gescheitert sind.
+  if (!istGueltigerTicker(symbol)) {
     return NextResponse.json({ error: 'Ungültiges Symbol.' }, { status: 400 })
   }
   if (!VALID_MARKETS.includes(market)) {
@@ -98,6 +106,16 @@ export async function GET(req: NextRequest) {
     const providerSymbol = stockId
       ? (await createSymbolResolver(session.user.id))(symbol, stockId)
       : (await lookupProviderSymbol(session.user.id, symbol)).symbol
+    // Ein unaufgelöster Rohticker geht NICHT an den Anbieter — und er darf auch
+    // nicht in den Kerzenspeicher, der ihn sonst dauerhaft behielte. Genau so
+    // ist unter dem Schlüssel `BTC` eine Reihe eines fremden Papiers entstanden
+    // (Kurse um 30 statt 65.000), die der Sammellauf danach weiter pflegte.
+    if (!istGueltigesAnbieterSymbol(providerSymbol)) {
+      return NextResponse.json(
+        { error: unaufgeloestMeldung(symbol), code: 'unresolved' },
+        { status: 422 },
+      )
+    }
     // Eine Übung lebt von Historie: Vergangenheit zum Analysieren UND Zukunft
     // zum Aufdecken. Deshalb bekommt der Trainer mehr Kerzen als ein normaler
     // Chart, in dem die letzten paar hundert genügen.

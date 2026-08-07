@@ -293,7 +293,11 @@ export const trade = pgTable('trade', {
   direction: text('direction').notNull(), // long | short
   entryPrice: doublePrecision('entryPrice').notNull(),
   stopLoss: doublePrecision('stopLoss').notNull(),
-  takeProfit: doublePrecision('takeProfit'),
+  // Das Kursziel — PFLICHT seit Migration 0032, und es ist die ÄUSSERSTE Stufe
+  // des Plans (vorher trug es bei gestaffelten Trades die erste). Der nicht
+  // verteilte Rest der Position gehört ihm. Gebaut wird der Plan ausschließlich
+  // über `buildTargetPlan` (`lib/trade-targets.ts`).
+  takeProfit: doublePrecision('takeProfit').notNull(),
   positionSize: doublePrecision('positionSize'),
   // Kapitaleinsatz in Kontowährung (Echtgeld); die Stückzahl in positionSize
   // wird daraus abgeleitet — bei Hebel aus Einsatz × Hebel.

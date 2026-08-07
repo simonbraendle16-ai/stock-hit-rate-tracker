@@ -165,4 +165,24 @@ describe('istFlaechenTyp', () => {
       expect(istFlaechenTyp(t)).toBe(false)
     }
   })
+
+  it('zaehlt den Kanal dazu — er traegt dieselben Regler wie das Rechteck', () => {
+    expect(istFlaechenTyp('channel')).toBe(true)
+  })
+})
+
+describe('Kanal — Flaechenform', () => {
+  it('faellt ohne Angabe auf Rahmen und Fuellung an, Mittellinie aus', () => {
+    const f = flaechenForm('channel', null)
+    expect(f).toEqual({ extend: 'none', border: true, background: true, middleLine: false })
+  })
+
+  it('laesst sich zur reinen Zone machen (Rahmen aus)', () => {
+    expect(flaechenForm('channel', { border: false }).border).toBe(false)
+  })
+
+  it('nimmt dieselben Extend-Werte wie eine Linie', () => {
+    expect(flaechenForm('channel', { extend: 'right' }).extend).toBe('right')
+    expect(flaechenForm('channel', { extend: 'schraeg' }).extend).toBe('none')
+  })
 })

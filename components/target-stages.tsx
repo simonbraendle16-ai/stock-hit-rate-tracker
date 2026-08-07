@@ -15,9 +15,9 @@ import { Trash2, Plus, Target } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import {
-  MAX_TARGETS,
+  MAX_TEILZIELE,
   blendedRiskReward,
-  normalizeTargets,
+  buildTargetPlan,
   remainderPct,
   type TargetPlanInput,
 } from '@/lib/trade-targets'
@@ -43,37 +43,52 @@ export function parseTargetDrafts(drafts: TargetDraft[]): TargetPlanInput[] {
     }))
 }
 
-/** Prüfergebnis für die Anzeige: Fehlertext oder der gewichtete Plan. */
+/**
+ * Prüfergebnis für die Anzeige: Fehlertext oder der vollständige Plan.
+ *
+ * Rechnet über **dieselbe** Funktion wie der Server (`buildTargetPlan`), damit
+ * der Hinweis schon beim Tippen erscheint und nicht erst nach dem Absenden —
+ * und damit beide dieselbe Antwort geben. Das Kursziel ist Teil des Plans, auch
+ * wenn es oben im Formular steht: Es ist die äußerste Stufe, und der nicht
+ * verteilte Rest der Position gehört ihm.
+ */
 export function checkTargets(args: {
   entry: number
   stopLoss: number
   direction: string
+  /** Das Kursziel aus dem Hauptformular — Pflicht, und die letzte Stufe. */
+  kursziel: number
   drafts: TargetDraft[]
 }): { error: string | null; targets: TargetPlanInput[]; rr: number | null; rest: number } {
   const roh = parseTargetDrafts(args.drafts)
-  if (roh.length === 0) return { error: null, targets: [], rr: null, rest: 0 }
-  if (!args.entry || !args.stopLoss) {
-    return { error: 'Erst Einstieg und Stop eintragen — daran hängt jede Stufe.', targets: [], rr: null, rest: 0 }
+  const leer = { error: null, targets: [] as TargetPlanInput[], rr: null, rest: 0 }
+  if (!args.entry || !args.stopLoss || !args.kursziel) {
+    if (roh.length === 0) return leer
+    return {
+      ...leer,
+      error: 'Erst Einstieg, Stop und Kursziel eintragen — daran hängt jede Stufe.',
+    }
   }
   try {
-    const targets = normalizeTargets({
+    const targets = buildTargetPlan({
       entry: args.entry,
       stopLoss: args.stopLoss,
       direction: args.direction,
-      targets: roh,
+      kursziel: args.kursziel,
+      teilziele: roh,
     })
     return {
       error: null,
       targets,
       rr: blendedRiskReward({ entry: args.entry, stopLoss: args.stopLoss, targets }),
+      // Nach dem Umbau bleibt hier nie etwas übrig — der Rest ist im Kursziel.
+      // Die Zahl steht trotzdem, weil `targetProgress` sie weiterhin führt.
       rest: remainderPct(targets),
     }
   } catch (err) {
     return {
+      ...leer,
       error: err instanceof Error ? err.message : 'Teilziele sind nicht schlüssig.',
-      targets: [],
-      rr: null,
-      rest: 0,
     }
   }
 }
@@ -82,6 +97,7 @@ export function TargetStages({
   entry,
   stopLoss,
   direction,
+  kursziel,
   drafts,
   onChange,
   disabled = false,
@@ -90,14 +106,22 @@ export function TargetStages({
   entry: number
   stopLoss: number
   direction: string
+  /** Das Kursziel aus dem Hauptformular — die äußerste Stufe. */
+  kursziel: number
   drafts: TargetDraft[]
   onChange: (next: TargetDraft[]) => void
   disabled?: boolean
   /** Bereits ausgeführte Stufen — sie stehen fest und werden hier nicht bearbeitet. */
   lockedCount?: number
 }) {
-  const pruefung = checkTargets({ entry, stopLoss, direction, drafts })
+  const pruefung = checkTargets({ entry, stopLoss, direction, kursziel, drafts })
   const risiko = entry && stopLoss ? Math.abs(entry - stopLoss) : 0
+  const zielR = kursziel && risiko ? Math.abs(kursziel - entry) / risiko : null
+  /** Was nach den Teilzielen für das Kursziel übrig bleibt. */
+  const zielAnteil =
+    pruefung.targets.length > 0
+      ? pruefung.targets[pruefung.targets.length - 1].sharePct
+      : 100
 
   const setRow = (i: number, patch: Partial<TargetDraft>) => {
     onChange(drafts.map((d, k) => (k === i ? { ...d, ...patch } : d)))
@@ -109,7 +133,10 @@ export function TargetStages({
         <p className="eyebrow flex items-center gap-1.5 text-primary/70">
           <Target className="size-3.5" /> Teilziele (optional)
         </p>
-        {drafts.length < MAX_TARGETS && (
+        {/* `MAX_TEILZIELE`, nicht `MAX_TARGETS`: Das Kursziel belegt die letzte
+            Stufe. Stand hier die Gesamtzahl, bot das Formular eine Stufe an,
+            die der Server danach ablehnte. */}
+        {drafts.length < MAX_TEILZIELE && (
           <Button
             type="button"
             variant="outline"
@@ -125,9 +152,10 @@ export function TargetStages({
 
       {drafts.length === 0 ? (
         <p className="note">
-          Ohne Stufen gilt das eine Ziel oben. Wer gestaffelt aussteigt — „die halbe Position bei
-          1 R, der Rest läuft" —, legt die Stufen hier fest, <strong>bevor</strong> die Position
-          steht. Danach ist der Ausstieg eine Ausführung und keine Entscheidung mehr.
+          Ohne Teilziele geht die ganze Position auf einmal ins Kursziel. Wer gestaffelt
+          aussteigt — „die halbe Position bei 1 R, der Rest läuft bis zum Ziel" —, legt die
+          Stufen hier fest, <strong>bevor</strong> die Position steht. Danach ist der Ausstieg
+          eine Ausführung und keine Entscheidung mehr.
         </p>
       ) : (
         <div className="space-y-2">
@@ -187,25 +215,39 @@ export function TargetStages({
         </div>
       )}
 
+      {/* Das Kursziel als LETZTE Stufe — nicht eingebbar (es steht oben im
+          Formular), aber sichtbar. Ohne diese Zeile sähe man drei Teilziele mit
+          zusammen 75 % und müsste raten, wohin der Rest läuft; genau diese
+          Lücke war der Grund für den Umbau. */}
+      {kursziel > 0 && drafts.length > 0 && !pruefung.error && (
+        <div className="panel-sunken grid grid-cols-[1fr_1fr_auto] items-end gap-2 border border-primary/25 p-2.5">
+          <div className="space-y-1">
+            <span className="eyebrow text-primary/70">
+              Kursziel{zielR != null && ` · ${num(zielR)} R`}
+            </span>
+            <p className="font-mono text-sm font-semibold">{num(kursziel, 6)}</p>
+          </div>
+          <div className="space-y-1">
+            <span className="eyebrow">Anteil %</span>
+            <p className="font-mono text-sm font-semibold">{num(zielAnteil)}</p>
+          </div>
+          <span className="pb-1 pr-1 font-mono text-[10px] text-muted-foreground">
+            Rest läuft hierher
+          </span>
+        </div>
+      )}
+
       {pruefung.error ? (
         <p className="font-mono text-xs text-destructive">{pruefung.error}</p>
       ) : (
-        pruefung.targets.length > 0 && (
+        pruefung.targets.length > 1 && (
           <p className="note">
             Gewichtetes CRV{' '}
             <span className="font-bold text-foreground">
               1:{pruefung.rr != null ? num(pruefung.rr) : '—'}
             </span>{' '}
-            über {pruefung.targets.length}{' '}
-            {pruefung.targets.length === 1 ? 'Stufe' : 'Stufen'}
-            {pruefung.rest > 0 && (
-              <>
-                {' '}
-                · <span className="text-foreground">{num(pruefung.rest)} %</span> laufen bis zur
-                letzten Stufe
-              </>
-            )}
-            . Die Reihenfolge ordnet die App nach Abstand zum Einstieg.
+            über {pruefung.targets.length} Stufen, zusammen 100 % der Position. Die Reihenfolge
+            ordnet die App nach Abstand zum Einstieg; das Kursziel bleibt die letzte.
           </p>
         )
       )}

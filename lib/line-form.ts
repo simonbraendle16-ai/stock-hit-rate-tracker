@@ -144,9 +144,22 @@ export function flaechenForm(
   return form
 }
 
-/** Trägt dieser Zeichnungstyp eine Flächenform? */
+/**
+ * Trägt dieser Zeichnungstyp eine Flächenform?
+ *
+ * Der **Kanal** gehört dazu, obwohl er aus zwei Linien besteht — in TradingViews
+ * Dialog „Parallel channel" (an SBUX nachgesehen) stehen genau dieselben Regler:
+ * `Extend`, `Background`, und eine Mittellinie. Dort ist sie sogar Teil einer
+ * ganzen Level-Liste (−0.25 · 0 · 0.25 · 0.5 · 0.75 · 1 · 1.25, je mit eigener
+ * Farbe und Strichart) — ein Kanal ist dort ein **Band mit Zwischenlinien**, kein
+ * Zweiliniending. Die Mitte ist davon die einzige Linie, an der man tatsächlich
+ * handelt; die Viertel sind hier bewusst nicht nachgebaut (siehe
+ * `IDEEN-BACKLOG.md`), sonst stünde neben `FibStil` eine zweite Level-Verwaltung.
+ */
 export function istFlaechenTyp(type: string): boolean {
-  return type === 'rect' || type === 'pricerange' || type === 'daterange'
+  return (
+    type === 'rect' || type === 'pricerange' || type === 'daterange' || type === 'channel'
+  )
 }
 
 /** Trägt dieser Zeichnungstyp überhaupt eine Linienform? */

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { farbeGueltig, normalizeDrawingStyle, strichArray } from './drawing-style'
+import {
+  farbeGueltig,
+  normalizeDrawingStyle,
+  strichArray,
+  strichMuster,
+  strichSetzen,
+} from './drawing-style'
 
 describe('normalizeDrawingStyle', () => {
   it('liefert bei fehlender Einstellung den Standard', () => {
@@ -53,5 +59,35 @@ describe('strichArray', () => {
   it('liefert nur bei gestrichelt ein Muster', () => {
     expect(strichArray(false)).toBeUndefined()
     expect(strichArray(true)).toBe('5 4')
+  })
+})
+
+describe('Strichart', () => {
+  it('liest die alte Schreibweise `dashed` weiter', () => {
+    expect(normalizeDrawingStyle({ dashed: true }).strich).toBe('dashed')
+    expect(normalizeDrawingStyle({ dashed: false }).strich).toBe('solid')
+  })
+
+  it('laesst `strich` gegen den eigenen Kompatibilitaetswert gewinnen', () => {
+    const s = normalizeDrawingStyle({ dashed: true, strich: 'dotted' })
+    expect(s.strich).toBe('dotted')
+    expect(s.dashed).toBe(true)
+  })
+
+  it('faellt bei unbekannter Strichart auf durchgezogen zurueck', () => {
+    expect(normalizeDrawingStyle({ strich: 'wellig' }).strich).toBe('solid')
+    expect(normalizeDrawingStyle({ strich: 7 as unknown as string }).strich).toBe('solid')
+  })
+
+  it('schreibt beide Felder, damit sie nicht auseinanderlaufen', () => {
+    expect(strichSetzen('solid')).toEqual({ strich: 'solid', dashed: false })
+    expect(strichSetzen('dotted')).toEqual({ strich: 'dotted', dashed: true })
+  })
+
+  it('skaliert den Punkt mit der Strichstaerke', () => {
+    expect(strichMuster('solid')).toBeUndefined()
+    expect(strichMuster('dashed')).toBe('5 4')
+    expect(strichMuster('dotted', 1)).toBe('1.0 2.4')
+    expect(strichMuster('dotted', 3)).toBe('3.0 7.2')
   })
 })

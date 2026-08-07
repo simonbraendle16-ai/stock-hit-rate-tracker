@@ -143,16 +143,16 @@ Candlesticks) · pnpm via corepack.
 - **Teilziele** (Etappe 13) = mehrere Take-Profits je Trade, geplant **vor** dem Einstieg und
   einzeln ausführbar (Migration `0023`, Tabelle `trade_target`). Ein Staffel-Ausstieg ist
   Douglas-konform, solange die Stufen vorher feststehen — genau deshalb sind sie ein Teil des
-  Plans und keine Entscheidung im laufenden Trade. Höchstens `MAX_TARGETS` = 4 Stufen, je Kurs +
-  Anteil der **Anfangs**position; die Summe darf unter 100 % bleiben, der Rest läuft dann bis zur
-  letzten Stufe (und wird beim gewichteten CRV auch dort gerechnet). Reine Logik in
+  Plans und keine Entscheidung im laufenden Trade. Höchstens `MAX_TARGETS` = 4 Stufen **inklusive
+  Kursziel**, also `MAX_TEILZIELE` = 3 Teilziele — beide Konstanten stehen in
+  `lib/trade-targets.ts`, und die Oberfläche rechnet die Differenz **nicht selbst aus**: Genau
+  dieses Abziehen wurde beim Umbau vergessen, das Formular bot vier Teilziele an und der Server
+  wies fünf Stufen ab. Je Stufe Kurs + Anteil der **Anfangs**position; die Summe ergibt seit
+  Migration `0032` immer 100 %, weil der Rest dem Kursziel gehört. Reine Logik in
   `lib/trade-targets.ts` (`normalizeTargets` · `effectiveTargets` · `blendedRiskReward` ·
   `plannedQty` · `targetProgress`, getestet) — Formular und Server prüfen über **dieselbe**
-  Funktion. `trade.takeProfit`/`takeProfitPct` sind ab hier die **abgeleitete Schreibweise der
-  ersten Stufe** (wie `tradedWithMoney` die von `portfolio.kind` ist), geschrieben nur in
-  `createTrade` und `updateTradePlan`; dadurch bleiben alle reinen Rechenfunktionen und der
-  gesamte Altbestand unverändert gültig. **Kein Backfill:** Ein Trade ohne Zeilen wird über
-  `effectiveTargets` als eine implizite Stufe gelesen. Das gespeicherte `riskRewardRatio` ist bei
+  Funktion. **Kein Backfill:** Ein Trade ohne Zeilen wird über `effectiveTargets` als eine
+  implizite Stufe gelesen. Das gespeicherte `riskRewardRatio` ist bei
   Stufen das **gewichtete** CRV (bei genau einer Stufe identisch mit `computeRiskReward`).
   Ausgeführt wird über `executeTarget` (ein `teilverkauf`-Event, die Stufe zeigt per `eventId`
   darauf); die **letzte** Stufe, die die Position schließt, läuft bewusst über `closeTrade`
@@ -160,6 +160,26 @@ Candlesticks) · pnpm via corepack.
   Ausgeführte Stufen sind unveränderlich. Oberfläche: `components/target-stages.tsx` (Eingabe,
   gemeinsam für Formular und Bearbeiten-Dialog) und `components/trade-targets-card.tsx`
   (Anzeige + Ausführen) auf `/trades/[id]`; je Stufe ein Kurs-Alert und eine Chart-Linie.
+- **Das Kursziel ist Pflicht und die ÄUSSERSTE Stufe** (Migration `0032`). Das ist die
+  Korrektur an Etappe 13: Dort trug `trade.takeProfit` bei gestaffelten Trades die **erste**
+  Stufe — in sich stimmig, aber überall sonst heißt „Ziel" der Kurs, bei dem der Plan
+  aufgegangen ist. An einem realen Trade mit den Stufen 200 / 190 stand deshalb im CRV, im
+  Kurs-Wecker, im Balken Stop↔Ziel und im Bot-Zwilling die 200, während der Plan auf 190
+  hinauslief; ändern ließ sich das Ziel gar nicht (`updateTradePlan` brach ab, weil das Feld
+  als abgeleitet galt). Die neue Lesart hat nur noch drei Sätze:
+  **Das Kursziel ist Pflicht und die äußerste Stufe · Teilziele sind optional und liegen davor ·
+  der nicht verteilte Rest der Position gehört dem Kursziel.** Gebaut wird der Plan
+  ausschließlich über `buildTargetPlan` (rein, getestet); es setzt auf `normalizeTargets` auf und
+  erbt dessen Regeln (Seite, Dubletten, Anteile, `MAX_TARGETS`). Ein Teilziel **jenseits** des
+  Kursziels wird zurückgewiesen statt still getauscht — ein umsortierter Plan ist ein Plan, den
+  niemand beschlossen hat. Douglas-Begründung für die Pflicht: „Risiko ist vor dem Einstieg
+  definiert" meint beide Enden; ohne Ziel gibt es kein CRV, keinen Wecker am Ziel und keinen
+  Bot-Zwilling, und all das fiel vorher **still** aus. `takeProfit` ist seit `0032` `NOT NULL`.
+  **Eine einzige Stufe bleibt zeilenlos:** Ein Trade nur mit Kursziel schreibt nichts in
+  `trade_target` (sonst bekäme sein einziges Ziel einen „Stufe ausführen"-Knopf, obwohl ein
+  vollständiger Ausstieg über `closeTrade` gehört). **Mit Backfill:** Die acht Trades mit Stufen
+  wurden auf die äußerste umgestellt und ihr Restanteil der letzten Stufe zugeschlagen — außer
+  bei bereits ausgeführten Staffeln, die unangetastet bleiben.
 - **Emotions-Check-in** = zwei Momentaufnahmen je Trade (Aktivieren + Abschließen):
   Skala 1–5 (ruhig ↔ aufgewühlt) + Tags aus fester Liste. **Skala ist Pflicht**, Tags/Notiz
   freiwillig. Auswertung „Zustand & Ergebnis" auf `/tracking`; unter 10 Trades je Gruppe
@@ -440,6 +460,46 @@ Candlesticks) · pnpm via corepack.
   (`components/chart/chart-settings.tsx`), und jeder Wert ist danach einzeln änderbar.
   Warum in der DB und nicht im Browser: Eine Übung, die auf dem zweiten Rechner anders aussieht
   als der Ernstfall, übt das Falsche.
+- **Zeichenwerkzeuge: Tiefe statt Breite** (ohne Migration — der Stil liegt als JSON in einer
+  Textspalte, siehe `DrawingStyle`). Leitsatz: **Ein Werkzeug ist eine Voreinstellung, kein
+  Schicksal.** Wer eine Strecke gezogen hatte und sie als Strahl wollte, musste sie vorher
+  löschen und neu ziehen; gelesen wird deshalb alles über `linienForm`/`flaechenForm`
+  (`lib/line-form.ts`) statt über den Typ. Dazu gehören:
+  **(1) Die schwebende Stil-Leiste** (`components/chart/drawing-style-bar.tsx`) an der
+  ausgewählten Zeichnung — die häufigen Handgriffe dort, wo das Objekt liegt, statt in einem
+  248 px breiten Panel an der Preisachse, das genau den Chartausschnitt verdeckte, den man
+  ansehen wollte. Reihenfolge und Umfang stammen aus TradingViews `floating-toolbar` (an SBUX
+  aus dem DOM gelesen): Templates · Farbe · Textfarbe · Stärke · Style · Einstellungen ·
+  Alert · Sperre · Löschen · Mehr. **Bewusst NICHT übernommen:** *Templates* (benannte
+  Stil-Vorlagen wären eine zweite Wahrheit neben `drawing-defaults` — stattdessen sichert „…"
+  Farbe und Stärke als **den** Standard) und *Add alert* (ein Alert hängt hier an einem
+  Trade-Level, nicht an einer freien Linie). Sie ist **verschiebbar**; ab dem ersten Verschieben
+  folgt sie der Zeichnung nicht mehr. Der volle Dialog geht seither nur noch über das Zahnrad
+  auf. Wie alles Schwebende: Portal ans `<body>` + `position` **inline**.
+  **(2) Koordinaten-Eingabe** (`lib/drawing-coords.ts`, rein und getestet) — je Punkt Kurs und
+  Balken zum Eintippen. Der **Balken ist relativ zur letzten Kerze** (0 = sie selbst, negativ
+  davor, positiv Projektion), genau wie TradingViews Reiter „Coordinates": Ein absoluter Index
+  verschöbe sich, sobald der Kerzenspeicher Historie nachlädt. Diese App misst Plan-Treue —
+  ein Stop, der neben der Marke sitzt, weil die Hand gezittert hat, verfälscht die Messung.
+  **(3) Strichart dreiwertig** (durchgezogen · gestrichelt · gepunktet, `lib/drawing-style.ts`).
+  `strich` ist der führende Wert, `dashed` bleibt als ältere Schreibweise daneben stehen und
+  wird über `strichSetzen` **mitgeschrieben** — nie eines von beiden allein setzen. Kein
+  Backfill: `normalizeDrawingStyle` liest erst `dashed`, dann `strich`, Altbestand sieht
+  unverändert aus.
+  **(4) Achsen-Etiketten beim Zeichnen** (`renderVorschauAchsen` in `drawing-layer.tsx`) —
+  Kurs an der Preisachse für Start- UND Zeigerpunkt, Zeit an der Zeitachse, und zwar **schon
+  beim bloßen Überfahren** mit gewähltem Werkzeug, nicht erst beim Ziehen (so hält es
+  TradingView). Ohne das setzt man den ersten Punkt blind.
+  **(5) Fib `umkehren`** (`lib/fib-levels.ts`) — TradingViews `Reverse`, 0 wandert ans andere
+  Ende. Gedreht wird **in `fibLinien`**, also an der einen Stelle, an der die Preise entstehen;
+  damit dreht der Treffertest automatisch mit. Stünde die Umkehr in der Zeichenroutine, träfe
+  man neben die Linien, die man sieht.
+  **(6) Der Kanal ist eine Fläche** (`istFlaechenTyp` kennt `channel`) — Verlängern, Rahmen,
+  Füllung und Mittellinie über dieselbe `FlaechenForm` wie das Rechteck, die Enden über
+  dasselbe `linienEnden` wie jede Linie. In TradingView ist er sogar ein **Band mit
+  Zwischenlinien** (−0.25 … 1.25 je mit Farbe und Strichart); davon ist bewusst nur die Mitte
+  nachgebaut, weil eine zweite Level-Verwaltung neben `FibStil` unweigerlich auseinanderliefe.
+  Der Rest der Recherche steht in `IDEEN-BACKLOG.md` unter **D.1**.
 - Guards: **Pre-Trade-Gate** (alle 9 = "ja" nötig zum Aktivieren; **entfällt beim schnellen
   Trade**) · **Plan-Lock**
   (Stop/Invalidation verschieben = Regelbruch; **Ausnahme ab Etappe 6:** nach einem Teilverkauf
@@ -581,6 +641,53 @@ Grep/Read direkt (ohne vorherigen codegraph-Call) nur für:
 Ergebnissen von codegraph vertrauen, keine Grep-Verifikation hinterherschieben.
 
 ## Fallstricke, die schon Zeit gekostet haben
+- **Ein Ticker und ein Anbieter-Symbol sind zwei verschiedene Dinge — auch bei der
+  Zeichenprüfung.** `/api/quote` und `/api/candles` prüften den Parameter je gegen ein eigenes
+  Muster, und beide prüften den **rohen** Ticker mit einem Maßstab, den erst sein
+  Übersetzungsergebnis erfüllen muss. Folgen, alle still: `/api/quote` kannte weder `=` noch `^`
+  und lieferte damit für **jeden Terminkontrakt und jeden Index** nichts (`CL=F`, `GC=F`, `SI=F`,
+  `YM=F`, `^GSPC`, `^GDAXI`, `^NDX`); beide Routen kannten kein `!` und kein Leerzeichen, also
+  scheiterten `CL1!`, `YM1!`, `NOVO_B` und ein Bestands-Trade namens `THE TRADE DESK` schon vor
+  der Auflösung — sichtbar als **„Ungültiges Symbol." an einer aktiven Position**, obwohl die
+  Auflösung in der Datenbank korrekt war. Seither steht die Prüfung einmal in
+  `lib/market-data/symbol-syntax.ts` (rein, getestet): `istGueltigerTicker` großzügig auf der
+  Eingabe, `istGueltigesAnbieterSymbol` eng und **nach** der Auflösung. Wer eine Route baut, die
+  Marktdaten holt, nimmt beide — nie ein eigenes Muster.
+- **Der Kerzenspeicher konserviert Irrtümer.** Der Rückfall auf den Rohticker ist Absicht
+  (`lookup.ts`), aber seit Migration `0027` wird das Ergebnis **dauerhaft** abgelegt und vom
+  stündlichen Sammellauf weiter gepflegt. So entstand unter dem Schlüssel `BTC` eine Reihe mit
+  3.517 Stundenkerzen zwischen 23 und 56 Dollar — ein fremdes Papier, das Yahoo unter diesem
+  Kürzel führt, während Bitcoin bei 65.000 steht. `getCachedCandles` weist deshalb jetzt alles
+  ab, was `istGueltigesAnbieterSymbol` nicht besteht; Altlasten räumt
+  `node scripts/clean-candle-cache.mjs [--dry]` weg. Es löscht **nur nachweisbare** Rohticker
+  (syntaktisch unmöglich, oder es gibt ein Instrument gleichen Tickers mit anderem Symbol) —
+  Reihen ohne Instrument bleiben liegen und werden nur gemeldet.
+- **Zeichen-Vorschauen lassen sich nicht per Screenshot prüfen.** Alles, was nur zwischen
+  `pointerdown` und `pointerup` existiert (Vorschau-Linie, Achsen-Etiketten, Maßband), ist nach
+  dem Zug weg — ein Screenshot danach zeigt garantiert nichts und sieht aus wie ein kaputtes
+  Feature. Genau so wurde „die Achsen-Etiketten erscheinen nicht" zweimal falsch diagnostiziert,
+  obwohl der Code stimmte. Dazu fällt das Werkzeug nach dem Zeichnen auf `cursor` zurück
+  („Werkzeug aktiv lassen" ist aus), der **zweite** Zug zeichnet also gar nicht mehr.
+  Zuverlässig geht es so: Zeiger per synthetischem `pointerdown` + `pointermove` **gedrückt
+  halten** (dabei `setPointerCapture` kurz stilllegen, sonst wirft es bei synthetischen Zeigern),
+  dann das SVG auslesen. Ein Polling-Recorder à 16 ms verpasst `left_click_drag` je nach Timing.
+  **`getBoundingClientRect` einmal am Anfang zu holen und für alle Ereignisse weiterzuverwenden
+  ist dabei falsch** — ein Klick auf die Werkzeugleiste scrollt die Seite, und danach landen alle
+  synthetischen Zeiger um den Scrollversatz daneben (hier: das Zeit-Etikett schien am Startpunkt
+  zu kleben statt am Zeiger). Vor jeder Ereignisfolge neu messen.
+- **Ein `ReferenceError` aus einem halb ersetzten Modul (HMR) sieht aus wie ein eingefrorener
+  Tab.** Wer während einer laufenden Browser-Prüfung eine Modul-Konstante umbenennt, bekommt vom
+  Fast Refresh ein Modul, in dem die alte Referenz noch steht; React wirft beim Rendern, und ab
+  da beantwortet die Seite keine Zustandswechsel mehr — Klicks lösen kein Rendern aus, und
+  `Runtime.evaluate` läuft in den 45-Sekunden-Timeout. Das ist **kein** App-Fehler und **keine**
+  Render-Schleife. Erst `read_console_messages` mit `onlyErrors`, dann **voll neu laden** (kein
+  `location.reload()` mitten im Skript). Ob wirklich eine Schleife läuft, zeigt ein
+  `MutationObserver` auf `document.body` im Ruhezustand: null Mutationen über mehrere Sekunden
+  heißt, der Baum ist ruhig.
+- **`requestAnimationFrame` feuert in einem verborgenen Tab nie.** Ein Prüfskript, das darauf
+  wartet, hängt bis zum Timeout — in einem Hintergrundtab immer `setTimeout` nehmen. Und für
+  Screenshots gilt: Sie brauchen einen **sichtbaren** Tab, sonst kommt „Script injection timed
+  out". Siehe auch die TradingView-Falle weiter unten.
 - **`position: fixed` funktioniert in dieser App nicht „einfach so" — zwei Fallen hintereinander.**
   Beide zusammen haben dafür gesorgt, dass die Werkzeug-Menüs des Charts rund 1200 px unterhalb
   ihres Knopfes landeten (teils außerhalb des Bildes) — und weil sie *irgendwo* sichtbar waren,

@@ -1,11 +1,11 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Check, Trash2, X } from 'lucide-react'
-import type { Drawing, DrawingStyle } from '@/app/actions/drawings'
+import type { Drawing, DrawingPoint, DrawingStyle } from '@/app/actions/drawings'
 import {
   addLevel,
   DEFAULT_FIB,
@@ -18,9 +18,20 @@ import {
 } from '@/lib/fib-levels'
 import {
   normalizeDrawingStyle,
+  strichMuster,
+  strichSetzen,
+  STRICHARTEN,
   ZEICHEN_FARBEN,
   ZEICHEN_STAERKEN,
+  type Strichart,
 } from '@/lib/drawing-style'
+import {
+  balkenIndex,
+  formatKurs,
+  parseBalken,
+  parseKurs,
+  zeitAusBalken,
+} from '@/lib/drawing-coords'
 import { CHART_COLORS } from './colors'
 import {
   flaechenForm,
@@ -103,6 +114,115 @@ function Schalter({
   )
 }
 
+const STRICH_NAMEN: Record<Strichart, string> = {
+  solid: 'durchgezogen',
+  dashed: 'gestrichelt',
+  dotted: 'gepunktet',
+}
+
+/**
+ * Die Punkte einer Zeichnung als Zahlen — TradingViews Reiter „Coordinates".
+ *
+ * **Warum das mehr ist als Bequemlichkeit.** Diese App misst Plan-Treue. Ein
+ * Stop, der 0,3 % neben der Marke liegt, weil die Hand am Zeiger gezittert hat,
+ * macht aus einem plan-konformen Trade rechnerisch einen anderen. Wer den Kurs
+ * kennt, muss ihn hinschreiben können.
+ *
+ * **Die Balkenzahl ist relativ zur letzten Kerze** (0 = letzte, negativ =
+ * davor, positiv = Projektion) — genau wie in TradingView nachgesehen, und aus
+ * demselben Grund: Ein absoluter Index verschöbe sich, sobald der
+ * Kerzenspeicher Historie nachlädt. Umgerechnet wird in `lib/drawing-coords.ts`.
+ *
+ * Die Felder tragen ihren eigenen Text, solange man tippt, und geben ihn erst
+ * bei Enter oder beim Verlassen weiter. Bei jedem Tastendruck zu übernehmen
+ * hieße: Wer „63.5" getippt hat, sieht die Zeichnung schon nach oben springen,
+ * bevor „33,80" fertig ist.
+ */
+function Koordinaten({
+  points,
+  times,
+  step,
+  onChange,
+}: {
+  points: DrawingPoint[]
+  times: number[]
+  step: number
+  onChange: (points: DrawingPoint[]) => void
+}) {
+  const [entwurf, setEntwurf] = useState<Record<string, string>>({})
+
+  // Wird die Zeichnung im Chart gezogen, sind die getippten Werte überholt.
+  useEffect(() => setEntwurf({}), [points])
+
+  const uebernehmen = (i: number, feld: 'preis' | 'balken', text: string) => {
+    const next = [...points]
+    if (feld === 'preis') {
+      const v = parseKurs(text)
+      if (v == null) {
+        setEntwurf((e) => ({ ...e, [`${i}p`]: '' }))
+        return
+      }
+      next[i] = { ...next[i], price: v }
+    } else {
+      const b = parseBalken(text)
+      if (b == null) {
+        setEntwurf((e) => ({ ...e, [`${i}b`]: '' }))
+        return
+      }
+      next[i] = { ...next[i], time: zeitAusBalken(times, step, b) }
+    }
+    setEntwurf({})
+    onChange(next)
+  }
+
+  const feld = (i: number, feld: 'preis' | 'balken', wert: string) => {
+    const key = `${i}${feld === 'preis' ? 'p' : 'b'}`
+    return (
+      <Input
+        value={entwurf[key] ?? wert}
+        onChange={(e) => setEntwurf((s) => ({ ...s, [key]: e.target.value }))}
+        onBlur={(e) => uebernehmen(i, feld, e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault()
+            uebernehmen(i, feld, (e.target as HTMLInputElement).value)
+            ;(e.target as HTMLInputElement).blur()
+          }
+          if (e.key === 'Escape') setEntwurf((s) => ({ ...s, [key]: '' }))
+          // Sonst schluckt die Zeichenebene die Taste und löscht die Auswahl.
+          e.stopPropagation()
+        }}
+        aria-label={`Punkt ${i + 1} ${feld === 'preis' ? 'Kurs' : 'Balken'}`}
+        className="h-6 min-w-0 flex-1 px-1.5 text-right font-mono text-[10px]"
+      />
+    )
+  }
+
+  return (
+    <div className="space-y-1 border-t border-border/40 pt-2">
+      <p className="note mb-1">Koordinaten</p>
+      <div className="flex gap-1 pr-1 font-mono text-[9px] text-muted-foreground">
+        <span className="w-5" />
+        <span className="flex-1 text-right">Kurs</span>
+        <span className="flex-1 text-right">Balken</span>
+      </div>
+      {points.map((p, i) => (
+        <div key={i} className="flex items-center gap-1">
+          <span className="w-5 shrink-0 font-mono text-[10px] text-muted-foreground">
+            #{i + 1}
+          </span>
+          {feld(i, 'preis', formatKurs(p.price))}
+          {feld(i, 'balken', String(balkenIndex(times, step, p.time)))}
+        </div>
+      ))}
+      <p className="note text-[9px] leading-tight">
+        Balken zählt ab der letzten Kerze: 0 ist sie selbst, −10 zehn davor, +10 zehn
+        voraus.
+      </p>
+    </div>
+  )
+}
+
 /**
  * Eigenschaften der ausgewählten Zeichnung.
  *
@@ -125,6 +245,9 @@ export function DrawingStylePanel({
   onDelete,
   onClose,
   onSaveDefault,
+  times,
+  step,
+  onPointsChange,
 }: {
   drawing: Drawing
   top: number
@@ -134,6 +257,11 @@ export function DrawingStylePanel({
   onClose: () => void
   /** Diese Fib-Einstellung als eigenen Standard für neue Zeichnungen sichern. */
   onSaveDefault?: (typ: 'fib' | 'fibext', stil: FibStil) => void
+  /** Zeitraster der Kerzen — für die Balkenzahl im Koordinaten-Abschnitt. */
+  times?: number[]
+  step?: number
+  /** Punkte numerisch setzen. Fehlt sie, bleibt der Abschnitt weg. */
+  onPointsChange?: (points: DrawingPoint[]) => void
 }) {
   const [neuesLevel, setNeuesLevel] = useState('')
   const [gesichert, setGesichert] = useState(false)
@@ -141,9 +269,11 @@ export function DrawingStylePanel({
   const istFib = drawing.type === 'fib' || drawing.type === 'fibext'
   const istLinie = istLinienTyp(drawing.type)
   const form = linienForm(drawing.type, drawing.style)
-  // Nur das Rechteck: Preis- und Zeit-Range leben von ihrer Füllung, dort wäre
-  // „Füllung aus" eine leere Behauptung.
-  const istFlaeche = drawing.type === 'rect'
+  // Rechteck und Kanal: Preis- und Zeit-Range leben von ihrer Füllung, dort
+  // wäre „Füllung aus" eine leere Behauptung. Der Kanal kam nach der
+  // TradingView-Recherche dazu — sein Dialog „Parallel channel" führt genau
+  // dieselben Regler (Extend · Background · Mittellinie).
+  const istFlaeche = drawing.type === 'rect' || drawing.type === 'channel'
   const flaeche = flaechenForm(drawing.type, drawing.style)
   const stil = normalizeDrawingStyle(
     drawing.style,
@@ -243,9 +373,40 @@ export function DrawingStylePanel({
             ))}
           </div>
         </div>
-        <Schalter an={stil.dashed} onClick={() => setzen({ dashed: !stil.dashed })}>
-          gestrichelt
-        </Schalter>
+        {/* Drei Bilder statt eines Häkchens „gestrichelt" — so führt es
+            TradingView im Knopf „Style", und im Chart trägt der Unterschied
+            Bedeutung: gepunktet liest sich als Vermutung, durchgezogen als
+            gesetzte Marke. */}
+        <div className="min-w-0 flex-1">
+          <p className="note mb-1">Strichart</p>
+          <div className="flex gap-1">
+            {STRICHARTEN.map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setzen(strichSetzen(s))}
+                aria-label={STRICH_NAMEN[s]}
+                title={STRICH_NAMEN[s]}
+                className={`flex h-6 flex-1 items-center rounded px-1.5 ${
+                  stil.strich === s ? 'bg-accent/25' : 'hover:bg-accent/10'
+                }`}
+              >
+                <svg viewBox="0 0 32 6" className="h-1.5 w-full" preserveAspectRatio="none">
+                  <line
+                    x1={0}
+                    y1={3}
+                    x2={32}
+                    y2={3}
+                    stroke={stil.color}
+                    strokeWidth={2}
+                    strokeLinecap="round"
+                    strokeDasharray={strichMuster(s, 2)}
+                  />
+                </svg>
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* Linien-Form — nachgebaut nach TradingViews Style-Reiter.
@@ -397,6 +558,15 @@ export function DrawingStylePanel({
             <Schalter an={fib.flaeche} onClick={() => setzeFib({ ...fib, flaeche: !fib.flaeche })}>
               Flächen einfärben
             </Schalter>
+            {/* TradingViews `Reverse`. Ohne das entscheidet die Ziehrichtung
+                darüber, wo 0 liegt — und die lässt sich nachträglich nur durch
+                Löschen und Neuziehen ändern. */}
+            <Schalter
+              an={fib.umkehren}
+              onClick={() => setzeFib({ ...fib, umkehren: !fib.umkehren })}
+            >
+              Skala umdrehen (0 ans andere Ende)
+            </Schalter>
           </div>
 
           <div>
@@ -468,6 +638,18 @@ export function DrawingStylePanel({
             </Button>
           )}
         </>
+      )}
+
+      {/* Koordinaten — TradingViews Reiter „Coordinates". Freihand hat bis zu
+          480 Punkte; die einzeln aufzulisten wäre kein Werkzeug, sondern eine
+          Tabelle. */}
+      {onPointsChange && times && times.length > 0 && step && drawing.points.length <= 6 && (
+        <Koordinaten
+          points={drawing.points}
+          times={times}
+          step={step}
+          onChange={onPointsChange}
+        />
       )}
 
       <Button

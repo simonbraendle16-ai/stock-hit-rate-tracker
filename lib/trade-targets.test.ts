@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { computeRiskReward } from './trade-math'
 import {
   MAX_TARGETS,
+  MAX_TEILZIELE,
   blendedRiskReward,
+  buildTargetPlan,
   effectiveTargets,
   isProfitSide,
   normalizeTargets,
@@ -143,7 +145,9 @@ describe('normalizeTargets', () => {
       price: 110 + i,
       sharePct: 10,
     }))
-    expect(() => plan(zuViele)).toThrow(new RegExp(`Höchstens ${MAX_TARGETS}`))
+    // Hier zaehlt die GESAMTzahl der Stufen — `normalizeTargets` weiss nicht,
+    // welche davon das Kursziel ist.
+    expect(() => plan(zuViele)).toThrow(new RegExp(`Höchstens ${MAX_TARGETS} Stufen`))
   })
 
   it('verlangt einen brauchbaren Einstieg und Stop', () => {
@@ -160,6 +164,120 @@ describe('normalizeTargets', () => {
     })
     expect(t[0].note).toBe('erste Hälfte')
     expect(t[1].note).toBeNull()
+  })
+})
+
+describe('buildTargetPlan — Kursziel ist Pflicht und die aeusserste Stufe', () => {
+  const bau = (
+    kursziel: number,
+    teilziele: { price: number; sharePct: number }[] = [],
+    over: Partial<{ entry: number; stopLoss: number; direction: string }> = {},
+  ) =>
+    buildTargetPlan({ entry: 100, stopLoss: 90, direction: 'long', kursziel, teilziele, ...over })
+
+  it('macht aus einem Kursziel allein eine Stufe mit 100 %', () => {
+    expect(bau(120)).toEqual([{ price: 120, sharePct: 100, note: null }])
+  })
+
+  it('legt das Kursziel ans Ende und gibt ihm den Rest', () => {
+    const p = bau(130, [{ price: 110, sharePct: 50 }])
+    expect(p.map((t) => t.price)).toEqual([110, 130])
+    expect(p.map((t) => t.sharePct)).toEqual([50, 50])
+  })
+
+  it('schlaegt einen NICHT verteilten Rest dem Kursziel zu', () => {
+    // Genau der Bestandsfall: 50 % + 25 % geplant, 25 % lagen brach.
+    const p = bau(130, [
+      { price: 110, sharePct: 50 },
+      { price: 120, sharePct: 25 },
+    ])
+    expect(p.map((t) => t.sharePct)).toEqual([50, 25, 25])
+    expect(remainderPct(p)).toBe(0)
+  })
+
+  it('gilt bei Short spiegelbildlich', () => {
+    const p = bau(190, [{ price: 200, sharePct: 50 }], {
+      entry: 210,
+      stopLoss: 220,
+      direction: 'short',
+    })
+    expect(p.map((t) => t.price)).toEqual([200, 190])
+    expect(p.map((t) => t.sharePct)).toEqual([50, 50])
+  })
+
+  it('sortiert Teilziele nach Abstand, unabhaengig von der Eingabereihenfolge', () => {
+    const p = bau(140, [
+      { price: 130, sharePct: 20 },
+      { price: 110, sharePct: 30 },
+    ])
+    expect(p.map((t) => t.price)).toEqual([110, 130, 140])
+    expect(p.map((t) => t.sharePct)).toEqual([30, 20, 50])
+  })
+
+  it('verlangt ein Kursziel auf der Gewinnseite', () => {
+    expect(() => bau(90)).toThrow(/über dem Einstieg/)
+    expect(() => bau(0)).toThrow(/größer als 0/)
+    expect(() => bau(110, [], { entry: 100, stopLoss: 110, direction: 'short' })).toThrow(
+      /unter dem Einstieg/,
+    )
+  })
+
+  it('weist ein Teilziel JENSEITS des Kursziels zurueck, statt still zu tauschen', () => {
+    expect(() => bau(120, [{ price: 130, sharePct: 50 }])).toThrow(/tauschen/)
+  })
+
+  it('weist Teilziele zurueck, die schon die ganze Position abgeben', () => {
+    expect(() =>
+      bau(130, [
+        { price: 110, sharePct: 60 },
+        { price: 120, sharePct: 40 },
+      ]),
+    ).toThrow(/bleibt nichts übrig/)
+  })
+
+  it('erbt die Regeln von normalizeTargets (Dubletten, Anteile)', () => {
+    expect(() => bau(120, [{ price: 120, sharePct: 50 }])).toThrow(/demselben Kurs/)
+    expect(() => bau(130, [{ price: 110, sharePct: 0 }])).toThrow(/größer als 0 %/)
+  })
+
+  it('laesst MAX_TEILZIELE Teilziele zu — zusammen mit dem Kursziel MAX_TARGETS', () => {
+    // Der Fall, an dem der Umbau zuerst gescheitert ist: Das Formular bot vier
+    // Teilziele an, der Server zaehlte das Kursziel mit und wies fuenf Stufen
+    // ab. Drei Teilziele plus Kursziel muessen durchgehen.
+    const p = bau(140, [
+      { price: 105, sharePct: 10 },
+      { price: 110, sharePct: 10 },
+      { price: 115, sharePct: 10 },
+    ])
+    expect(p).toHaveLength(MAX_TARGETS)
+    expect(MAX_TEILZIELE).toBe(MAX_TARGETS - 1)
+    expect(p[p.length - 1]).toEqual({ price: 140, sharePct: 70, note: null })
+  })
+
+  it('lehnt ein Teilziel zu viel mit der Grenze ab, die der Nutzer abzaehlen kann', () => {
+    const zuViele = Array.from({ length: MAX_TEILZIELE + 1 }, (_, i) => ({
+      price: 105 + i * 5,
+      sharePct: 10,
+    }))
+    // Die Meldung nennt TEILziele — das ist, was im Formular steht.
+    expect(() => bau(140, zuViele)).toThrow(
+      new RegExp(`Höchstens ${MAX_TEILZIELE} Teilziele`),
+    )
+  })
+
+  it('liefert einen Plan, dessen letzte Stufe das Kursziel IST', () => {
+    // Der Kern der Umstellung: Was die App „Ziel" nennt, ist ab hier die
+    // aeusserste Stufe — nicht mehr die naechstliegende.
+    for (const teil of [[], [{ price: 110, sharePct: 40 }]]) {
+      const p = bau(150, teil)
+      expect(p[p.length - 1].price).toBe(150)
+    }
+  })
+
+  it('rechnet das gewichtete CRV ueber die volle Position', () => {
+    const p = bau(130, [{ price: 110, sharePct: 50 }])
+    // 50 % auf +10 (1 R) und 50 % auf +30 (3 R) => 2 R.
+    expect(blendedRiskReward({ entry: 100, stopLoss: 90, targets: p })).toBeCloseTo(2, 9)
   })
 })
 
@@ -236,7 +354,14 @@ describe('effectiveTargets', () => {
   })
 
   it('gibt für einen Trade ohne Ziel gar nichts zurück', () => {
-    expect(effectiveTargets(makeTrade({ takeProfit: null }), [])).toEqual([])
+    // Seit Migration 0032 ist `takeProfit` NOT NULL — die Spalte lässt diesen
+    // Fall nicht mehr zu. Die reine Funktion bleibt trotzdem defensiv: Sie
+    // liest auch Zeilen, die aus einem Dump, einem Rollback oder einem
+    // Grenzfall kommen, und ein Wurf hier legte die ganze Trade-Ansicht lahm.
+    // Deshalb der Cast statt einer gestrichenen Prüfung.
+    expect(
+      effectiveTargets(makeTrade({ takeProfit: null as unknown as number }), []),
+    ).toEqual([])
   })
 
   it('bevorzugt echte Stufen und ordnet sie nach sortOrder', () => {

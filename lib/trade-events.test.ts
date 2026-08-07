@@ -75,6 +75,46 @@ function ev(over: Partial<TradeEventRow> = {}): TradeEventRow {
   } as TradeEventRow
 }
 
+describe('settlePosition ist vom Zielplan UNABHÄNGIG (Migration 0032)', () => {
+  // Der Umbau „Kursziel ist die äußerste Stufe" hat die Bedeutung von
+  // `takeProfit`/`takeProfitPct` geändert. Diese Tests halten fest, dass die
+  // ABRECHNUNG davon nichts mitbekommt: Verkauft wird, was in den Events steht
+  // — echte Mengen zu echten Kursen. Wäre es anders, hätte eine Änderung am
+  // PLAN rückwirkend das ERGEBNIS eines Trades verschoben, und genau das darf
+  // in dieser App nie passieren.
+  const events = [
+    ev({ type: 'eroeffnet', quantity: 10, price: 100 }),
+    ev({ type: 'teilverkauf', quantity: 5, price: 110 }),
+    ev({ type: 'geschlossen', quantity: 5, price: 130 }),
+  ]
+
+  it('liefert dasselbe Ergebnis, egal welches Ziel im Plan steht', () => {
+    const alt = settlePosition(makeTrade({ takeProfit: 110, takeProfitPct: 50 }), events)
+    const neu = settlePosition(makeTrade({ takeProfit: 130, takeProfitPct: 50 }), events)
+    expect(neu.realizedGross).toBe(alt.realizedGross)
+    expect(neu.totalNet).toBe(alt.totalNet)
+    expect(neu.openQty).toBe(alt.openQty)
+    expect(neu.isFullyClosed).toBe(true)
+  })
+
+  it('rechnet die Teilverkäufe einzeln ab, nicht über den Anteil im Plan', () => {
+    const s = settlePosition(makeTrade({ takeProfit: 130, takeProfitPct: 50 }), events)
+    // (110−100)·5 + (130−100)·5 = 50 + 150
+    expect(s.realizedGross).toBe(200)
+    // Das geplante 1 R hängt an Einstieg/Stop und der Anfangsmenge, nicht am Ziel.
+    expect(s.plannedRiskMoney).toBe(100)
+    expect(s.realizedR).toBeCloseTo(2)
+  })
+
+  it('bleibt auch dann korrekt, wenn der Plan gar kein Ziel trägt', () => {
+    const s = settlePosition(
+      makeTrade({ takeProfit: null as unknown as number, takeProfitPct: null }),
+      events,
+    )
+    expect(s.realizedGross).toBe(200)
+  })
+})
+
 describe('settlePosition — Teilverkauf', () => {
   it('Long: halb verkauft → Restmenge, realisierter Brutto-P&L und R', () => {
     const t = makeTrade()

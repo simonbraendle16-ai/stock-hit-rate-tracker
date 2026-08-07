@@ -19,6 +19,7 @@ import { SetupTagsInput } from '@/components/setup-tags-input'
 import {
   TargetStages,
   checkTargets,
+  parseTargetDrafts,
   type TargetDraft,
 } from '@/components/target-stages'
 import { PaperBadge } from '@/components/paper-badge'
@@ -155,28 +156,29 @@ export function TradeForm({
   const set = (k: keyof typeof form, v: string) =>
     setForm((p) => ({ ...p, [k]: v }))
 
-  // Teilziele (Etappe 13). Leer = ein Ziel wie bisher; sobald hier Stufen
-  // stehen, sind SIE der Plan und das Feld „Take-Profit" oben zeigt nur noch
-  // die erste Stufe an.
+  // Teilziele — optional und IMMER vor dem Kursziel. Das Kursziel selbst steht
+  // oben im Formular, ist Pflicht und bildet die äußerste Stufe; der nicht
+  // verteilte Rest der Position gehört ihm. Siehe `buildTargetPlan`.
   const [targets, setTargets] = useState<TargetDraft[]>([])
 
   // --- live CRV ---
   //
   // Mit Stufen der nach Anteilen gewichtete Wert (dieselbe reine Funktion wie
-  // auf dem Server), sonst wie bisher das Verhältnis zum einen Ziel.
+  // auf dem Server), sonst das Verhältnis zum Kursziel.
   const zielCheck = useMemo(
     () =>
       checkTargets({
         entry: parseFloat(form.entryPrice),
         stopLoss: parseFloat(form.stopLoss),
         direction: form.direction,
+        kursziel: parseFloat(form.takeProfit),
         drafts: targets,
       }),
-    [form.entryPrice, form.stopLoss, form.direction, targets],
+    [form.entryPrice, form.stopLoss, form.direction, form.takeProfit, targets],
   )
 
   const rr = useMemo(() => {
-    if (zielCheck.targets.length > 0) return zielCheck.rr
+    if (zielCheck.targets.length > 1) return zielCheck.rr
     const entry = parseFloat(form.entryPrice)
     const sl = parseFloat(form.stopLoss)
     const tp = parseFloat(form.takeProfit)
@@ -198,7 +200,8 @@ export function TradeForm({
     if (!invested || !entry) return null
     const sl = parseFloat(form.stopLoss)
     // Mit Teilzielen zeigt die Projektion die ERSTE Stufe — das ist der Betrag,
-    // der als Nächstes tatsächlich hereinkommt. Die Gesamtaussage über den Plan
+    // der als Nächstes tatsächlich hereinkommt. Ohne Teilziele ist die erste
+    // Stufe das Kursziel selbst mit 100 %. Die Gesamtaussage über den Plan
     // steht daneben im gewichteten CRV.
     const erste = zielCheck.targets[0]
     const tp = erste ? erste.price : parseFloat(form.takeProfit)
@@ -282,6 +285,13 @@ export function TradeForm({
       toast.error('Einstieg und Stop-Loss sind erforderlich.')
       return
     }
+    // Das Kursziel ist Pflicht — in beiden Erfassungswegen. Ohne es gibt es
+    // kein Chance-Risiko-Verhältnis und keinen Wecker am Ziel; ein Plan mit
+    // offenem Ende ist kein vordefiniertes Risiko.
+    if (!form.takeProfit.trim()) {
+      toast.error('Ein Kursziel ist erforderlich — es ist die äußerste Stufe deines Plans.')
+      return
+    }
     // Ein unschlüssiger Staffelplan bricht später auf dem Server ab — die
     // Meldung gehört aber hierher, solange die Felder noch vor einem stehen.
     if (zielCheck.error) {
@@ -314,10 +324,10 @@ export function TradeForm({
         feeEntry: quick || form.feeEntry.trim() === '' ? null : parseFloat(form.feeEntry),
         feeExit: quick || form.feeExit.trim() === '' ? null : parseFloat(form.feeExit),
         takeProfitPct: !quick && form.takeProfitPct ? parseFloat(form.takeProfitPct) : 100,
-        // Teilziele (Etappe 13): Sind Stufen gesetzt, leitet der Server
-        // `takeProfit` und `takeProfitPct` aus ihnen ab und überschreibt damit
-        // die beiden Felder oben — eine Quelle, nicht zwei.
-        targets: zielCheck.targets.length > 0 ? zielCheck.targets : null,
+        // Nur die TEILziele. Das Kursziel geht als `takeProfit` mit und wird
+        // vom Server selbst ans Ende des Plans gesetzt (`buildTargetPlan`) —
+        // schickte man den vollen Plan, läge es doppelt vor.
+        targets: parseTargetDrafts(targets),
         broker: quick ? null : form.broker || null,
         strategy: quick ? null : form.strategy || null,
         setupTags: quick ? [] : setupTags,
@@ -516,27 +526,29 @@ export function TradeForm({
               required
             />
           </Field>
+          {/* Das Kursziel ist PFLICHT und bleibt immer bedienbar.
+              Vorher hieß das Feld „Take-Profit", war optional und wurde
+              **gesperrt**, sobald Teilziele existierten — dann zeigte es Stufe 1
+              der Staffel. Damit stand die wichtigste Zahl des Plans weder im
+              Formular noch in der Auswertung: Ein Trade mit den Stufen 200/190
+              führte 200 als „Ziel", und ändern ließ es sich gar nicht mehr. */}
           <Field
-            label="Take-Profit"
+            label="Kursziel *"
             tone="positive"
             hint={
-              zielCheck.targets.length > 0
-                ? 'Kommt aus Stufe 1 der Teilziele.'
+              targets.length > 0
+                ? 'Die äußerste Stufe — die Teilziele liegen davor.'
                 : undefined
             }
           >
             <Input
               type="number"
               step="any"
-              value={
-                zielCheck.targets.length > 0
-                  ? String(zielCheck.targets[0].price)
-                  : form.takeProfit
-              }
+              value={form.takeProfit}
               onChange={(e) => set('takeProfit', e.target.value)}
-              disabled={zielCheck.targets.length > 0}
               placeholder="0.00"
               className={inputCls}
+              required
             />
           </Field>
         </div>
@@ -548,6 +560,7 @@ export function TradeForm({
           entry={parseFloat(form.entryPrice)}
           stopLoss={parseFloat(form.stopLoss)}
           direction={form.direction}
+          kursziel={parseFloat(form.takeProfit)}
           drafts={targets}
           onChange={setTargets}
           disabled={loading}
@@ -683,21 +696,24 @@ export function TradeForm({
                 />
               </Field>
               <Field
-                label="Verkaufsanteil beim Take-Profit (%)"
+                label="Anteil am Kursziel (%)"
                 hint={
-                  zielCheck.targets.length > 0
-                    ? 'Kommt aus Stufe 1 der Teilziele.'
-                    : undefined
+                  targets.length > 0
+                    ? 'Der Rest nach den Teilzielen — ergibt sich, nicht eintippbar.'
+                    : 'Ohne Teilziele geht die ganze Position ins Kursziel.'
                 }
               >
+                {/* Nur noch Anzeige. Der Anteil des Kursziels ist seit dem
+                    Umbau der REST: 100 % minus die Teilziele. Ihn zusätzlich
+                    eintippen zu lassen hieße, zwei Wahrheiten über dieselbe
+                    Zahl zu führen — und der eingetippte Wert würde beim
+                    Speichern ohnehin von `buildTargetPlan` überschrieben. */}
                 <Input
                   type="number"
                   step="any"
-                  min="0"
-                  max="100"
                   value={
                     zielCheck.targets.length > 0
-                      ? String(zielCheck.targets[0].sharePct)
+                      ? String(zielCheck.targets[zielCheck.targets.length - 1].sharePct)
                       : form.takeProfitPct
                   }
                   onChange={(e) => set('takeProfitPct', e.target.value)}

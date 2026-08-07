@@ -15,9 +15,22 @@ import type { trade, tradeTarget } from '@/lib/db/schema'
 export type TradeRow = typeof trade.$inferSelect
 export type TradeTargetRow = typeof tradeTarget.$inferSelect
 
-/** Höchstzahl der Stufen je Trade. Vier decken jeden üblichen Staffel-Ausstieg
- *  ab (z. B. 25/25/25/25); mehr wäre eine Kurstabelle, kein Plan. */
+/** Höchstzahl der Stufen je Trade — Teilziele UND Kursziel zusammen. Vier decken
+ *  jeden üblichen Staffel-Ausstieg ab (z. B. 25/25/25/25); mehr wäre eine
+ *  Kurstabelle, kein Plan. */
 export const MAX_TARGETS = 4
+
+/**
+ * Höchstzahl der TEILziele — eine weniger, denn das Kursziel belegt die letzte
+ * Stufe.
+ *
+ * Die Konstante steht hier und wird nicht an jeder Stelle als `MAX_TARGETS - 1`
+ * ausgerechnet: Genau dieses Abziehen wurde beim Umbau vergessen. Das Formular
+ * bot weiter vier Teilziele an, der Server zählte das Kursziel mit und wies
+ * fünf Stufen ab — der Nutzer lief in eine Fehlermeldung, die ihm obendrein
+ * eine falsche Obergrenze nannte.
+ */
+export const MAX_TEILZIELE = MAX_TARGETS - 1
 
 export type Direction = 'long' | 'short'
 
@@ -78,7 +91,12 @@ export function normalizeTargets(args: {
   const { entry, stopLoss, direction, targets } = args
   if (targets.length === 0) return []
   if (targets.length > MAX_TARGETS) {
-    throw new Error(`Höchstens ${MAX_TARGETS} Teilziele je Trade.`)
+    // „Stufen", nicht „Teilziele": Seit das Kursziel die letzte Stufe ist,
+    // zählt es hier mit. Der alte Text nannte eine Obergrenze, die es so nicht
+    // gibt, und schickte den Nutzer damit auf die falsche Fährte.
+    throw new Error(
+      `Höchstens ${MAX_TARGETS} Stufen je Trade — das Kursziel zählt als eine davon.`,
+    )
   }
   if (!Number.isFinite(entry) || entry <= 0) {
     throw new Error('Teilziele brauchen einen gültigen Einstiegskurs.')
@@ -137,6 +155,124 @@ export function remainderPct(targets: { sharePct: number }[]): number {
   const rest = 100 - summe
   return rest < EPS ? 0 : rest
 }
+
+/**
+ * Kursziel + optionale Teilziele → der vollständige Plan.
+ *
+ * **Warum es diese Funktion gibt, obwohl es `normalizeTargets` schon gab.**
+ * Bisher war ein Trade entweder „ein Ziel" oder „eine Liste von Stufen", und
+ * `trade.takeProfit` trug in der Liste die **nächstliegende** Stufe. Damit stand
+ * überall, wo die App „Ziel" sagt — Chance-Risiko-Verhältnis, Kurs-Wecker, der
+ * Balken Stop↔Ziel, der Bot-Zwilling —, das **erste Teilziel** statt des
+ * Kursziels. Bei einem realen Trade mit den Stufen 200 / 190 wurde als Ziel 200
+ * geführt, obwohl der Plan auf 190 hinauslief.
+ *
+ * Ab hier gibt es nur noch eine Lesart, und sie ist die des Traders:
+ *
+ *   **Das Kursziel ist Pflicht und ist die äußerste Stufe. Teilziele sind
+ *   optional und liegen davor.**
+ *
+ * Das macht das Modell nicht nur verständlicher, sondern auch vollständig: Ein
+ * Trade hat *immer* ein Ziel, also ist das CRV immer rechenbar, der Wecker immer
+ * setzbar und der Bot-Zwilling immer simulierbar. Vorher konnte all das an einem
+ * fehlenden `takeProfit` still ausfallen.
+ *
+ * **Der nicht verteilte Rest gehört dem Kursziel.** Wer 50 % auf ein Teilziel
+ * legt, gibt die restlichen 50 % nicht auf — er lässt sie bis zum Ziel laufen.
+ * Genau so hat `blendedRiskReward` den Rest immer schon gerechnet; hier wird er
+ * jetzt auch *geschrieben*, damit die Anteile sichtbar auf 100 % aufgehen statt
+ * eine Lücke zu lassen, über die niemand entschieden hat.
+ */
+export function buildTargetPlan(args: {
+  entry: number
+  stopLoss: number
+  direction: string
+  /** Das Kursziel — Pflicht. */
+  kursziel: number
+  /** Teilziele davor. Leer heißt: ein Ziel, wie bei jedem einfachen Trade. */
+  teilziele?: TargetPlanInput[]
+  /** Anmerkung am Kursziel. */
+  note?: string | null
+}): TargetPlanInput[] {
+  const { entry, stopLoss, direction, kursziel } = args
+  const teilziele = args.teilziele ?? []
+
+  if (!Number.isFinite(kursziel) || kursziel <= 0) {
+    throw new Error('Bitte ein Kursziel größer als 0 eintragen.')
+  }
+  // Vor `normalizeTargets` geprüft, damit die Meldung die Grenze nennt, die
+  // den Nutzer betrifft: Er gibt TEILziele ein, das Kursziel steht im Feld
+  // darüber. „Höchstens 4 Stufen" wäre richtig gerechnet und trotzdem eine
+  // Zahl, die er nirgends abzählen kann.
+  if (teilziele.length > MAX_TEILZIELE) {
+    throw new Error(
+      `Höchstens ${MAX_TEILZIELE} Teilziele — zusammen mit dem Kursziel sind das ` +
+        `${MAX_TARGETS} Stufen.`,
+    )
+  }
+  if (!isProfitSide(direction, entry, kursziel)) {
+    throw new Error(
+      direction === 'short'
+        ? 'Bei Short muss das Kursziel unter dem Einstieg liegen.'
+        : 'Bei Long muss das Kursziel über dem Einstieg liegen.',
+    )
+  }
+  // Ein Teilziel jenseits des Kursziels ist kein Teilziel mehr — dann ist es
+  // das Ziel. Das still umzusortieren wäre ein Plan, den niemand beschlossen
+  // hat; deshalb die Rückfrage per Fehlermeldung.
+  const zielAbstand = distance(entry, kursziel)
+  teilziele.forEach((t, i) => {
+    if (Number.isFinite(t.price) && distance(entry, t.price) > zielAbstand + EPS) {
+      throw new Error(
+        `Teilziel ${i + 1} liegt weiter vom Einstieg entfernt als das Kursziel — ` +
+          'dann ist es das Kursziel. Bitte die beiden tauschen.',
+      )
+    }
+  })
+
+  // Die Summe der TEILziele wird hier geprüft, nicht erst in
+  // `normalizeTargets`: Dort hieße die Meldung „mehr als die Position groß
+  // ist" — richtig gerechnet, aber am Problem vorbei. Wer 60 + 40 verteilt, hat
+  // die Position nicht überzeichnet, er hat nur nichts für sein Ziel übrig
+  // gelassen. Eine Fehlermeldung, die den falschen Grund nennt, schickt den
+  // Nutzer an die falsche Stelle.
+  const teilSumme = teilziele.reduce(
+    (a, t) => a + (Number.isFinite(t.sharePct) ? t.sharePct : 0),
+    0,
+  )
+  if (teilSumme >= 100 - EPS) {
+    throw new Error(
+      'Die Teilziele geben schon die ganze Position ab — für das Kursziel bleibt nichts übrig.',
+    )
+  }
+
+  // Geprüft und sortiert wird über DIESELBE Funktion wie bisher; sie kennt die
+  // Seiten-, Dubletten- und Anteilsregeln bereits. Das Kursziel läuft mit
+  // Anteil 0 mit und bekommt seinen echten Anteil erst unten — sonst würde es
+  // die 100-%-Grenze schon vor der Restverteilung sprengen.
+  const alle = normalizeTargets({
+    entry,
+    stopLoss,
+    direction,
+    targets: [
+      ...teilziele,
+      { price: kursziel, sharePct: SPAETER, note: args.note ?? null },
+    ],
+  })
+
+  const idx = alle.findIndex((t) => Math.abs(t.price - kursziel) < EPS)
+  if (idx < 0) throw new Error('Das Kursziel ist aus dem Plan gefallen.')
+
+  const vergeben = alle.reduce((a, t, i) => (i === idx ? a : a + t.sharePct), 0)
+  return alle.map((t, i) => (i === idx ? { ...t, sharePct: 100 - vergeben } : t))
+}
+
+/**
+ * Platzhalter-Anteil des Kursziels, solange die Teilziele noch nicht gezählt
+ * sind. Bewusst winzig statt 0: `normalizeTargets` weist einen Anteil von 0
+ * zurück, und diese Prüfung soll für echte Eingaben scharf bleiben.
+ */
+const SPAETER = 1e-6
 
 /**
  * Die Stufen, die für diesen Trade gelten. Hat er eigene Zeilen, sind es diese.

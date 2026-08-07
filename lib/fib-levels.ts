@@ -42,6 +42,16 @@ export interface FibStil {
    * zeichnet — nämlich wo der Kurs, der noch kommt, darauf trifft.
    */
   verlaengern: boolean
+  /**
+   * Die Skala umdrehen — 0 wandert ans andere Ende.
+   *
+   * TradingViews `Reverse` im Fib-Dialog. Ohne das entscheidet die
+   * **Ziehrichtung** darüber, wo 0 liegt: Wer von unten nach oben zieht,
+   * bekommt ein Retracement, das er dann von Hand neu ziehen muss, wenn er die
+   * Bewegung andersherum messen wollte. Ein Werkzeug ist eine Voreinstellung,
+   * kein Schicksal — hier gilt derselbe Satz wie bei `linienForm`.
+   */
+  umkehren: boolean
   beschriftung: FibBeschriftung
   /** Grundfarbe der Zeichnung. */
   farbe: string
@@ -74,6 +84,7 @@ export const DEFAULT_FIB: FibStil = {
     { wert: -0.618, an: false },
   ],
   verlaengern: true,
+  umkehren: false,
   beschriftung: 'beides',
   farbe: CHART_COLORS.warning,
   staerke: 1,
@@ -94,6 +105,7 @@ export const DEFAULT_FIBEXT: FibStil = {
     { wert: 2.618, an: true },
   ],
   verlaengern: true,
+  umkehren: false,
   beschriftung: 'beides',
   farbe: CHART_COLORS.warning,
   staerke: 1,
@@ -141,6 +153,7 @@ export function normalizeFibStil(raw: unknown, standard: FibStil = DEFAULT_FIB):
   }
 
   if (typeof o.verlaengern === 'boolean') d.verlaengern = o.verlaengern
+  if (typeof o.umkehren === 'boolean') d.umkehren = o.umkehren
   if (typeof o.flaeche === 'boolean') d.flaeche = o.flaeche
   if (typeof o.beschriftung === 'string' && BESCHRIFTUNGEN.includes(o.beschriftung as FibBeschriftung)) {
     d.beschriftung = o.beschriftung as FibBeschriftung
@@ -185,11 +198,17 @@ function alsProzent(wert: number): string {
  * Gelegenheiten, verschieden zu runden.
  */
 export function fibLinien(stil: FibStil, von: number, bis: number): FibLinie[] {
-  const spanne = bis - von
+  // `umkehren` dreht nur die beiden Enden — und zwar hier, an der einen Stelle,
+  // an der die Preise entstehen. Damit dreht der Treffertest automatisch mit;
+  // stünde die Umkehr in der Zeichenroutine, träfe man neben die Linien, die
+  // man sieht (genau dieser Fehler steckte schon einmal in der Ausrichtung).
+  const a = stil.umkehren ? bis : von
+  const b = stil.umkehren ? von : bis
+  const spanne = b - a
   return stil.levels
     .filter((l) => l.an)
     .map((l) => {
-      const preis = von + spanne * l.wert
+      const preis = a + spanne * l.wert
       const zahl = l.wert.toFixed(3).replace(/0+$/, '').replace(/\.$/, '')
       let label: string
       if (stil.beschriftung === 'aus') label = ''

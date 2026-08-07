@@ -197,7 +197,11 @@ describe('pricePositionFraction (Balken Stop→Ziel)', () => {
   })
 
   it('liefert null ohne Ziel', () => {
-    expect(pricePositionFraction(makeTrade({ takeProfit: null }), 100)).toBeNull()
+    // `takeProfit` ist seit Migration 0032 NOT NULL; die reine Funktion bleibt
+    // dennoch robust (siehe gleichlautende Begründung in trade-targets.test.ts).
+    expect(
+      pricePositionFraction(makeTrade({ takeProfit: null as unknown as number }), 100),
+    ).toBeNull()
   })
 })
 

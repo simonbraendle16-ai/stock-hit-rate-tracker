@@ -56,6 +56,7 @@ import {
 import {
   blendedRiskReward,
   effectiveTargets,
+  buildTargetPlan,
   normalizeTargets,
   plannedQty,
   type TargetPlanInput,
@@ -237,44 +238,45 @@ function resolveTargetPlan(input: {
   entryPrice: number
   stopLoss: number
   direction: string
-  takeProfit?: number | null
+  /** PFLICHT seit Migration 0032 — die Spalte ist NOT NULL. */
+  takeProfit: number
   takeProfitPct?: number | null
   targets?: TargetPlanInput[] | null
 }): {
   targets: TargetPlanInput[]
-  takeProfit: number | null
+  takeProfit: number
   takeProfitPct: number
   riskRewardRatio: number | null
 } {
-  const gestaffelt = normalizeTargets({
+  // Das Kursziel ist die ÄUSSERSTE Stufe, die Teilziele liegen davor, und der
+  // nicht verteilte Rest gehört dem Kursziel. Alles in einer reinen Funktion —
+  // siehe `buildTargetPlan` für den Grund, warum `takeProfit` nicht mehr die
+  // nächstliegende Stufe trägt.
+  const gestaffelt = buildTargetPlan({
     entry: input.entryPrice,
     stopLoss: input.stopLoss,
     direction: input.direction,
-    targets: input.targets ?? [],
+    kursziel: input.takeProfit,
+    teilziele: input.targets ?? [],
   })
-
-  if (gestaffelt.length > 0) {
-    return {
-      targets: gestaffelt,
-      takeProfit: gestaffelt[0].price,
-      takeProfitPct: gestaffelt[0].sharePct,
-      riskRewardRatio: blendedRiskReward({
-        entry: input.entryPrice,
-        stopLoss: input.stopLoss,
-        targets: gestaffelt,
-      }),
-    }
-  }
+  const letzte = gestaffelt[gestaffelt.length - 1]
 
   return {
-    targets: [],
-    takeProfit: input.takeProfit ?? null,
-    takeProfitPct: input.takeProfitPct != null ? input.takeProfitPct : 100,
-    riskRewardRatio: computeRiskReward(
-      input.entryPrice,
-      input.stopLoss,
-      input.takeProfit ?? null,
-    ),
+    // Eine einzige Stufe ist kein Staffel-Plan, sondern ein gewöhnlicher Trade:
+    // Dann bleiben die Zeilen in `trade_target` leer und `effectiveTargets`
+    // liest `takeProfit` wie bisher als die eine Stufe. So ändert sich für den
+    // einfachen Fall nichts — weder in den Daten noch in der Anzeige.
+    targets: gestaffelt.length > 1 ? gestaffelt : [],
+    takeProfit: letzte.price,
+    takeProfitPct: letzte.sharePct,
+    riskRewardRatio:
+      gestaffelt.length > 1
+        ? blendedRiskReward({
+            entry: input.entryPrice,
+            stopLoss: input.stopLoss,
+            targets: gestaffelt,
+          })
+        : computeRiskReward(input.entryPrice, input.stopLoss, letzte.price),
   }
 }
 
@@ -315,6 +317,17 @@ export async function createTrade(input: TradeInput): Promise<{ id: number }> {
   if (!input.entryPrice || !input.stopLoss) {
     throw new Error('Einstieg und Stop-Loss sind erforderlich.')
   }
+  // Das Kursziel ist seit dem Umbau der Teilziele PFLICHT.
+  //
+  // Douglas-Begründung: „Risiko ist vor dem Einstieg definiert" heißt beides —
+  // wo der Trade falsch ist UND wo er aufgegangen ist. Ohne Ziel gibt es kein
+  // Chance-Risiko-Verhältnis, keinen Wecker am Ziel, keinen Bot-Zwilling und
+  // keinen Balken Stop↔Ziel; all das fiel vorher still aus, weil das Feld
+  // optional war. Technisch: Es ist zugleich die äußerste Stufe des
+  // Staffel-Plans, an der der nicht verteilte Rest der Position hängt.
+  if (input.takeProfit == null || !Number.isFinite(input.takeProfit) || input.takeProfit <= 0) {
+    throw new Error('Ein Kursziel ist erforderlich — es ist die äußerste Stufe deines Plans.')
+  }
 
   // Plausibilität: Ein Stop-Loss liegt bei Long unter, bei Short über dem Einstieg.
   // Ein Take-Profit liegt bei Long über, bei Short unter dem Einstieg. Sonst wären
@@ -337,7 +350,9 @@ export async function createTrade(input: TradeInput): Promise<{ id: number }> {
   // Teilziele (Etappe 13): geprüft, sortiert und in die abgeleiteten Felder
   // übersetzt — VOR jedem Schreibzugriff, damit ein unmöglicher Staffelplan gar
   // nicht erst zu einem halben Trade führt.
-  const zielPlan = resolveTargetPlan(input)
+  // `input.takeProfit` ist an dieser Stelle geprüft (Pflicht, > 0, richtige
+  // Seite) — TypeScript trägt die Einschränkung nur nicht durch das Objekt.
+  const zielPlan = resolveTargetPlan({ ...input, takeProfit: input.takeProfit })
 
   // Optional link to an instrument in the watchlist (shared hit-rate key).
   //
@@ -695,49 +710,65 @@ export async function updateTradePlan(
   const zielEntry = patch.entryPrice ?? t.entryPrice
   const zielStop = patch.stopLoss ?? t.stopLoss
 
+  // Die bestehenden TEILziele — alles außer der äußersten Stufe, denn die ist
+  // das Kursziel. Es getrennt zu führen ist der ganze Zweck des Umbaus:
+  // Vorher konnte man das Ziel eines gestaffelten Trades gar nicht ändern
+  // (`takeProfit` galt als abgeleitet und der Aufruf brach ab), obwohl das
+  // Kursziel die wichtigste Zahl im Plan ist.
+  const bestehendeTeilziele = bestehendeZiele.slice(0, -1)
+
   let neuerZielPlan: TargetPlanInput[] | null = null // null = Stufen bleiben, wie sie sind
-  if (patch.targets !== undefined) {
-    neuerZielPlan = normalizeTargets({
+  const zielBeruehrt =
+    patch.targets !== undefined ||
+    patch.takeProfit !== undefined ||
+    (bestehendeZiele.length > 0 && (patch.entryPrice != null || patch.stopLoss != null))
+
+  if (zielBeruehrt) {
+    const kursziel = patch.takeProfit !== undefined ? patch.takeProfit : t.takeProfit
+    if (kursziel == null) {
+      throw new Error('Ein Kursziel ist erforderlich — es ist die äußerste Stufe deines Plans.')
+    }
+    const gewuenschteTeilziele =
+      patch.targets !== undefined
+        ? (patch.targets ?? [])
+        : bestehendeTeilziele.map((z) => ({ price: z.price, sharePct: z.sharePct, note: z.note }))
+
+    // Ausgeführte Stufen sind unveränderlich und wandern immer zurück in den
+    // Plan — sonst ließe sich über eine Planänderung Geschichte umschreiben
+    // oder mehr als 100 % der Position verplanen.
+    neuerZielPlan = buildTargetPlan({
       entry: zielEntry,
       stopLoss: zielStop,
       direction: nextDirection,
-      targets: [
+      kursziel,
+      teilziele: [
         ...ausgefuehrt.map((z) => ({ price: z.price, sharePct: z.sharePct, note: z.note })),
-        ...(patch.targets ?? []).filter(
+        ...gewuenschteTeilziele.filter(
           (n) => !ausgefuehrt.some((z) => Math.abs(z.price - n.price) < 1e-9),
         ),
       ],
     })
-  } else if (bestehendeZiele.length > 0 && patch.takeProfit !== undefined) {
-    // `takeProfit` ist an einem gestaffelten Trade die Schreibweise der ersten
-    // Stufe, kein eigenes Feld. Es allein zu setzen würde die beiden Wahrheiten
-    // auseinanderlaufen lassen — deshalb hier lieber laut abbrechen.
-    throw new Error(
-      'Dieser Trade hat Teilziele — der Take-Profit wird aus ihnen abgeleitet. ' +
-        'Bitte die Stufen selbst ändern.',
-    )
-  } else if (bestehendeZiele.length > 0 && (patch.entryPrice != null || patch.stopLoss != null)) {
-    // Einstieg oder Stop verschoben: Die Stufen bleiben stehen, aber das
-    // gewichtete R:R gilt jetzt gegen ein anderes Risiko und wird nachgezogen.
-    neuerZielPlan = bestehendeZiele.map((z) => ({
-      price: z.price,
-      sharePct: z.sharePct,
-      note: z.note,
-    }))
   }
 
-  // Die abgeleiteten Felder der Trade-Zeile — nur wenn es Stufen gibt.
+  // Die abgeleiteten Felder der Trade-Zeile. `takeProfit` ist ab hier die
+  // LETZTE Stufe (das Kursziel), nicht mehr die erste.
   const zielAbleitung =
     neuerZielPlan && neuerZielPlan.length > 0
-      ? {
-          takeProfit: neuerZielPlan[0].price,
-          takeProfitPct: neuerZielPlan[0].sharePct,
-          riskRewardRatio: blendedRiskReward({
-            entry: zielEntry,
-            stopLoss: zielStop,
-            targets: neuerZielPlan,
-          }),
-        }
+      ? (() => {
+          const letzte = neuerZielPlan[neuerZielPlan.length - 1]
+          return {
+            takeProfit: letzte.price,
+            takeProfitPct: letzte.sharePct,
+            riskRewardRatio:
+              neuerZielPlan.length > 1
+                ? blendedRiskReward({
+                    entry: zielEntry,
+                    stopLoss: zielStop,
+                    targets: neuerZielPlan,
+                  })
+                : computeRiskReward(zielEntry, zielStop, letzte.price),
+          }
+        })()
       : null
 
   const violations = parseViolations(t.ruleViolations)
@@ -749,7 +780,7 @@ export async function updateTradePlan(
     const movesInval =
       patch.elliottInvalidation != null && patch.elliottInvalidation !== t.elliottInvalidation
     // Ein Ziel ist verschoben, wenn das Feld selbst wandert ODER wenn die
-    // Staffel neu geplant wurde (dann ist die erste Stufe das neue Ziel).
+    // Staffel neu geplant wurde (das Kursziel ist die LETZTE Stufe).
     const zielVorher = t.takeProfit
     const zielNachher = zielAbleitung ? zielAbleitung.takeProfit : patch.takeProfit
     const staffelGeaendert =
@@ -831,15 +862,18 @@ export async function updateTradePlan(
       .set({
         ...(patch.entryPrice != null ? { entryPrice: patch.entryPrice } : {}),
         ...(patch.stopLoss != null ? { stopLoss: patch.stopLoss } : {}),
-        // Mit Stufen kommen Ziel, Anteil und R:R aus dem Staffelplan; ohne
-        // Stufen bleibt das Einzelfeld die Quelle wie bisher.
+        // Ziel, Anteil und R:R kommen aus dem Plan. Sobald das Ziel überhaupt
+        // berührt wird, ist `zielAbleitung` gesetzt — der Zweig darunter greift
+        // also nur noch, wenn gar kein Plan gerechnet wurde. `null` ist seit
+        // Migration 0032 kein gültiges Kursziel mehr und wird verworfen, statt
+        // die Spalte zu verletzen.
         ...(zielAbleitung
           ? {
               takeProfit: zielAbleitung.takeProfit,
               takeProfitPct: zielAbleitung.takeProfitPct,
               riskRewardRatio: zielAbleitung.riskRewardRatio,
             }
-          : patch.takeProfit !== undefined
+          : patch.takeProfit != null
             ? { takeProfit: patch.takeProfit }
             : {}),
         ...(patch.investedAmount !== undefined ? { investedAmount: patch.investedAmount } : {}),
@@ -897,8 +931,17 @@ export async function updateTradePlan(
           and(eq(tradeTarget.id, z.id), eq(tradeTarget.userId, userId)),
         )
       }
+      // Eine EINZIGE Stufe ist kein Staffel-Plan, sondern ein gewöhnliches
+      // Kursziel — dafür bleiben die Zeilen leer und `effectiveTargets` liest
+      // `takeProfit`. Genau so legt `createTrade` einen solchen Trade an; hier
+      // dieselbe Regel, sonst bekäme ein einfacher Trade allein durch das
+      // Bearbeiten eine Stufen-Zeile und plötzlich einen „Stufe ausführen"-Knopf
+      // an seinem einzigen Ziel, das über `closeTrade` gehört.
+      // Ausnahme: Sobald etwas ausgeführt ist, bleibt die Liste bestehen — eine
+      // abgerechnete Stufe verschwindet nie.
+      const behalten = neuerZielPlan.length > 1 || ausgefuehrt.length > 0
       const neu: (typeof tradeTarget.$inferInsert)[] = []
-      for (const [i, z] of neuerZielPlan.entries()) {
+      for (const [i, z] of (behalten ? neuerZielPlan : []).entries()) {
         const alt = ausgefuehrt.find((a) => Math.abs(a.price - z.price) < 1e-9)
         if (alt) {
           await tx

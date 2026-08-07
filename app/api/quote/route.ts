@@ -2,6 +2,11 @@ import { auth } from '@/lib/auth'
 import { Market, MarketDataError } from '@/lib/market-data'
 import { createSymbolResolver, lookupProviderSymbol } from '@/lib/market-data/lookup'
 import { getCachedQuote } from '@/lib/market-data/quote'
+import {
+  istGueltigerTicker,
+  istGueltigesAnbieterSymbol,
+  unaufgeloestMeldung,
+} from '@/lib/market-data/symbol-syntax'
 import { headers } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 
@@ -34,7 +39,13 @@ export async function GET(req: NextRequest) {
   const stockIdRaw = params.get('stockId')
   const stockId = stockIdRaw && /^\d+$/.test(stockIdRaw) ? Number(stockIdRaw) : null
 
-  if (!symbol || symbol.length > 20 || !/^[A-Z0-9./:-]+$/.test(symbol)) {
+  // Der ROHE Ticker wird großzügig geprüft — er ist nur eine Absicht und wird
+  // gleich übersetzt. Das enge Muster gilt erst für das, was rausgeht (unten).
+  // Vorher stand hier eines für beides, und es kannte weder `=` noch `^`: Damit
+  // war in dieser Route jeder Terminkontrakt und jeder Index tot, und ein Trade
+  // mit dem Ticker `CL1!` oder `THE TRADE DESK` bekam „Ungültiges Symbol.",
+  // obwohl seine Auflösung längst korrekt in der Datenbank stand.
+  if (!istGueltigerTicker(symbol)) {
     return NextResponse.json({ error: 'Ungültiges Symbol.' }, { status: 400 })
   }
   if (!VALID_MARKETS.includes(market)) {
@@ -46,6 +57,16 @@ export async function GET(req: NextRequest) {
     const providerSymbol = stockId
       ? (await createSymbolResolver(session.user.id))(symbol, stockId)
       : (await lookupProviderSymbol(session.user.id, symbol)).symbol
+    // Hier fällt die Entscheidung, ob wirklich gefragt wird. Der Rückfall auf
+    // den Rohticker ist Absicht — abgefragt werden darf er trotzdem nicht:
+    // Yahoo kennt ein anderes Papier namens `BTC`, und ein stiller falscher
+    // Kurs ist genau das, wogegen diese App gebaut ist.
+    if (!istGueltigesAnbieterSymbol(providerSymbol)) {
+      return NextResponse.json(
+        { error: unaufgeloestMeldung(symbol), code: 'unresolved' },
+        { status: 422 },
+      )
+    }
     const quote = await getCachedQuote(providerSymbol, market)
     return NextResponse.json({ symbol, providerSymbol, market, ...quote })
   } catch (err) {

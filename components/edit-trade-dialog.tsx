@@ -4,7 +4,12 @@ import { useEffect, useMemo, useState } from 'react'
 import type { TradeRow } from '@/lib/trade-stats'
 import { currencySymbol } from '@/lib/format'
 import { listTradeTargets, updateTradePlan } from '@/app/actions/trades'
-import { TargetStages, checkTargets, type TargetDraft } from '@/components/target-stages'
+import {
+  TargetStages,
+  checkTargets,
+  parseTargetDrafts,
+  type TargetDraft,
+} from '@/components/target-stages'
 import { parseSetupTags } from '@/lib/setups'
 import { SetupTagsInput } from '@/components/setup-tags-input'
 import {
@@ -77,8 +82,14 @@ export function EditTradeDialog({
     if (!open) return
     listTradeTargets(trade.id)
       .then((rows) => {
-        setTargets(rows.map((r) => ({ price: String(r.price), sharePct: String(r.sharePct) })))
-        setLockedCount(rows.filter((r) => r.executedAt != null).length)
+        // Nur die TEILziele in die Liste — die äußerste Stufe IST das Kursziel
+        // und steht in seinem eigenen Feld. Stünde sie zusätzlich hier, sähe
+        // man sie doppelt und könnte sie an zwei Stellen widersprüchlich ändern.
+        const teilziele = rows.slice(0, -1)
+        setTargets(
+          teilziele.map((r) => ({ price: String(r.price), sharePct: String(r.sharePct) })),
+        )
+        setLockedCount(teilziele.filter((r) => r.executedAt != null).length)
       })
       .catch(() => {
         setTargets([])
@@ -92,11 +103,13 @@ export function EditTradeDialog({
         entry: numOrNull(entryPrice) ?? 0,
         stopLoss: numOrNull(stopLoss) ?? 0,
         direction: trade.direction,
+        kursziel: numOrNull(takeProfit) ?? 0,
         drafts: targets,
       }),
-    [entryPrice, stopLoss, trade.direction, targets],
+    [entryPrice, stopLoss, trade.direction, takeProfit, targets],
   )
-  const hatStufen = zielCheck.targets.length > 0
+  // „Gestaffelt" heißt ab hier: mehr als das Kursziel allein.
+  const hatStufen = zielCheck.targets.length > 1
 
   // Bei aktiven Trades ist das Verschieben von Stop/Invalidation ein Regelbruch.
   const movesLocked = useMemo(() => {
@@ -124,13 +137,16 @@ export function EditTradeDialog({
         {
           entryPrice: numOrNull(entryPrice) ?? undefined,
           stopLoss: numOrNull(stopLoss) ?? undefined,
-          // Mit Stufen ist der Take-Profit die Schreibweise von Stufe 1 — der
-          // Server leitet ihn dann selbst ab und ignoriert das Feld hier.
+          // Das Kursziel ist ein eigenes Feld und die ÄUSSERSTE Stufe — es wird
+          // direkt gesetzt, nicht mehr aus der Staffel abgeleitet.
           takeProfit: takeProfit === '' ? null : numOrNull(takeProfit),
+          // Hier gehen nur die TEILziele hin. Der Server setzt das Kursziel
+          // selbst ans Ende (`buildTargetPlan`) — schickte man den vollen Plan,
+          // läge es doppelt vor und die Dublettenprüfung schlüge zu.
           // Immer mitschicken, auch leer: Eine geleerte Liste ist die Aussage
-          // „keine Stufen mehr", und nur so lässt sich ein Staffelplan wieder
-          // auf ein einzelnes Ziel zurücknehmen.
-          targets: zielCheck.targets,
+          // „keine Teilziele mehr", und nur so lässt sich ein Staffelplan wieder
+          // auf ein einzelnes Kursziel zurücknehmen.
+          targets: parseTargetDrafts(targets),
           investedAmount: investedAmount === '' ? null : numOrNull(investedAmount),
           leverage: numOrNull(leverage) ?? undefined,
           takeProfitPct: numOrNull(takeProfitPct) ?? undefined,
@@ -178,10 +194,12 @@ export function EditTradeDialog({
             <Input type="number" step="any" value={stopLoss}
               onChange={(e) => setStopLoss(e.target.value)} className="input-ocean font-mono" />
           </Field>
-          <Field label={hatStufen ? 'Take-Profit (aus Stufe 1)' : 'Take-Profit'}>
-            <Input type="number" step="any"
-              value={hatStufen ? String(zielCheck.targets[0].price) : takeProfit}
-              disabled={hatStufen}
+          {/* Immer bedienbar: Das Kursziel ist die äußerste Stufe und ein
+              eigenes Feld. Vorher war es bei einem gestaffelten Trade gesperrt
+              und zeigte Stufe 1 — die wichtigste Zahl des Plans ließ sich also
+              gar nicht mehr ändern. */}
+          <Field label={hatStufen ? 'Kursziel (äußerste Stufe)' : 'Kursziel'}>
+            <Input type="number" step="any" value={takeProfit}
               onChange={(e) => setTakeProfit(e.target.value)} className="input-ocean font-mono" />
           </Field>
           {/* Einsatz und Hebel gibt es auch auf Papier — sonst ließe sich ein
@@ -200,10 +218,18 @@ export function EditTradeDialog({
             <Input type="number" step="any" min="1" value={leverage}
               onChange={(e) => setLeverage(e.target.value)} className="input-ocean font-mono" />
           </Field>
+          {/* Der Anteil des KURSZIELS. Mit Teilzielen ergibt er sich als Rest
+              (100 % minus die Teilziele) und wird deshalb nur angezeigt. */}
           {trade.tradedWithMoney && (
-            <Field label={hatStufen ? 'Verkaufsanteil TP (aus Stufe 1)' : 'Verkaufsanteil TP (%)'}>
+            <Field
+              label={hatStufen ? 'Anteil Kursziel (Rest)' : 'Verkaufsanteil TP (%)'}
+            >
               <Input type="number" step="any"
-                value={hatStufen ? String(zielCheck.targets[0].sharePct) : takeProfitPct}
+                value={
+                  hatStufen
+                    ? String(zielCheck.targets[zielCheck.targets.length - 1].sharePct)
+                    : takeProfitPct
+                }
                 disabled={hatStufen}
                 onChange={(e) => setTakeProfitPct(e.target.value)} className="input-ocean font-mono" />
             </Field>
@@ -221,6 +247,7 @@ export function EditTradeDialog({
             entry={numOrNull(entryPrice) ?? 0}
             stopLoss={numOrNull(stopLoss) ?? 0}
             direction={trade.direction}
+            kursziel={numOrNull(takeProfit) ?? 0}
             drafts={targets}
             onChange={setTargets}
             disabled={busy}

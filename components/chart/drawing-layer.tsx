@@ -10,7 +10,7 @@ import { CHART_COLORS } from './colors'
 import { barStep, istProjektion, logicalToTime, snapTime, timeToLogical } from '@/lib/chart-coords'
 import { preisachsenBreite } from './axis-dom'
 import { DEFAULT_FIB, DEFAULT_FIBEXT, fibLinien, normalizeFibStil } from '@/lib/fib-levels'
-import { normalizeDrawingStyle, strichArray } from '@/lib/drawing-style'
+import { normalizeDrawingStyle, strichMuster } from '@/lib/drawing-style'
 import {
   gesteAuswerten,
   istZeichenwerkzeug,
@@ -24,6 +24,7 @@ import {
   linienEnden,
   linienForm,
   type EndCap,
+  type Extend,
 } from '@/lib/line-form'
 
 type WaveTool = 'ew_impulse' | 'ew_correction' | 'ew_triangle' | 'ew_double' | 'ew_triple'
@@ -97,6 +98,24 @@ function formatDe(v: number, digits = 4): string {
 }
 
 /**
+ * Zeit für das Etikett an der Zeitachse.
+ *
+ * Der Rasterabstand entscheidet über die Genauigkeit: Bei Tageskerzen ist eine
+ * Uhrzeit eine Scheingenauigkeit, bei 15-Minuten-Kerzen ist ein Datum allein
+ * nutzlos. Gerechnet in LOKALER Zeit — dieselbe Zeitzone, in der die Achse des
+ * Charts beschriftet ist.
+ */
+function zeitEtikett(time: number, step: number): string {
+  const d = new Date(time * 1000)
+  const tag = d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })
+  if (step >= 86400) {
+    return `${tag}.${String(d.getFullYear()).slice(2)}`
+  }
+  const uhr = d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
+  return `${tag} ${uhr}`
+}
+
+/**
  * SVG-Overlay über dem lightweight-chart: rendert persistente Zeichnungen
  * in Chart-Koordinaten und behandelt Zeichnen, Auswählen, Verschieben und
  * Löschen. AP 10 (S4): voller TradingView-Werkzeugsatz.
@@ -119,6 +138,7 @@ export function DrawingLayer({
   onClone,
   onOpenStyle,
   onLockedChange,
+  onSelectionBox,
 }: {
   chart: IChartApi
   series: ISeriesApi<SeriesType>
@@ -144,6 +164,12 @@ export function DrawingLayer({
   onOpenStyle?: (id: number) => void
   /** Zeichnungen sperren/entsperren (Rechtsklick-Menü). */
   onLockedChange?: (v: boolean) => void
+  /**
+   * Wo die ausgewählte Zeichnung im FENSTER liegt — daran hängt die schwebende
+   * Stil-Leiste. Sie wird hier gemeldet und nicht draußen gerechnet, weil nur
+   * diese Ebene die Umrechnung Zeit/Kurs → Pixel besitzt.
+   */
+  onSelectionBox?: (box: { left: number; top: number; right: number; bottom: number } | null) => void
 }) {
   const svgRef = useRef<SVGSVGElement>(null)
   // Der Zähler wird nicht nur zum Neurendern gebraucht, sondern auch als
@@ -280,6 +306,44 @@ export function DrawingLayer({
     // sich die Achsen bewegt haben können.
   }, [chart, tick, width])
 
+  /**
+   * Den Platz der Auswahl nach draußen melden — für die schwebende Stil-Leiste.
+   *
+   * Läuft bei jedem `tick`, also bei jeder Bewegung der Zeitachse, ABER nur
+   * solange etwas ausgewählt ist. Das ist der Grund für die Wache oben: Diese
+   * Ebene rendert im Replay laufend neu, und `getBoundingClientRect` erzwingt
+   * ein Layout — ungebremst hat genau das die Seite schon einmal einfrieren
+   * lassen (siehe Kommentar an `achsenBreite`). Eine Messung je Änderung ist
+   * tragbar, eine je Zeichnung wäre es nicht.
+   */
+  useEffect(() => {
+    if (!onSelectionBox) return
+    const svg = svgRef.current
+    const d = selectedId == null ? null : drawings.find((x) => x.id === selectedId)
+    if (!svg || !d) {
+      onSelectionBox(null)
+      return
+    }
+    const pts = d.points.map(toPx)
+    if (pts.length === 0 || pts.some((p) => p == null)) {
+      onSelectionBox(null)
+      return
+    }
+    const P = pts as Pt[]
+    const r = svg.getBoundingClientRect()
+    const xs = P.map((p) => p.x)
+    const ys = P.map((p) => p.y)
+    // Auf den sichtbaren Chart geklemmt: Eine Zeichnung darf zur Hälfte aus dem
+    // Bild laufen — ihre Leiste nicht, sonst zeigt sie ins Nichts.
+    const nutz = { breite: Math.max(0, r.width - achsenBreite), hoehe: Math.max(0, r.height - achsenHoehe) }
+    onSelectionBox({
+      left: r.left + Math.max(0, Math.min(...xs)),
+      right: r.left + Math.min(nutz.breite, Math.max(...xs)),
+      top: r.top + Math.max(0, Math.min(...ys)),
+      bottom: r.top + Math.min(nutz.hoehe, Math.max(...ys)),
+    })
+  }, [selectedId, drawings, tick, width, height, toPx, onSelectionBox, achsenBreite, achsenHoehe])
+
   /** Strahl: von a durch b bis zum Canvas-Rand verlängern. */
   const extendRay = useCallback(
     (a: Pt, b: Pt): Pt => {
@@ -294,6 +358,19 @@ export function DrawingLayer({
       return { x: a.x + dx * t, y: a.y + dy * t }
     },
     [width, height],
+  )
+
+  /**
+   * Die Enden der Kanal-Basislinie nach `extend`.
+   *
+   * Läuft über dieselbe reine Funktion wie jede andere Linie (`linienEnden`),
+   * damit „nach rechts verlängern" am Kanal nicht etwas anderes bedeutet als an
+   * der Trendlinie. Die Parallele erbt die Enden über denselben Versatz — sonst
+   * liefen die beiden Linien unterschiedlich weit und der Kanal wäre schief.
+   */
+  const kanalEnden = useCallback(
+    (a: Pt, b: Pt, extend: Extend) => linienEnden(a, b, extend, (q, r) => extendRay(q, r)),
+    [extendRay],
   )
 
   /** Kanal: Parallel-Linie durch P2 zur Basis P0–P1 (gleiche Steigung). */
@@ -345,15 +422,24 @@ export function DrawingLayer({
         } else if (d.type === 'trendangle' && P.length >= 2) {
           if (distToSegment({ x, y }, P[0], P[1]) < SELECT_TOLERANCE) return d.id
         } else if (d.type === 'channel' && P.length >= 3) {
+          // Getroffen wird über DIESELBEN Enden, die auch gezeichnet werden —
+          // sonst ließe sich ein verlängerter Kanal sehen, aber nicht anfassen.
+          const form = flaechenForm(d.type, d.style)
+          const { von: a1, bis: b1 } = kanalEnden(P[0], P[1], form.extend)
           const off = channelOffset(P)
-          if (
-            distToSegment({ x, y }, P[0], P[1]) < SELECT_TOLERANCE ||
-            distToSegment(
-              { x, y },
-              { x: P[0].x, y: P[0].y + off },
-              { x: P[1].x, y: P[1].y + off },
-            ) < SELECT_TOLERANCE
-          ) {
+          const a2 = { x: a1.x, y: a1.y + off }
+          const b2 = { x: b1.x, y: b1.y + off }
+          const strecken: [Pt, Pt][] = [
+            [a1, b1],
+            [a2, b2],
+          ]
+          if (form.middleLine) {
+            strecken.push([
+              { x: a1.x, y: (a1.y + a2.y) / 2 },
+              { x: b1.x, y: (b1.y + b2.y) / 2 },
+            ])
+          }
+          if (strecken.some(([p, q]) => distToSegment({ x, y }, p, q) < SELECT_TOLERANCE)) {
             return d.id
           }
         } else if (d.type === 'brush' && P.length >= 2) {
@@ -430,7 +516,7 @@ export function DrawingLayer({
       }
       return null
     },
-    [drawings, toPx, extendRay, series],
+    [drawings, toPx, extendRay, kanalEnden, series],
   )
 
   /** Long/Short-Position: Defaults beim Platzieren (2 % Risiko, 2R Ziel). */
@@ -625,6 +711,14 @@ export function DrawingLayer({
     }
 
     if (pending.length >= 1) {
+      setHoverPoint(fromPx(x, y))
+    } else if (istZeichenwerkzeug(tool)) {
+      // Auch beim bloßen Überfahren, nicht erst beim Ziehen: In TradingView
+      // steht der Kurs unter dem Zeiger DAUERHAFT an der Achse, sobald ein
+      // Werkzeug gewählt ist (an SBUX nachgesehen: „96,54" am Fadenkreuz, ohne
+      // gedrückte Maustaste). Man setzt den ersten Punkt sonst blind und
+      // korrigiert hinterher — bei einem Stop ist genau das der Unterschied
+      // zwischen Plan und Ungefähr.
       setHoverPoint(fromPx(x, y))
     } else if (tool === 'measure' && measure && !measure.frozen) {
       setMeasure({ ...measure, b: fromPx(x, y), frozen: false })
@@ -834,7 +928,7 @@ export function DrawingLayer({
               y2={y}
               stroke={l.farbe}
               strokeWidth={l.betont ? stil.width + 0.5 : stil.width}
-              strokeDasharray={strichArray(stil.dashed)}
+              strokeDasharray={strichMuster(stil.strich, stil.width)}
               opacity={l.betont ? 0.95 : 0.75}
             />
             {l.label && (
@@ -866,7 +960,7 @@ export function DrawingLayer({
       d.type.startsWith('fib') ? CHART_COLORS.warning : CHART_COLORS.accent,
     )
     const color = stil.color
-    const strich = strichArray(stil.dashed)
+    const strich = strichMuster(stil.strich, stil.width)
     const pts = d.points.map(toPx)
     if (pts.some((p) => p == null)) return null
     const P = pts as Pt[]
@@ -883,7 +977,7 @@ export function DrawingLayer({
     if (d.type === 'hline') {
       return (
         <g key={d.id}>
-          <line x1={0} y1={P[0].y} x2={width} y2={P[0].y} stroke={color} strokeWidth={selected ? 2 : 1} strokeDasharray={d.style?.dashed ? '4 3' : undefined} />
+          <line x1={0} y1={P[0].y} x2={width} y2={P[0].y} stroke={color} strokeWidth={sw()} strokeLinecap="round" strokeDasharray={strich} />
           <text x={4} y={P[0].y - 4} fill={color} fontSize={10} fontFamily="monospace">
             {d.style?.label ?? formatDe(d.points[0].price, 6)}
           </text>
@@ -894,7 +988,7 @@ export function DrawingLayer({
     if (d.type === 'vline') {
       return (
         <g key={d.id}>
-          <line x1={P[0].x} y1={0} x2={P[0].x} y2={height} stroke={color} strokeWidth={selected ? 2 : 1} strokeDasharray={d.style?.dashed ? '4 3' : undefined} />
+          <line x1={P[0].x} y1={0} x2={P[0].x} y2={height} stroke={color} strokeWidth={sw()} strokeLinecap="round" strokeDasharray={strich} />
           {handles}
         </g>
       )
@@ -977,18 +1071,45 @@ export function DrawingLayer({
       )
     }
     if (d.type === 'channel' && P.length >= 3) {
+      // Der Kanal trägt seit der TradingView-Recherche dieselbe Flächenform wie
+      // das Rechteck: Verlängern, Rahmen, Füllung, Mittellinie. Vorher war er
+      // fest verdrahtet — zwei Linien, immer gefüllt, die er auch dann nicht
+      // verlassen konnte, wenn man nur die Mitte handeln wollte.
+      const form = flaechenForm(d.type, d.style)
+      const { von: a1, bis: b1 } = kanalEnden(P[0], P[1], form.extend)
       const off = channelOffset(P)
-      const a2 = { x: P[0].x, y: P[0].y + off }
-      const b2 = { x: P[1].x, y: P[1].y + off }
+      const a2 = { x: a1.x, y: a1.y + off }
+      const b2 = { x: b1.x, y: b1.y + off }
+      const mitte = (p: Pt, q: Pt) => ({ x: p.x, y: (p.y + q.y) / 2 })
+      const m1 = mitte(a1, a2)
+      const m2 = mitte(b1, b2)
       return (
         <g key={d.id}>
-          <polygon
-            points={`${P[0].x},${P[0].y} ${P[1].x},${P[1].y} ${b2.x},${b2.y} ${a2.x},${a2.y}`}
-            fill={color}
-            fillOpacity={0.06}
-          />
-          <line x1={P[0].x} y1={P[0].y} x2={P[1].x} y2={P[1].y} stroke={color} strokeWidth={selected ? 2 : 1.5} />
-          <line x1={a2.x} y1={a2.y} x2={b2.x} y2={b2.y} stroke={color} strokeWidth={selected ? 2 : 1.5} />
+          {form.background && (
+            <polygon
+              points={`${a1.x},${a1.y} ${b1.x},${b1.y} ${b2.x},${b2.y} ${a2.x},${a2.y}`}
+              fill={color}
+              fillOpacity={0.06}
+            />
+          )}
+          {form.middleLine && (
+            <line
+              x1={m1.x}
+              y1={m1.y}
+              x2={m2.x}
+              y2={m2.y}
+              stroke={color}
+              strokeWidth={Math.max(1, stil.width - 0.5)}
+              strokeDasharray="5 4"
+              opacity={0.7}
+            />
+          )}
+          {form.border && (
+            <>
+              <line x1={a1.x} y1={a1.y} x2={b1.x} y2={b1.y} stroke={color} strokeWidth={sw()} strokeLinecap="round" strokeDasharray={strich} />
+              <line x1={a2.x} y1={a2.y} x2={b2.x} y2={b2.y} stroke={color} strokeWidth={sw()} strokeLinecap="round" strokeDasharray={strich} />
+            </>
+          )}
           {handles}
         </g>
       )
@@ -1532,6 +1653,46 @@ export function DrawingLayer({
     const gesehen = new Set<number>()
     return (
       <g style={{ pointerEvents: 'none' }}>
+        {/* Die Zeitachse trägt dasselbe Etikett — auch das ist aus TradingView
+            übernommen (dort erscheinen beim Ziehen BEIDE Achsen-Etiketten).
+            Ohne die Zeit weiß man beim Setzen eines Punktes in die Zukunft
+            nicht, wo man landet; die Balken sind an der Achse nicht zählbar.
+            Nur der Zeigerpunkt, nicht der Startpunkt: zwei Etiketten auf einer
+            schmalen Achse überlappen sich. */}
+        {(() => {
+          const p = hoverPoint ?? zug?.start
+          const px = p ? toPx(p) : null
+          if (!p || !px || achsenHoehe <= 2) return null
+          const txt = zeitEtikett(p.time, step)
+          const bw = txt.length * 6.4 + 10
+          const bx = Math.max(0, Math.min(px.x - bw / 2, width - achsenBreite - bw))
+          const by = height - achsenHoehe + 2
+          return (
+            <g>
+              <line
+                x1={px.x}
+                y1={0}
+                x2={px.x}
+                y2={height - achsenHoehe}
+                stroke={CHART_COLORS.accent}
+                strokeWidth={0.8}
+                strokeDasharray="3 4"
+                opacity={0.55}
+              />
+              <rect x={bx} y={by} width={bw} height={17} rx={3} fill={CHART_COLORS.accent} />
+              <text
+                x={bx + bw / 2}
+                y={by + 12}
+                fill={CHART_COLORS.background}
+                fontSize={10}
+                fontFamily="monospace"
+                textAnchor="middle"
+              >
+                {txt}
+              </text>
+            </g>
+          )
+        })()}
         {punkte.map((p, i) => {
           if (gesehen.has(p.price)) return null
           gesehen.add(p.price)
@@ -1706,6 +1867,13 @@ export function DrawingLayer({
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
+        onPointerLeave={() => {
+          // Sonst bliebe das Achsen-Etikett am letzten Ort stehen und
+          // behauptete einen Kurs, auf den niemand mehr zeigt. Während einer
+          // laufenden Geste oder eines offenen Mehrpunkt-Werkzeugs bleibt es —
+          // dort gehört der Punkt zur Zeichnung, nicht zum Zeiger.
+          if (!zug && pending.length === 0) setHoverPoint(null)
+        }}
         onContextMenu={(e) => {
           // Nur über einer Zeichnung — sonst gehört das Rechtsklick-Menü dem
           // Browser, und man käme im Chart nicht mehr an „Bild speichern".

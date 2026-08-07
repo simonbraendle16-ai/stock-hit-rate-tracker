@@ -97,6 +97,39 @@ describe('fibLinien', () => {
     expect(fibLinien(stil, 200, 100)[0].preis).toBe(150)
   })
 
+  it('dreht mit `umkehren` die Skala, nicht die Sortierung', () => {
+    const levels = [
+      { wert: 0, an: true },
+      { wert: 0.5, an: true },
+      { wert: 1, an: true },
+    ]
+    const normal = normalizeFibStil({ levels, beschriftung: 'aus' })
+    const gedreht = normalizeFibStil({ levels, beschriftung: 'aus', umkehren: true })
+    // Von 100 nach 200: normal liegt 0 bei 100, gedreht bei 200.
+    expect(fibLinien(normal, 100, 200).map((l) => l.preis)).toEqual([100, 150, 200])
+    const g = fibLinien(gedreht, 100, 200)
+    expect(g.find((l) => l.wert === 0)!.preis).toBe(200)
+    expect(g.find((l) => l.wert === 1)!.preis).toBe(100)
+    // Die Mitte bleibt die Mitte — und die Ausgabe bleibt nach `wert` sortiert.
+    expect(g.find((l) => l.wert === 0.5)!.preis).toBe(150)
+    expect(g.map((l) => l.wert)).toEqual([0, 0.5, 1])
+  })
+
+  it('ist bei Levels ausserhalb 0..1 ebenfalls spiegelbar', () => {
+    const stil = normalizeFibStil({
+      levels: [{ wert: 1.618, an: true }],
+      beschriftung: 'aus',
+      umkehren: true,
+    })
+    // Normal waere 1.618 bei 100 + 1.618*100 = 261,8; gedreht bei 200 − 161,8.
+    expect(fibLinien(stil, 100, 200)[0].preis).toBeCloseTo(38.2, 6)
+  })
+
+  it('steht ohne Angabe auf nicht gedreht — Altbestand sieht unveraendert aus', () => {
+    expect(normalizeFibStil({}).umkehren).toBe(false)
+    expect(normalizeFibStil({ umkehren: 'ja' }).umkehren).toBe(false)
+  })
+
   it('zeigt ausgeschaltete Levels nicht', () => {
     const stil = normalizeFibStil({
       levels: [

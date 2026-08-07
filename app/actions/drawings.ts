@@ -71,6 +71,12 @@ export interface DrawingPoint {
 export interface DrawingStyle {
   color?: string
   dashed?: boolean
+  /**
+   * Strichart (durchgezogen · gestrichelt · gepunktet). `dashed` bleibt daneben
+   * als ältere Schreibweise stehen und wird mitgeschrieben — gelesen wird
+   * ausschließlich über `normalizeDrawingStyle` (`lib/drawing-style.ts`).
+   */
+  strich?: string
   label?: string
   /** Linienstärke in px. */
   width?: number

@@ -223,7 +223,10 @@ export function TradeCard({
       <div className="mt-3 grid grid-cols-3 gap-2 font-mono text-xs">
         <Stat label="Entry" value={t.entryPrice} />
         <Stat label="Stop" value={t.stopLoss} tone="neg" />
-        <Stat label={targets && targets.length > 1 ? 'Ziel 1' : 'Ziel'} value={t.takeProfit} tone="pos" />
+        {/* `t.takeProfit` ist seit Migration 0032 das KURSZIEL, also die
+            äußerste Stufe — vorher stand hier die erste, und das Label „Ziel 1"
+            stimmte. Jetzt wäre es schlicht falsch. */}
+        <Stat label="Kursziel" value={t.takeProfit} tone="pos" />
       </div>
 
       {/* Teilziele (Etappe 13): Auf der Karte steht nur, wie weit der Staffelplan
@@ -485,8 +488,13 @@ function MoneyPanel({ t, currency = 'EUR' }: { t: TradeRow; currency?: string })
         ) : (
           <>
             {tp && (
+              // Bei einem gestaffelten Trade ist das der Gewinn der LETZTEN
+              // Stufe, nicht der des ganzen Plans — der Anteil im Label sagt
+              // das (bei 100 % ist es der ganze Plan). Die Gesamtaussage steht
+              // im gewichteten CRV; sie hier zusätzlich in Geld zu rechnen
+              // hieße, die Stufen auch auf der Karte zu laden.
               <MRow
-                label={`${paper ? 'Gewinn' : 'Netto-Gewinn'} (TP · ${num(t.takeProfitPct ?? 100)} %)`}
+                label={`${paper ? 'Gewinn' : 'Netto-Gewinn'} (Kursziel · ${num(t.takeProfitPct ?? 100)} %)`}
                 value={eur(tp.netProfit)}
                 tone={tp.netProfit >= 0 ? 'pos' : 'neg'}
                 strong

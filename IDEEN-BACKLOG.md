@@ -66,6 +66,30 @@ Kontowährung, Hebel je Trade, Cashflows, Tests. Migration `0010` ist angewendet
 - VWAP / Volumenprofil (aus vorhandenen Kerzen, kostenlos)
 - Watchlist zeigt Distanz zum Entry („noch 2,1 % bis zum Einstieg")
 
+### D.1 · Zeichenwerkzeuge — was in TradingView noch drinsteckt
+Aus der Recherche am 07.08.2026 an **SBUX** (Dialoge „Fib-Retracement" und „Parallel channel",
+Reiter Style/Text/Coordinates/Visibility). Umgesetzt sind daraus bereits: schwebende Stil-Leiste,
+Koordinaten-Eingabe, dreiwertige Strichart, Fib-`Reverse`, Kanal mit Extend/Füllung/Mittellinie.
+**Offen, absteigend nach Wert:**
+- **Kanal als Band mit Zwischenlinien.** TradingView führt am Kanal eine ganze Level-Liste
+  (−0.25 · 0 · 0.25 · 0.5 · 0.75 · 1 · 1.25), je mit Wert, Farbe und eigener Strichart. Wir haben
+  davon nur die Mitte. Vorbedingung: eine **gemeinsame** Level-Verwaltung mit `FibStil` — sonst
+  stünden zwei nebeneinander und liefen auseinander.
+- **Fib-`Extend` als Vierwert** statt `verlaengern: boolean` (TradingView: Don't extend / left /
+  right / both, dasselbe Feld wie an der Linie). Klein, aber es berührt `fibLinien`-Aufrufer und
+  den Treffertest.
+- **Trendlinie am Fib ein/aus** mit eigener Farbe und Strichart (die Verbindung P1→P2).
+- **Levels-Anzeige „Prozent" vs. „Werte"** — wir zeigen nur Prozent.
+- **Farbe je Level** plus der Kurzweg „Use one color" (wir haben nur die eine Farbe; das Feld
+  `FibLevel.farbe` ist im Datenmodell schon vorgesehen, nur nicht bedienbar).
+- Hintergrund-**Transparenz** als Regler, Label-Position (links/mitte/rechts × oben/mitte/unten),
+  Schriftgröße — kosmetisch, zuletzt.
+- **Zeichnungs-Vorlagen** („Templates"): benannte Stil-Sätze. Bewusst zurückgestellt, weil sie
+  neben `drawing-defaults` eine zweite Wahrheit über das Aussehen neuer Zeichnungen wären.
+- **Alert an einer Zeichnung** — in TradingView ein Knopf in der Stil-Leiste. Bei uns hängt ein
+  Alert an einem Trade-Level (`price_alert`); ein Alert an einer freien Linie hätte keinen Plan
+  hinter sich. **Douglas-Filter: eher nicht.**
+
 ## E · Social
 - Freundschaft mit Einladungscode + 3 Sichtbarkeitsstufen → **Etappe 2**
 - Accountability-Partner: quittiert deine Regelbrüche
