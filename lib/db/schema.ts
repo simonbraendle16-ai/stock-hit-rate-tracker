@@ -596,6 +596,14 @@ export const trainingSession = pgTable('training_session', {
   stopLoss: doublePrecision('stopLoss'),
   takeProfit: doublePrecision('takeProfit'),
   thesisNote: text('thesisNote'),
+  // Übergeordneter Kontext (Migration 0033): in welchem Zyklus stehen wir?
+  //
+  // Freitext und kein Katalog — die Formulierung einer Zählung ist persönlich,
+  // wie die Setup-Tags. NULL heißt „ohne Angabe" und bleibt so: Altbestand wird
+  // nicht nachgetragen, denn ein nachträglich erfundener Kontext ist schlimmer
+  // als eine ehrliche Lücke. Festgeschrieben wird er wie die These VOR dem
+  // Aufdecken; danach änderbar wäre er wertlos.
+  higherContext: text('higherContext'),
   // JSON-Array der Anzeigeformen, wie `trade.setupTags`.
   setupTags: text('setupTags'),
   committedAt: timestamp('committedAt', { withTimezone: true }),

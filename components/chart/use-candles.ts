@@ -36,6 +36,59 @@ export interface UseCandlesOptions {
   enabled?: boolean
 }
 
+/**
+ * Die Abfrage-Parameter — an EINER Stelle, weil sie zwei Aufrufer haben.
+ *
+ * Bei einer Übung darf ausschließlich die Zeitebene von außen kommen; Symbol
+ * und Markt bleiben beim Server. Stünde das an zwei Stellen, verriete die eine
+ * irgendwann das Instrument, das die andere verdeckt.
+ */
+function candleParams(
+  symbol: string,
+  market: string,
+  interval: Interval,
+  opts: UseCandlesOptions,
+): URLSearchParams {
+  const params = new URLSearchParams()
+  if (opts.trainingSessionId != null) {
+    params.set('trainingSessionId', String(opts.trainingSessionId))
+    if (opts.timeframe) params.set('tf', opts.timeframe)
+  } else {
+    params.set('symbol', symbol)
+    params.set('market', market)
+    params.set('interval', interval)
+    if (opts.stockId != null) params.set('stockId', String(opts.stockId))
+  }
+  return params
+}
+
+/**
+ * Ältere Kerzen nachladen — ausschließlich nach links.
+ *
+ * Kein zweiter Ladeweg: Es ist dieselbe Route und damit derselbe
+ * `getCachedCandles`, nur mit `before`. Ein eigener Weg an ihm vorbei wäre eine
+ * zweite Wahrheit darüber, woher Kerzen kommen — und die Wache gegen
+ * unaufgelöste Rohticker sitzt genau dort.
+ *
+ * Nach RECHTS gibt es das bewusst nicht: Der rechte Rand gehört im Trainer dem
+ * Replay-Stand.
+ */
+export async function ladeAeltereKerzen(
+  symbol: string,
+  market: string,
+  interval: Interval,
+  before: number,
+  opts: UseCandlesOptions = {},
+  signal?: AbortSignal,
+): Promise<Candle[]> {
+  const params = candleParams(symbol, market, interval, opts)
+  params.set('before', String(Math.floor(before)))
+  const res = await fetch(`/api/candles?${params}`, { signal })
+  if (!res.ok) return []
+  const data = await res.json()
+  return Array.isArray(data.candles) ? (data.candles as Candle[]) : []
+}
+
 export function useCandles(
   symbol: string,
   market: string,
@@ -61,18 +114,11 @@ export function useCandles(
     const controller = new AbortController()
     setState((s) => ({ ...s, loading: true, error: null, errorCode: null }))
 
-    const params = new URLSearchParams()
-    if (trainingSessionId != null) {
-      params.set('trainingSessionId', String(trainingSessionId))
-      // Nur die Zeitebene darf von außen kommen — Symbol und Markt bleiben beim
-      // Server, sonst wäre die Verdeckung über diesen Weg zu umgehen.
-      if (timeframe) params.set('tf', timeframe)
-    } else {
-      params.set('symbol', symbol)
-      params.set('market', market)
-      params.set('interval', interval)
-      if (stockId != null) params.set('stockId', String(stockId))
-    }
+    const params = candleParams(symbol, market, interval, {
+      stockId,
+      trainingSessionId,
+      timeframe,
+    })
 
     fetch(`/api/candles?${params}`, { signal: controller.signal })
       .then(async (res) => {

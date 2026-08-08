@@ -248,6 +248,21 @@ export const MIN_HIDDEN_CANDLES = 15
 export const DEFAULT_START_FRACTION = 0.62
 
 /**
+ * Weiter als hierhin darf ein Startpunkt nie rücken — ein Fünftel der Reihe
+ * bleibt der Übung.
+ *
+ * Der Wert stand schon immer im Zufallsstart, aber nur dort und als nackte 0.8.
+ * `MIN_HIDDEN_CANDLES` ist die Notbremse („technisch noch eine Übung"), nicht
+ * das Maß: Bei 3000 Kerzen ließ sie 15 Kerzen übrig. Ein Vorlauf, der das
+ * ausreizt, erzeugt genau das Bild eines Fehlers, den es hier schon gab — der
+ * Balken steht rechts, alles ist aufgedeckt, zu üben gibt es nichts. Nur ist
+ * es diesmal kein Fehler, sondern eine Einstellung, die sich selbst aufhebt.
+ * Deshalb gilt die Grenze ab jetzt für JEDEN Startpunkt, egal wie er zustande
+ * kam — gezogen, gewählt oder aus der Formel.
+ */
+export const MAX_START_ANTEIL = 0.8
+
+/**
  * Startpunkt aus einer Zufallszahl `r` (0 ≤ r < 1) — als reine Funktion, damit
  * sie testbar ist und der Aufrufer den Zufall stellt.
  *
@@ -256,7 +271,7 @@ export const DEFAULT_START_FRACTION = 0.62
  */
 export function randomStartIndex(total: number, r: number): number {
   const lo = Math.max(MIN_VISIBLE_CANDLES, Math.floor(total * 0.35))
-  const hi = Math.min(total - MIN_HIDDEN_CANDLES, Math.floor(total * 0.8))
+  const hi = Math.min(total - MIN_HIDDEN_CANDLES, Math.floor(total * MAX_START_ANTEIL))
   if (hi <= lo) return Math.max(1, Math.min(total, lo))
   const span = hi - lo
   const clamped = Number.isFinite(r) ? Math.min(0.999999, Math.max(0, r)) : 0
@@ -272,11 +287,29 @@ export function randomStartIndex(total: number, r: number): number {
  * ist der Vorlauf jetzt eine Entscheidung beim Anlegen und keine Nebenwirkung
  * der Datenmenge.
  */
+/**
+ * „Alles" — nimm, was der Kerzensatz hergibt, statt bei einer Zahl zu deckeln.
+ *
+ * Ein Wunsch und keine Kerzenzahl: `startIndexMitVorlauf` klemmt ihn ohnehin an
+ * `total - MIN_HIDDEN_CANDLES`, und genau das ist hier gemeint. Der Wert liegt
+ * bewusst weit über jedem Satz, den `/api/candles` je ausliefert
+ * (`TRAINING_CANDLE_LIMIT` = 3000), damit die Klemmung greift und nicht diese
+ * Zahl. Er wird als `leadIn` gespeichert (integer) und muss deshalb in einen
+ * Postgres-`integer` passen — `Number.MAX_SAFE_INTEGER` täte das nicht.
+ */
+export const LEAD_IN_ALLES = 100_000
+
 export const LEAD_IN_OPTIONS: { wert: number; label: string; hinweis: string }[] = [
   { wert: 120, label: '120', hinweis: 'Knapp — nur die jüngste Bewegung.' },
   { wert: 250, label: '250', hinweis: 'Genug für Struktur und Niveaus.' },
   { wert: 450, label: '450', hinweis: 'Übergeordneter Trend wird sichtbar.' },
   { wert: 800, label: '800', hinweis: 'Voller Kontext, auch für höhere Ebenen.' },
+  {
+    wert: LEAD_IN_ALLES,
+    label: 'Alles',
+    hinweis:
+      'So viel Vergangenheit, wie der Satz hergibt — ein Fünftel bleibt für die Übung verborgen.',
+  },
 ]
 
 export const DEFAULT_LEAD_IN = 250
@@ -287,12 +320,62 @@ export const DEFAULT_LEAD_IN = 250
  * Geklemmt an dieselben Ränder wie der Zufallsstart: Es müssen genug Kerzen
  * sichtbar bleiben (Kontext) UND genug verborgen (sonst gibt es nichts zu
  * üben). Der Wunsch gewinnt nie gegen diese beiden Grenzen.
+ *
+ * Die obere Grenze ist `MAX_START_ANTEIL` und nicht mehr `total -
+ * MIN_HIDDEN_CANDLES`. Der Unterschied ist der zwischen „technisch noch eine
+ * Übung" und „noch eine Übung": Bei 3000 Kerzen ließ die alte Grenze fünfzehn
+ * übrig — der Replay-Balken stand am rechten Anschlag, und es gab nichts mehr
+ * aufzudecken. Ein gewählter Vorlauf, der die Übung auflöst, ist kein Vorlauf.
+ * Die Notbremse bleibt darunter erhalten, für sehr kurze Reihen.
  */
 export function startIndexMitVorlauf(total: number, leadIn: number): number {
   const lo = Math.min(MIN_VISIBLE_CANDLES, total)
-  const hi = Math.max(lo, total - MIN_HIDDEN_CANDLES)
+  const hi = Math.max(
+    lo,
+    Math.min(total - MIN_HIDDEN_CANDLES, Math.floor(total * MAX_START_ANTEIL)),
+  )
   const gewuenscht = Number.isFinite(leadIn) ? Math.round(leadIn) : DEFAULT_LEAD_IN
   return Math.min(hi, Math.max(lo, gewuenscht))
+}
+
+// ---------------------------------------------------------------------------
+// Übergeordneter Kontext (Migration 0033)
+// ---------------------------------------------------------------------------
+
+/** Höchstlänge des Kontext-Freitexts — wie bei den anderen Notizen. */
+export const MAX_CONTEXT_LEN = 500
+
+/**
+ * Darf der übergeordnete Kontext (noch) geschrieben werden?
+ *
+ * Dieselbe Logik wie bei der These, und aus demselben Grund: Ein Kontext, der
+ * sich nach dem Aufdecken noch ändern lässt, misst nichts. Man würde ihn — ohne
+ * jede böse Absicht — passend zu dem formulieren, was man inzwischen gesehen
+ * hat, und die Trainingsstatistik behauptete anschließend eine Quote über eine
+ * Lesung, die es vorher gar nicht gab.
+ *
+ * Drei Riegel, jeder für sich ausreichend:
+ *  - **Schon gesetzt.** Einmal festgeschrieben heißt festgeschrieben.
+ *  - **Der Durchlauf ist gelaufen.** Sobald eine Kerze über den Startpunkt
+ *    hinaus freigegeben wurde, ist Vergangenheit sichtbar geworden, die vorher
+ *    verborgen war.
+ *  - **Die Übung ist aufgedeckt oder vorbei.**
+ *
+ * Rein und getestet: Der Client ist keine Prüfstelle, aber die Regel soll auch
+ * nicht zweimal dastehen.
+ */
+export function kontextSchreibbar(zustand: {
+  vorhanden: string | null | undefined
+  status: string
+  revealedAt: Date | null
+  endedAt: Date | null
+  /** Wie viele Haltepunkte/Trades schon beantwortet sind. */
+  antworten: number
+}): boolean {
+  if (zustand.vorhanden != null && zustand.vorhanden.trim() !== '') return false
+  if (zustand.revealedAt != null || zustand.endedAt != null) return false
+  if (zustand.status !== 'offen') return false
+  return zustand.antworten <= 0
 }
 
 /** Startpunkt der freien Übung, mit denselben Rändern wie der Zufallsstart. */

@@ -24,7 +24,7 @@ const UA =
  * Yahoo kennt kein 4h-Intervall. Wir holen 60m und aggregieren daraus — der
  * Rest bildet 1:1 ab.
  */
-const YAHOO_INTERVAL: Record<Interval, string> = {
+export const YAHOO_INTERVAL: Record<Interval, string> = {
   '15min': '15m',
   '30min': '30m',
   '1h': '60m',
@@ -49,6 +49,19 @@ const YAHOO_INTERVAL: Record<Interval, string> = {
  * stehen hier keine runden Wunschwerte, sondern genau diese Kanten.
  *
  * Yahoo akzeptiert nur feste Bezeichner, keine freien Zahlen.
+ *
+ * WARUM BEI WOCHE UND MONAT NICHT `max` STEHT — das war ein echter Fehler:
+ * Bei `range=max` stuft Yahoo **still** auf `dataGranularity: "3mo"` herunter und
+ * liefert Quartalskerzen, ohne das im Status oder in einem Fehlerfeld zu sagen.
+ * Gemessen an AAPL: `1wk` und `1mo` gaben denselben Satz aus 169 Kerzen ab 1984
+ * mit 90–92 Tagen Abstand. Woche und Monat zeigten damit dasselbe zu grobe Bild —
+ * ausgerechnet auf den Ebenen, auf denen der übergeordnete Zyklus gelesen wird.
+ *
+ * Direkt gegen Yahoo geprüft: `range=30y` liefert bei `1wk` echte Wochen- und
+ * bei `1mo` echte Monatskerzen. Deshalb steht hier eine Zahl statt `max`.
+ * Abgesichert wird das nicht durch diese Tabelle, sondern durch
+ * `passtGranularitaet` weiter unten — der Zeitraum ist nur der heute bekannte
+ * Auslöser, die Prüfung fängt den nächsten Fall.
  */
 const YAHOO_RANGE: Record<Interval, string> = {
   '15min': '60d',
@@ -57,8 +70,40 @@ const YAHOO_RANGE: Record<Interval, string> = {
   // 4h entsteht aus 60m — dieselbe Zwei-Jahres-Kante.
   '4h': '2y',
   '1day': '10y',
-  '1week': 'max',
-  '1month': 'max',
+  '1week': '30y',
+  '1month': '30y',
+}
+
+/**
+ * Die Granularität, die Yahoo für ein angefragtes Intervall zurückmelden MUSS.
+ *
+ * Für alles außer 4h ist das schlicht das angefragte Intervall. 4h gibt es bei
+ * Yahoo nicht — wir fragen 60m an und aggregieren selbst, also ist `60m` hier
+ * die richtige Erwartung und nicht etwa `4h`.
+ */
+export const ERWARTETE_GRANULARITAET: Record<Interval, string> = {
+  ...YAHOO_INTERVAL,
+}
+
+/**
+ * Liefert Yahoo wirklich das Intervall, das wir angefragt haben?
+ *
+ * Rein und getestet, weil hier ein stiller Falschwert abgefangen wird: Yahoo
+ * meldet eine Herabstufung nur im Feld `meta.dataGranularity` der Antwort — der
+ * Status bleibt 200, ein Fehlerfeld gibt es nicht. Wer das nicht prüft, legt
+ * Quartalskerzen unter „Woche" im Kerzenspeicher ab, und der Speicher
+ * konserviert den Irrtum.
+ *
+ * Fehlt die Angabe, gilt die Antwort als in Ordnung: Wir verwerfen nur
+ * **nachweislich** Falsches, nicht Unbekanntes — sonst fiele die Kursversorgung
+ * aus, sobald Yahoo das Feld einmal weglässt.
+ */
+export function passtGranularitaet(
+  interval: Interval,
+  granularity: string | null | undefined,
+): boolean {
+  if (typeof granularity !== 'string' || granularity.trim() === '') return true
+  return granularity.trim().toLowerCase() === ERWARTETE_GRANULARITAET[interval].toLowerCase()
 }
 
 // --- Crumb-Verwaltung ------------------------------------------------------
@@ -133,6 +178,8 @@ async function getCredentials(force = false): Promise<Credentials> {
 interface ChartResult {
   meta?: {
     symbol?: string
+    /** Das Intervall, das Yahoo TATSÄCHLICH geliefert hat — siehe `passtGranularitaet`. */
+    dataGranularity?: string
     currency?: string
     exchangeName?: string
     fullExchangeName?: string
@@ -200,6 +247,21 @@ async function fetchChart(symbol: string, interval: Interval): Promise<ChartResu
   if (!result) {
     throw new MarketDataError(`Keine Kursdaten für „${symbol}“ gefunden.`, 'unknown_symbol')
   }
+
+  // Die Antwort wird VERWORFEN, wenn Yahoo ein anderes Intervall geliefert hat
+  // als angefragt. Das ist bewusst hart: Eine herabgestufte Reihe sieht
+  // vollkommen normal aus, landet aber unter dem angefragten Schlüssel im
+  // Kerzenspeicher — und wird von dort auf Jahre weiter ausgeliefert. Lieber ein
+  // leerer Chart mit Meldung als eine Wochenebene, die heimlich Quartale zeigt.
+  const granularitaet = result.meta?.dataGranularity
+  if (!passtGranularitaet(interval, granularitaet)) {
+    throw new MarketDataError(
+      `Yahoo lieferte für „${symbol}“ das Intervall „${granularitaet}“ statt ` +
+        `„${ERWARTETE_GRANULARITAET[interval]}“ — die Antwort wird verworfen.`,
+      'upstream',
+    )
+  }
+
   return result
 }
 

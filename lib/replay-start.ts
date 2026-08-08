@@ -199,16 +199,61 @@ export interface AnsichtStand {
  */
 export function ansichtNeuSetzen(
   vorher: AnsichtStand | null,
-  jetzt: { key: string; ersteZeit: number; replayFenster: boolean; len: number },
+  jetzt: {
+    key: string
+    ersteZeit: number
+    replayFenster: boolean
+    len: number
+    /**
+     * Die erste Kerze hat sich geändert, weil **wir** links nachgeladen haben —
+     * nicht, weil die Reihe ausgetauscht wurde.
+     *
+     * Ohne diese Unterscheidung wäre das Nachladen nach links wirkungslos: Es
+     * sieht an der ersten Kerze genauso aus wie ein Ebenenwechsel, der
+     * Ausschnitt würde neu gesetzt und der Blick spränge im selben Moment ans
+     * rechte Ende zurück, in dem die gesuchte Vergangenheit eintrifft. Wer den
+     * linken Rand sucht, wird also ausgerechnet dann weggerissen, wenn er
+     * gefunden hat, wonach er gesucht hat.
+     */
+    vorlauf?: boolean
+    /**
+     * Um wie viele Kerzen sich der Replay-Stand seit dem letzten Rendern
+     * verändert hat. Bewusst eine Größe je Durchlauf und nicht Teil von
+     * `AnsichtStand`: Beim Abspielen driftete der Vergleichswert sonst, bis er
+     * die Schwelle allein durch Zeitablauf überschritte.
+     */
+    standSprung?: number
+  },
 ): boolean {
   // Ohne Kerzen ist jeder Ausschnitt geraten. Vor allem darf nichts gemerkt
   // werden: Das verbrauchte die eine Gelegenheit, ihn richtig zu setzen.
   if (jetzt.len <= 1) return false
   if (vorher == null) return true
   if (vorher.key !== jetzt.key) return true
-  // Andere Reihe unter demselben Schlüssel — der Ebenenwechsel.
-  if (vorher.ersteZeit !== jetzt.ersteZeit) return true
+  // Andere Reihe unter demselben Schlüssel — der Ebenenwechsel. Nachgeladene
+  // Vergangenheit ist derselbe Anblick, nur weiter nach links: Sie zählt nicht
+  // als andere Reihe, der Ausschnitt wird stattdessen mitgeschoben.
+  if (vorher.ersteZeit !== jetzt.ersteZeit) return !jetzt.vorlauf
   // Der Startpunkt der Übung entsteht erst aus den Kerzen und trifft daher
   // nach dem ersten Setzen ein. Dann einmal nachziehen.
-  return !vorher.hatteReplay && jetzt.replayFenster
+  if (!vorher.hatteReplay && jetzt.replayFenster) return true
+
+  /**
+   * Der Stand ist in EINEM Schritt weiter gesprungen, als das Startfenster
+   * breit ist.
+   *
+   * Beim Abspielen wächst er um eine Kerze, an einem Haltepunkt um zehn — nie
+   * um Hunderte auf einmal. Ein solcher Sprung hat genau zwei Ursachen, und in
+   * beiden ist der alte Ausschnitt wertlos: Der Startpunkt der Übung ist
+   * nachgereicht worden (er entsteht erst aus den Kerzen und kann bei großem
+   * Vorlauf weit hinten liegen), oder der Regler wurde dorthin gezogen.
+   *
+   * Ohne diese Regel blieb der Ausschnitt beim Anlegen einer Übung mit großem
+   * Vorlauf dort stehen, wo der vorläufige Stand lag: Der Chart zeigte eine
+   * Handvoll Kerzen am linken Rand und sonst nichts, und erst ein Neuladen
+   * rückte ihn zurecht. `hatteReplay` fing das nicht ab — es war schon beim
+   * vorläufigen Stand gesetzt und damit blind für den Nachschlag.
+   */
+  const sprung = jetzt.standSprung
+  return sprung != null && Number.isFinite(sprung) && Math.abs(sprung) > MAX_START_FENSTER
 }

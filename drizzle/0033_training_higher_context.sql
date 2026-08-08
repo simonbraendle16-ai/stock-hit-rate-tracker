@@ -1,0 +1,41 @@
+-- Der übergeordnete Kontext einer Übung — festgehalten, bevor aufgedeckt wird.
+--
+-- AUSGANGSLAGE
+-- Nach einer Trainingseinheit gemeldet: „Ich kann nicht sicher sagen, in welchem
+-- Mainzyklus wir uns befinden." Das ist keine Bequemlichkeitsfrage. Der Trainer
+-- misst, ob eine These VOR dem Ergebnis stand. Eine These über eine Wellenzählung
+-- setzt aber voraus, dass die übergeordnete Struktur überhaupt gelesen wurde —
+-- und ob sie gelesen wurde, stand bisher nirgends. Die Trainingsstatistik
+-- behauptete trotzdem eine Quote. Genau die Sorte stiller Falschaussage, gegen
+-- die diese App gebaut ist.
+--
+-- Douglas-seitig: Risiko wird vor dem Einstieg definiert. Wer den Kontext nicht
+-- benennen kann, kann Invalidation und Ziel nicht begründen — er kann sie nur
+-- behaupten.
+--
+-- WAS DIESE MIGRATION TUT
+-- Eine Spalte. `higherContext` (Text, NULL erlaubt) an `training_session`.
+--
+-- WARUM FREITEXT UND KEIN KATALOG
+-- Die Formulierung einer Wellenzählung ist persönlich — wie die Setup-Tags und
+-- anders als die Fehler-Tags, wo ein geschlossener Satz die Auswertung erst
+-- möglich macht. Ein Katalog würde hier vorgeben, was man zu sehen hat.
+--
+-- WARUM KEIN BACKFILL UND KEINE PFLICHT
+-- Altbestand steht auf „ohne Angabe" und bleibt dort. Einen Kontext
+-- nachzutragen, den man beim Üben nicht notiert hat, hieße ihn zu erfinden —
+-- und ein erfundener Eintrag ist schlimmer als eine ehrliche Lücke. Aus
+-- demselben Grund bleibt die Spalte NULL-fähig: „unbekannt" muss sich von
+-- „nichts gesehen" unterscheiden lassen.
+--
+-- Ausgewertet wird vorerst NICHT. Erst muss sich zeigen, wie tatsächlich
+-- hineingeschrieben wird; alles andere wäre eine Kennzahl auf Vermutung.
+-- Notiert im `IDEEN-BACKLOG.md`.
+--
+-- Additiv und idempotent: `IF NOT EXISTS` — ein zweiter Lauf ändert nichts.
+--
+-- VORHER/NACHHER prüfen mit:
+--   node scripts/baseline-report.mjs
+
+ALTER TABLE "training_session"
+  ADD COLUMN IF NOT EXISTS "higherContext" text;

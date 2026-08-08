@@ -51,6 +51,14 @@ export async function GET(req: NextRequest) {
   // Anzeige-Trick, und die erste Netzwerkzeile verriete das Instrument. Deshalb
   // fragt der Chart hier mit der Übungs-Nummer an; Symbol, Markt und Intervall
   // holt der Server aus der Übung und gibt sie erst nach dem Aufdecken zurück.
+  // Nachladen nach links: nur Kerzen VOR diesem Zeitpunkt. Bewusst nur nach
+  // links — der rechte Rand gehört im Trainer dem Replay-Stand, und ein
+  // Parameter, mit dem sich nach rechts nachladen ließe, wäre ein Weg an ihm
+  // vorbei. Ungültige Angaben werden ignoriert, nicht abgewiesen: Ohne `before`
+  // kommt schlicht das jüngste Fenster, und das ist nie falsch.
+  const beforeRaw = params.get('before')
+  const before = beforeRaw && /^\d+$/.test(beforeRaw) ? Number(beforeRaw) : undefined
+
   const trainingRaw = params.get('trainingSessionId')
   const trainingSessionId = trainingRaw && /^\d+$/.test(trainingRaw) ? Number(trainingRaw) : null
   let verdeckt = false
@@ -120,7 +128,7 @@ export async function GET(req: NextRequest) {
     // zum Aufdecken. Deshalb bekommt der Trainer mehr Kerzen als ein normaler
     // Chart, in dem die letzten paar hundert genügen.
     const limit = trainingSessionId != null ? TRAINING_CANDLE_LIMIT : undefined
-    const candles = await getCachedCandles(providerSymbol, market, interval, { limit })
+    const candles = await getCachedCandles(providerSymbol, market, interval, { limit, before })
     return NextResponse.json({
       // Bei einer verdeckten Übung bleibt beides leer — der Chart beschriftet
       // sich dann selbst mit „Verdecktes Instrument".

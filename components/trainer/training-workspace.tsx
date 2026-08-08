@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { PriceChart, type PlanLine } from '@/components/chart/price-chart'
 import { PLAN_COLORS } from '@/components/chart/colors'
+import { ContextChart } from './context-chart'
+import { HigherContextForm } from './higher-context-form'
 import { ThesisForm } from './thesis-form'
 import { VerdictForm } from './verdict-form'
 import { TrainingSummary } from './training-summary'
@@ -30,6 +32,7 @@ import type { ChartTimeframe } from '@/lib/chart-timeframes'
 import {
   defaultStartIndex,
   isBlindMode,
+  kontextSchreibbar,
   randomStartIndex,
   startIndexMitVorlauf,
   type TrainingDirection,
@@ -68,6 +71,8 @@ export interface TrainingSessionView {
   stopEvery: number
   leadIn: number | null
   endedAt: Date | null
+  /** Übergeordneter Kontext (Migration 0033); NULL = ohne Angabe. */
+  higherContext: string | null
 }
 
 const SCHRITTE = [
@@ -117,6 +122,16 @@ export function TrainingWorkspace({
   const [visible, setVisible] = useState(session.startIndex || 0)
   const registered = useRef(session.startIndex > 0)
   const [trades, setTrades] = useState<TrainingTradeView[]>(initialTrades)
+  /**
+   * Die Zeichnungen der Übung liegen HIER und nicht in einem der beiden Charts.
+   *
+   * Arbeits- und Kontext-Chart zeigen dieselben Zeichnungen (`{time, price}`,
+   * ohne Zeitebene) und schreiben beide in `training_annotation`. Hielte jeder
+   * seine eigene Liste, wäre ein Fib, auf der Wochenebene über die ganze Welle
+   * gezogen, im Arbeitschart erst nach dem Neuladen zu sehen — und damit wäre
+   * der Kontext-Chart genau um das gebracht, wofür er gebaut ist.
+   */
+  const [zeichnungen, setZeichnungen] = useState<Drawing[]>(annotations)
   const [ended, setEnded] = useState(session.endedAt != null)
   const [candles, setCandles] = useState<Candle[]>([])
 
@@ -540,14 +555,28 @@ export function TrainingWorkspace({
       {/* 5 von 7 Spalten für den Chart. Im Trainer wird eine Struktur gelesen —
           dafür braucht es Fläche; das Formular daneben kommt mit weniger aus. */}
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-7">
-        <div className="xl:col-span-5">
+        <div className="xl:col-span-5 xl:min-w-0">
+          {/* Der übergeordnete Kontext steht ÜBER dem Arbeitschart, nicht
+              daneben: Gelesen wird von oben nach unten, und in dieser
+              Reihenfolge liegt er dann auch. Zugeklappt kostet er eine Zeile. */}
+          <div className="mb-3">
+            <ContextChart
+              session={session}
+              annotations={zeichnungen}
+              onDrawingsChange={setZeichnungen}
+              replayStart={visible}
+              replayMaxVisible={cap ?? undefined}
+              verdeckt={verdeckt}
+            />
+          </div>
           <PriceChart
             symbol={session.symbol ?? ''}
             market={session.market ?? 'aktien'}
             stockId={undefined}
             trainingSessionId={session.id}
             planLines={planLines}
-            initialDrawings={annotations}
+            initialDrawings={zeichnungen}
+            onDrawingsChange={setZeichnungen}
             defaultTimeframe={session.timeframe as ChartTimeframe}
             // Die Zeitebene ist NICHT mehr gesperrt: Aus fünfzig Kerzen einer
             // Ebene lässt sich keine Struktur ableiten. Gehandelt wird von oben
@@ -602,7 +631,27 @@ export function TrainingWorkspace({
           </div>
         </div>
 
-        <div className="xl:col-span-2 xl:min-w-0">
+        <div className="xl:col-span-2 xl:min-w-0 space-y-4">
+          {/* Der übergeordnete Kontext steht VOR den Setups — er ist die Frage,
+              die vor der ersten Entscheidung beantwortet wird, nicht danach.
+              Verworfene Übungen bekommen ihn nicht mehr angeboten. */}
+          {status !== 'abgebrochen' && (
+            <HigherContextForm
+              sessionId={session.id}
+              vorhanden={session.higherContext}
+              schreibbar={kontextSchreibbar({
+                vorhanden: session.higherContext,
+                status,
+                revealedAt: session.revealedAt,
+                endedAt: session.endedAt,
+                // Im neuen Ablauf ist „losgelassen" das Ereignis, ab dem Kerzen
+                // freigegeben sind; im alten das Festschreiben der These.
+                antworten:
+                  (fortschritt?.antworten ?? 0) + (gestartet || ended ? 1 : 0),
+              })}
+            />
+          )}
+
           {/* Neuer Ablauf: eine Sitzung, darin mehrere geübte Trades. */}
           {!altModell && status !== 'abgebrochen' && (
             <SessionPanel

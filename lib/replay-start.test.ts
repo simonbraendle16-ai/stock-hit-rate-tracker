@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  MAX_START_FENSTER,
   REGLER_MIN,
+  MAX_START_FENSTER,
   ansichtNeuSetzen,
   playAktion,
   replaySkala,
@@ -148,6 +148,33 @@ describe('ansichtNeuSetzen', () => {
         key: 'A|1h', ersteZeit: 100, replayFenster: true, len: 3000,
       }),
     ).toBe(false)
+  })
+
+  /**
+   * Der Fall, der eine frisch angelegte Übung mit großem Vorlauf leer aussehen
+   * ließ: Der Ausschnitt wurde für den vorläufigen Stand gesetzt, dann traf der
+   * echte Startpunkt 2000 Kerzen weiter ein — und `hatteReplay` war längst
+   * wahr, fing den Nachschlag also nicht mehr ab.
+   */
+  it('setzt neu, wenn der Replay-Stand in EINEM Schritt weit springt', () => {
+    const vorher = stand('A|1h', 100)
+    const jetzt = { key: 'A|1h', ersteZeit: 100, replayFenster: true, len: 2400 }
+    expect(ansichtNeuSetzen(vorher, { ...jetzt, standSprung: 2150 })).toBe(true)
+    // Auch rückwärts — der Regler kann nach links gezogen werden.
+    expect(ansichtNeuSetzen(vorher, { ...jetzt, standSprung: -2150 })).toBe(true)
+  })
+
+  it('hält beim normalen Abspielen still — auch über viele Kerzen hinweg', () => {
+    const vorher = stand('A|1h', 100)
+    const jetzt = { key: 'A|1h', ersteZeit: 100, replayFenster: true, len: 2400 }
+    // Eine Kerze, ein Haltepunkt-Sprung, ein grosser Schritt am Regler: alles
+    // unterhalb der Schwelle laesst den Zoom des Uebenden in Ruhe.
+    for (const sprung of [0, 1, 10, 50, MAX_START_FENSTER]) {
+      expect(ansichtNeuSetzen(vorher, { ...jetzt, standSprung: sprung })).toBe(false)
+    }
+    // Ohne Angabe bleibt es beim bisherigen Verhalten.
+    expect(ansichtNeuSetzen(vorher, jetzt)).toBe(false)
+    expect(ansichtNeuSetzen(vorher, { ...jetzt, standSprung: Number.NaN })).toBe(false)
   })
 
   it('setzt nichts ohne Kerzen — und merkt sich dadurch auch nichts', () => {

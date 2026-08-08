@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_LEAD_IN,
+  LEAD_IN_ALLES,
   LEAD_IN_OPTIONS,
+  MAX_START_ANTEIL,
+  kontextSchreibbar,
   MIN_HIDDEN_CANDLES,
   MIN_VISIBLE_CANDLES,
   defaultStartIndex,
@@ -166,8 +169,15 @@ describe('startIndexMitVorlauf', () => {
   })
 
   it('lässt immer genug Zukunft übrig', () => {
-    // 300 Kerzen, Vorlauf 800 gewünscht: Es müssen MIN_HIDDEN_CANDLES bleiben.
-    expect(startIndexMitVorlauf(300, 800)).toBe(300 - MIN_HIDDEN_CANDLES)
+    // 300 Kerzen, Vorlauf 800 gewünscht → 240, also ein Fünftel bleibt verborgen.
+    //
+    // Bis zur Vorlauf-Stufe „Alles" stand hier `300 - MIN_HIDDEN_CANDLES` = 285.
+    // Diese Grenze war die Notbremse und taugte nicht als Maß: Bei 3000 Kerzen
+    // ließ sie 15 übrig, die Übung startete optisch durchgelaufen. Maßgeblich
+    // ist jetzt `MAX_START_ANTEIL`, dieselbe Grenze, die der Zufallsstart schon
+    // immer benutzt hat.
+    expect(startIndexMitVorlauf(300, 800)).toBe(240)
+    expect(300 - startIndexMitVorlauf(300, 800)).toBeGreaterThan(MIN_HIDDEN_CANDLES)
   })
 
   it('lässt immer genug Kontext stehen', () => {
@@ -184,5 +194,74 @@ describe('startIndexMitVorlauf', () => {
     expect([...werte].sort((a, b) => a - b)).toEqual(werte)
     expect(werte).toContain(DEFAULT_LEAD_IN)
     expect(werte.every((w) => w >= MIN_VISIBLE_CANDLES)).toBe(true)
+  })
+
+  it('bietet „Alles" an, und die Stufe deckelt nicht selbst', () => {
+    expect(LEAD_IN_OPTIONS.map((o) => o.wert)).toContain(LEAD_IN_ALLES)
+    // Was zählt, ist die Klemmung an die Reihe — nicht der Wunschwert.
+    expect(startIndexMitVorlauf(3000, LEAD_IN_ALLES)).toBe(2400)
+    // Und er passt in einen Postgres-`integer` (die Spalte `leadIn`).
+    expect(LEAD_IN_ALLES).toBeLessThan(2_147_483_647)
+  })
+
+  /**
+   * Der Fehler, der hier festgenagelt wird: „Alles" ließ bei 3000 Kerzen genau
+   * 15 übrig. Die Übung startete optisch durchgelaufen — Balken am rechten
+   * Anschlag, nichts mehr aufzudecken. Das sah aus wie ein alter Bug, war aber
+   * eine Einstellung, die sich selbst aufhob.
+   */
+  it('lässt JEDEM Startpunkt mindestens ein Fünftel der Reihe als Zukunft', () => {
+    for (const total of [200, 900, 1500, 3000, 8000]) {
+      for (const wunsch of [120, 250, 450, 800, LEAD_IN_ALLES]) {
+        const start = startIndexMitVorlauf(total, wunsch)
+        const verborgen = total - start
+        expect(verborgen).toBeGreaterThanOrEqual(
+          Math.min(MIN_HIDDEN_CANDLES, Math.ceil(total * (1 - MAX_START_ANTEIL))),
+        )
+        expect(start).toBeLessThanOrEqual(Math.floor(total * MAX_START_ANTEIL))
+      }
+    }
+  })
+
+  it('lässt kleine Vorläufe unangetastet — die Grenze greift nur nach oben', () => {
+    expect(startIndexMitVorlauf(3000, 250)).toBe(250)
+    expect(startIndexMitVorlauf(3000, 800)).toBe(800)
+    // Erst wo der Wunsch die Übung auflösen würde, gewinnt die Grenze.
+    expect(startIndexMitVorlauf(900, 800)).toBe(720)
+  })
+})
+
+describe('kontextSchreibbar', () => {
+  const offen = {
+    vorhanden: null,
+    status: 'offen',
+    revealedAt: null,
+    endedAt: null,
+    antworten: 0,
+  }
+
+  it('lässt schreiben, solange nichts freigegeben ist', () => {
+    expect(kontextSchreibbar(offen)).toBe(true)
+  })
+
+  it('schreibt nur EINMAL — danach steht er fest', () => {
+    expect(kontextSchreibbar({ ...offen, vorhanden: 'Welle 4 einer größeren 3' })).toBe(false)
+  })
+
+  it('behandelt leeren Text wie „noch nichts"', () => {
+    expect(kontextSchreibbar({ ...offen, vorhanden: '' })).toBe(true)
+    expect(kontextSchreibbar({ ...offen, vorhanden: '   ' })).toBe(true)
+  })
+
+  it('sperrt, sobald der Durchlauf Kerzen freigegeben hat', () => {
+    expect(kontextSchreibbar({ ...offen, antworten: 1 })).toBe(false)
+  })
+
+  it('sperrt nach dem Aufdecken, nach dem Ende und außerhalb von „offen"', () => {
+    expect(kontextSchreibbar({ ...offen, revealedAt: new Date() })).toBe(false)
+    expect(kontextSchreibbar({ ...offen, endedAt: new Date() })).toBe(false)
+    expect(kontextSchreibbar({ ...offen, status: 'festgeschrieben' })).toBe(false)
+    expect(kontextSchreibbar({ ...offen, status: 'bewertet' })).toBe(false)
+    expect(kontextSchreibbar({ ...offen, status: 'abgebrochen' })).toBe(false)
   })
 })

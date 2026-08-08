@@ -16,6 +16,7 @@ import {
 } from '@/lib/training-trade'
 import {
   DEFAULT_LEAD_IN,
+  LEAD_IN_ALLES,
   LEAD_IN_OPTIONS,
   MIN_VISIBLE_CANDLES,
   TRAINING_MODES,
@@ -230,7 +231,7 @@ export function TrainerStart({
             <input
               type="number"
               min={MIN_VISIBLE_CANDLES}
-              max={2000}
+              max={LEAD_IN_ALLES}
               value={leadIn}
               onChange={(e) => setLeadIn(Number(e.target.value))}
               className="input-ocean h-8 w-20 rounded px-2 font-mono text-[11px]"

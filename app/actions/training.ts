@@ -20,11 +20,12 @@ import { db } from '@/lib/db'
 import {
   stock,
   trainingAnnotation,
+  trainingCheckpoint,
   trainingResult,
   trainingSession,
   trainingTrade,
 } from '@/lib/db/schema'
-import { and, desc, eq, inArray, sql } from 'drizzle-orm'
+import { and, count, desc, eq, inArray, sql } from 'drizzle-orm'
 import { headers } from 'next/headers'
 import { revalidatePath } from 'next/cache'
 import {
@@ -36,9 +37,12 @@ import { getSeriesCoverage } from '@/lib/market-data/candle-store'
 import { summarizeCoverage } from '@/lib/market-data/candle-merge'
 import { sanitizeSetupTags, serializeSetupTags, parseSetupTags } from '@/lib/setups'
 import {
+  LEAD_IN_ALLES,
+  MAX_CONTEXT_LEN,
   MAX_ELLIOTT_LEN,
   MAX_NOTE_LEN,
   MIN_VISIBLE_CANDLES,
+  kontextSchreibbar,
   isBlindMode,
   isTrainingMode,
   isTrainingRating,
@@ -98,6 +102,8 @@ export async function getTrainingSession(id: number): Promise<{
     endedAt: Date | null
     /** Gewählter Vorlauf in Kerzen; NULL = die bisherige Formel. */
     leadIn: number | null
+    /** Übergeordneter Kontext (Migration 0033); NULL = ohne Angabe. */
+    higherContext: string | null
   }
   annotations: Drawing[]
   result: {
@@ -159,6 +165,7 @@ export async function getTrainingSession(id: number): Promise<{
       stopEvery: row.stopEvery,
       endedAt: row.endedAt,
       leadIn: row.leadIn,
+      higherContext: row.higherContext,
     },
     annotations: annotationRows.map((a) => ({
       id: a.id,
@@ -428,9 +435,13 @@ export async function startTrainingSession(input: {
       // Geprüft auf dem Server, nicht nur im Formular — der Client ist keine
       // Prüfstelle. Die endgültige Klemmung an die Kerzenzahl passiert erst,
       // wenn der Satz da ist (`startIndexMitVorlauf`).
+      // Die Obergrenze ist `LEAD_IN_ALLES` und keine runde Zahl mehr: Sie stand
+      // vorher bei 2000 und deckelte damit die Stufe „Alles" still auf zwei
+      // Drittel eines Trainingssatzes (`TRAINING_CANDLE_LIMIT` = 3000) — der
+      // Wunsch wäre angekommen und hätte trotzdem nicht gegolten.
       leadIn:
         typeof input.leadIn === 'number' && Number.isFinite(input.leadIn)
-          ? Math.min(2000, Math.max(MIN_VISIBLE_CANDLES, Math.round(input.leadIn)))
+          ? Math.min(LEAD_IN_ALLES, Math.max(MIN_VISIBLE_CANDLES, Math.round(input.leadIn)))
           : null,
     })
     .returning({ id: trainingSession.id })
@@ -616,6 +627,77 @@ export async function abortTrainingSession(sessionId: number): Promise<{ ok: tru
       ),
     )
   revalidatePath('/trainer')
+  return { ok: true }
+}
+
+/**
+ * Den übergeordneten Kontext festschreiben — einmal, vor dem Aufdecken.
+ *
+ * Geprüft wird auf dem SERVER und nicht nur im Formular: Der Client ist keine
+ * Prüfstelle, und diese Sperre ist der ganze Wert des Feldes. Die Regel selbst
+ * steht rein und getestet in `lib/training.ts` (`kontextSchreibbar`).
+ */
+export async function commitHigherContext(input: {
+  sessionId: number
+  text: string
+}): Promise<{ ok: true } | { error: string }> {
+  const userId = await getUserId()
+
+  const [row] = await db
+    .select()
+    .from(trainingSession)
+    .where(
+      and(eq(trainingSession.id, input.sessionId), eq(trainingSession.userId, userId)),
+    )
+  if (!row) return { error: 'Trainingseinheit nicht gefunden.' }
+
+  const text = (input.text ?? '').trim().slice(0, MAX_CONTEXT_LEN)
+  if (text === '') return { error: 'Bitte den übergeordneten Kontext beschreiben.' }
+
+  // Wie weit der Durchlauf schon ist: beantwortete Haltepunkte und geübte
+  // Trades. Beides belegt, dass Kerzen freigegeben wurden. Hier direkt gezählt
+  // statt über `getSessionProgress` — von dort wird nur die Anzahl gebraucht,
+  // und deren Kerzenzeiten dürfen in dieser Antwort nichts zu suchen haben.
+  const [punkte] = await db
+    .select({ n: count() })
+    .from(trainingCheckpoint)
+    .where(
+      and(
+        eq(trainingCheckpoint.sessionId, input.sessionId),
+        eq(trainingCheckpoint.userId, userId),
+      ),
+    )
+  const [geuebte] = await db
+    .select({ n: count() })
+    .from(trainingTrade)
+    .where(
+      and(eq(trainingTrade.sessionId, input.sessionId), eq(trainingTrade.userId, userId)),
+    )
+  const antworten = (punkte?.n ?? 0) + (geuebte?.n ?? 0)
+
+  if (
+    !kontextSchreibbar({
+      vorhanden: row.higherContext,
+      status: row.status,
+      revealedAt: row.revealedAt,
+      endedAt: row.endedAt,
+      antworten,
+    })
+  ) {
+    return {
+      error:
+        'Der übergeordnete Kontext steht fest, sobald der Durchlauf läuft — nachträglich wäre er wertlos.',
+    }
+  }
+
+  await db
+    .update(trainingSession)
+    .set({ higherContext: text })
+    .where(
+      and(eq(trainingSession.id, input.sessionId), eq(trainingSession.userId, userId)),
+    )
+
+  revalidatePath(`/trainer/${input.sessionId}`)
   return { ok: true }
 }
 

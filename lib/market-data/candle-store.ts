@@ -158,6 +158,17 @@ export interface CandleQueryOptions {
    * Netz anstoßen sollen.
    */
   storedOnly?: boolean
+  /**
+   * Nur Kerzen VOR diesem Zeitpunkt (Unix-Sekunden, exklusiv) — für das
+   * Nachladen nach links am linken Chartrand.
+   *
+   * Ein solcher Abruf geht **nie** an den Anbieter, und das ist keine
+   * Sparmaßnahme: Yahoo liefert immer das jüngste Fenster seines Intervalls.
+   * Eine Frage nach älteren Kerzen kann er gar nicht beantworten — ein Abruf
+   * brächte nur wieder die neuesten und ließe den Aufrufer glauben, er habe
+   * nachgeladen. Was weiter zurück liegt, liegt im Kerzenspeicher oder nirgends.
+   */
+  before?: number
 }
 
 /**
@@ -180,6 +191,16 @@ export async function getStoredCandles(
     readStoredCandles(symbol, interval),
     readSeries(symbol, interval),
   ])
+
+  // Blick nach hinten: was da ist, sonst nichts. Siehe `before` oben — der
+  // Anbieter hat zu dieser Frage nichts beizutragen.
+  if (options.before != null && Number.isFinite(options.before)) {
+    const grenze = Math.floor(options.before)
+    return takeLast(
+      gespeichert.filter((c) => c.time < grenze),
+      limit,
+    )
+  }
 
   if (options.storedOnly) return takeLast(gespeichert, limit)
 

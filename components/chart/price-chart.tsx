@@ -21,7 +21,13 @@ import {
   type Time,
   type UTCTimestamp,
 } from 'lightweight-charts'
-import { useCandles } from './use-candles'
+import { ladeAeltereKerzen, useCandles } from './use-candles'
+import {
+  brauchtVorlauf,
+  vorlaufGewachsen,
+  vorlaufGrenze,
+  vorlaufVoranstellen,
+} from '@/lib/replay-vorlauf'
 import { CHART_COLORS } from './colors'
 import { ChartToolbar, type DrawTool } from './chart-toolbar'
 import { loadChartTools, saveChartTools } from '@/app/actions/chart-tools'
@@ -140,13 +146,23 @@ const CHART_STYLES: { id: ChartStyle; label: string }[] = [
  * mit Migration 0028 entfallen: Das Aussehen kommt jetzt aus den Einstellungen
  * des Nutzers (`lib/chart-appearance.ts`), TradingView ist dort eine Vorlage. */
 
+/**
+ * Die leere Vorgabe für `initialDrawings` — als Konstante und nicht als `[]` im
+ * Kopf der Komponente. Ein Literal wäre bei jedem Rendern ein NEUES Feld, und
+ * der Referenz-Abgleich weiter unten hielte das für eine Änderung von außen:
+ * Der Chart setzte seine Zeichnungen bei jedem Rendern zurück und rief sich
+ * selbst wieder auf.
+ */
+const KEINE_ZEICHNUNGEN: Drawing[] = []
+
 export function PriceChart({
   symbol,
   market,
   planLines = [],
   markers = [],
   stockId,
-  initialDrawings = [],
+  initialDrawings = KEINE_ZEICHNUNGEN,
+  onDrawingsChange,
   defaultTimeframe = 'T',
   replayMode = false,
   replayStart,
@@ -155,8 +171,10 @@ export function PriceChart({
   replayReleased,
   onReplayRelease,
   replayBasisTimeframe,
+  replayFollow = false,
   onReplayVisibleChange,
   onCandlesLoaded,
+  onViewCandlesLoaded,
   trainingSessionId,
   hideIdentity = false,
   lockTimeframe = false,
@@ -172,6 +190,19 @@ export function PriceChart({
   /** Wenn gesetzt: Zeichenwerkzeuge aktiv, Zeichnungen persistent je Instrument (AP 5). */
   stockId?: number
   initialDrawings?: Drawing[]
+  /**
+   * Meldet die vollständige Zeichnungsliste, sobald sie sich ändert — und
+   * übernimmt umgekehrt eine von außen gereichte Liste (`initialDrawings`),
+   * sobald deren Referenz wechselt.
+   *
+   * Gebraucht wird das, sobald ZWEI Charts dieselben Zeichnungen zeigen: Im
+   * Trainer stehen Arbeits- und Kontext-Chart nebeneinander und schreiben beide
+   * in `training_annotation`. Ohne diese Brücke wäre ein Fib, auf der
+   * Wochenebene über die ganze Welle gezogen, zwar gespeichert, im Arbeitschart
+   * aber erst nach dem nächsten Neuladen zu sehen — und genau dieser Weg ist
+   * der Zweck des Kontext-Charts.
+   */
+  onDrawingsChange?: (drawings: Drawing[]) => void
   defaultTimeframe?: ChartTimeframe
   replayMode?: boolean
   /** Startpunkt des Replays (Anzahl sichtbarer Kerzen). */
@@ -195,9 +226,32 @@ export function PriceChart({
    * anderes. Fehlt sie, gilt die anfangs eingestellte Ebene.
    */
   replayBasisTimeframe?: ChartTimeframe
+  /**
+   * Geführter Replay: Der Stand kommt von außen (`replayStart`) und wird hier
+   * nicht mehr selbst gehalten; die Bedienleiste entfällt.
+   *
+   * Gebaut für den Kontext-Chart im Trainer, der neben dem Arbeitschart steht.
+   * Ein zweiter Chart mit eigenem Stand wäre keine zweite Ansicht, sondern eine
+   * zweite Wahrheit: Er könnte am Arbeitschart vorbeilaufen und damit genau die
+   * Zukunft zeigen, gegen die der ganze Trainer gebaut ist. Deshalb ist die
+   * Führung nicht bloß eine Voreinstellung, sondern die einzige Möglichkeit.
+   */
+  replayFollow?: boolean
   onReplayVisibleChange?: (visible: number) => void
   /** Meldet den geladenen Kerzensatz nach oben (der Trainer trägt ihn ein). */
   onCandlesLoaded?: (candles: Candle[]) => void
+  /**
+   * Meldet die tatsächlich ANGESEHENE Reihe — die der eingestellten Zeitebene,
+   * bereits am Replay-Moment zugeschnitten.
+   *
+   * Bewusst getrennt von `onCandlesLoaded`: Das meldet im Replay die
+   * BASIS-Ebene, weil Umfang und Startpunkt einer Übung in deren Kerzen zählen.
+   * Wer wissen will, wie weit die gerade gezeigte Ebene zurückreicht — etwa um
+   * eine dünne Historie zu benennen statt sie voll aussehen zu lassen —, braucht
+   * die andere Zahl. Beides in einen Rückruf zu legen, hieße, dieselbe Frage
+   * zwei verschiedene Dinge bedeuten zu lassen.
+   */
+  onViewCandlesLoaded?: (candles: Candle[]) => void
   /**
    * Trainingseinheit statt Instrument: Kerzen kommen über die Übung (bei einer
    * verdeckten Übung ohne Symbol), Zeichnungen landen in `training_annotation`
@@ -234,12 +288,47 @@ export function PriceChart({
 }) {
   const [timeframe, setTimeframe] = useState<ChartTimeframe>(defaultTimeframe)
   const { interval, days } = TIMEFRAMES[timeframe]
-  const { candles, loading, error, errorCode } = useCandles(symbol, market, interval, {
+  const {
+    candles: geladene,
+    loading,
+    error,
+    errorCode,
+  } = useCandles(symbol, market, interval, {
     stockId,
     trainingSessionId,
     timeframe,
   })
   const [replayVisible, setReplayVisible] = useState<number | null>(null)
+
+  // ---- Nachladen nach links -------------------------------------------------
+  //
+  // Der Replay zeigt die ERSTEN Kerzen des gelieferten Satzes; links davon gibt
+  // es nichts, auch nicht durch Rauszoomen. Genau dort liegt bei einer Übung
+  // aber oft der Anfang der Welle. Der Kerzenspeicher hat häufig mehr — was
+  // fehlt, ist nur die Frage danach.
+  //
+  // Der Vorlauf ist eine ANZEIGESCHICHT und geht bewusst NICHT in `geladene`
+  // ein: Der Replay zählt Kerzen ab Index 0, und `geladene` ist die Reihe, in
+  // der er zählt. Bliebe das nicht getrennt, verschöbe jedes Nachladen den
+  // erreichten Moment — mitten in der Übung und unbemerkt. Warum diese Trennung
+  // sicherer ist als ein Nachziehen des Standes, steht in `lib/replay-vorlauf.ts`.
+  const [vorlauf, setVorlauf] = useState<Candle[]>([])
+  const [vorlaufLaeuft, setVorlaufLaeuft] = useState(false)
+  const [vorlaufAmAnfang, setVorlaufAmAnfang] = useState(false)
+
+  // Die Reihe, um die es geht. Wechselt sie, ist jeder Vorlauf hinfällig —
+  // er gehörte zu einer anderen Ebene oder einem anderen Instrument.
+  const reihenSchluessel = `${symbol}|${market}|${timeframe}|${trainingSessionId ?? ''}`
+  useEffect(() => {
+    setVorlauf([])
+    setVorlaufLaeuft(false)
+    setVorlaufAmAnfang(false)
+  }, [reihenSchluessel])
+
+  const candles = useMemo(
+    () => (geladene == null ? null : vorlaufVoranstellen(geladene, vorlauf)),
+    [geladene, vorlauf],
+  )
 
   // ---- Analyse von oben nach unten -----------------------------------------
   //
@@ -257,7 +346,9 @@ export function PriceChart({
     timeframe: basisTimeframe,
     enabled: brauchtBasis,
   })
-  const basisRoh = brauchtBasis ? basisAbruf.candles : candles
+  // `geladene` und NICHT `candles`: Die Basis ist die zählende Reihe. Käme der
+  // Vorlauf hier an, verschöbe sich mit jedem Nachladen der Replay-Stand.
+  const basisRoh = brauchtBasis ? basisAbruf.candles : geladene
   /**
    * Beim Ebenenwechsel ist der zweite Abruf einen Moment unterwegs. Ohne diesen
    * Halter fiele der Replay-Stand in dieser Lücke auf „nichts" zurück und der
@@ -305,6 +396,10 @@ export function PriceChart({
   // Startpunkt genau einmal nachgezogen; danach greift die Sperre wie zuvor.
   const replayInitRef = useRef<{ key: string; hatteStart: boolean } | null>(null)
   useEffect(() => {
+    // Im geführten Modus gibt es nichts zu initialisieren: Der Stand wird
+    // unten direkt aus `replayStart` abgeleitet, damit er dem Arbeitschart
+    // ohne Verzögerung folgt.
+    if (replayFollow) return
     if (!replayMode || !basisKerzen || basisKerzen.length === 0) {
       if (!replayMode) {
         setReplayVisible(null)
@@ -320,7 +415,7 @@ export function PriceChart({
     setReplayVisible(
       replayStand(basisKerzen.length, replayStart ?? null, replayMaxVisible ?? null),
     )
-  }, [replayMode, basisKerzen, replayStart, replayMaxVisible, basisSchluessel])
+  }, [replayMode, replayFollow, basisKerzen, replayStart, replayMaxVisible, basisSchluessel])
 
   /**
    * Der geltende Stand — der gespeicherte Wert, geklemmt an Reihe UND
@@ -331,13 +426,17 @@ export function PriceChart({
    * Haltepunkt. Ein zweiter Zustand daneben liefe beim nächsten Haltepunkt
    * auseinander — und genau dieses Auseinanderlaufen deckte die Zukunft auf.
    */
-  const replayStandJetzt = useMemo(
-    () =>
-      replayVisible == null || !basisKerzen || basisKerzen.length === 0
-        ? null
-        : replayStand(basisKerzen.length, replayVisible, replayMaxVisible ?? null),
-    [replayVisible, basisKerzen, replayMaxVisible],
-  )
+  const replayStandJetzt = useMemo(() => {
+    if (!basisKerzen || basisKerzen.length === 0) return null
+    // Geführt: der Stand des Arbeitscharts, durch dieselbe Klemmung geschickt.
+    // Kein eigener Zustand daneben — der liefe beim nächsten Schritt auseinander,
+    // und Auseinanderlaufen heißt hier: eine der beiden Ansichten zeigt Zukunft.
+    if (replayFollow) {
+      return replayStand(basisKerzen.length, replayStart ?? null, replayMaxVisible ?? null)
+    }
+    if (replayVisible == null) return null
+    return replayStand(basisKerzen.length, replayVisible, replayMaxVisible ?? null)
+  }, [replayFollow, replayStart, replayVisible, basisKerzen, replayMaxVisible])
 
   // Den geladenen Satz einmal nach oben melden (der Trainer schreibt Umfang und
   // Startpunkt in die Übung).
@@ -346,9 +445,12 @@ export function PriceChart({
     // Startpunkt der Übung fest, und beides zählt in Basis-Kerzen. Würde beim
     // Wechsel auf den Tageschart dessen Reihe gemeldet, verschöbe sich der
     // gespeicherte Startpunkt der laufenden Übung.
-    const satz = replayMode ? basisKerzen : candles
+    // In beiden Fällen die GELADENE Reihe, nie die um den Vorlauf erweiterte:
+    // Was hier gemeldet wird, zählt in Indizes ab 0, und die dürfen sich durch
+    // Nachladen nach links nicht verschieben.
+    const satz = replayMode ? basisKerzen : geladene
     if (satz && satz.length > 0) onCandlesLoaded?.(satz)
-  }, [candles, basisKerzen, replayMode, onCandlesLoaded])
+  }, [geladene, basisKerzen, replayMode, onCandlesLoaded])
 
   // Auch hier wird geklemmt: Ein Regler, der über die Obergrenze hinausläuft,
   // hebt die Sperre auf — und nach oben gemeldet werden darf nur ein Stand, den
@@ -372,6 +474,11 @@ export function PriceChart({
     // `slice(0, sichtbar)` — geprüft in `lib/replay-timeframes.test.ts`.
     return kerzenBisZeitpunkt(candles, basisKerzen, ende, intervalSekunden(interval), basisS)
   }, [candles, basisKerzen, replayMode, replayStandJetzt, interval, basisInterval])
+
+  // Die angesehene Ebene nach oben melden — siehe `onViewCandlesLoaded`.
+  useEffect(() => {
+    if (chartCandles && chartCandles.length > 0) onViewCandlesLoaded?.(chartCandles)
+  }, [chartCandles, onViewCandlesLoaded])
 
   // Identität der ANSICHT — nicht der Daten. Nur wenn sie wechselt, darf der
   // sichtbare Bereich neu gesetzt werden. Chart-Typ und Theme stehen bewusst
@@ -405,6 +512,10 @@ export function PriceChart({
   )
   /** Kerzenzahl des letzten Durchlaufs — daran hängt das Mitlaufen im Replay. */
   const lastLenRef = useRef(0)
+  /** Wie viele Kerzen der Vorlauf zuletzt hatte — daran hängt das Mitschieben. */
+  const lastVorlaufRef = useRef(0)
+  /** Replay-Stand des letzten Durchlaufs — daran hängt die Sprungerkennung. */
+  const lastStandRef = useRef(0)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const containerWrapRef = useRef<HTMLDivElement>(null)
@@ -476,6 +587,28 @@ export function PriceChart({
   // ---- Zeichenwerkzeuge (AP 5 + AP 9) --------------------------------------
   const [tool, setTool] = useState<DrawTool>('cursor')
   const [drawings, setDrawings] = useState<Drawing[]>(initialDrawings)
+
+  /**
+   * Abgleich mit der Außenwelt — bewusst über die REFERENZ und nicht über den
+   * Inhalt.
+   *
+   * Der Kreis schließt sich dadurch von selbst: Wer die Änderung ausgelöst hat,
+   * bekommt genau das Feld zurück, das er gerade gemeldet hat; `setDrawings`
+   * auf dieselbe Referenz ändert nichts und React bricht ab. Der andere Chart
+   * sieht eine neue Referenz und übernimmt. Ein Vergleich über den Inhalt wäre
+   * teurer und träfe dieselbe Entscheidung.
+   */
+  const letzteVorlage = useRef(initialDrawings)
+  useEffect(() => {
+    if (letzteVorlage.current === initialDrawings) return
+    letzteVorlage.current = initialDrawings
+    setDrawings(initialDrawings)
+  }, [initialDrawings])
+
+  useEffect(() => {
+    letzteVorlage.current = drawings
+    onDrawingsChange?.(drawings)
+  }, [drawings, onDrawingsChange])
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [drawError, setDrawError] = useState<string | null>(null)
   const [drawingsLocked, setDrawingsLocked] = useState(false)
@@ -1392,6 +1525,51 @@ export function PriceChart({
     return () => el.removeEventListener('wheel', onWheel, { capture: true })
   }, [chartReady, preisZoom])
 
+  /**
+   * Am linken Rand nachladen.
+   *
+   * Hängt am sichtbaren Bereich und nicht am Scrollen: Herangeholt wird auch
+   * durch Zoomen und über die Tastatur, und ein Rand, der nur bei einer von
+   * drei Gesten nachlädt, wirkt kaputt.
+   */
+  const vorlaufHolen = useCallback(() => {
+    const grenze = vorlaufGrenze(candles ?? [])
+    if (grenze == null) return
+    setVorlaufLaeuft(true)
+    ladeAeltereKerzen(symbol, market, interval, grenze, {
+      stockId,
+      trainingSessionId,
+      timeframe,
+    })
+      .then((aeltere) => {
+        setVorlauf((v) => {
+          const neu = vorlaufVoranstellen(v, aeltere)
+          // Nichts Neues heißt: Der Speicher gibt nichts mehr her. Dann wird
+          // nicht weiter gefragt — sonst fragt der Chart am Anschlag bei jeder
+          // Mausbewegung erneut.
+          if (vorlaufGewachsen(v, neu) === 0) setVorlaufAmAnfang(true)
+          return neu
+        })
+      })
+      .catch(() => {
+        // Ein Fehlschlag ist kein Grund, den Rand für erschöpft zu erklären —
+        // beim nächsten Heranfahren wird es erneut versucht.
+      })
+      .finally(() => setVorlaufLaeuft(false))
+  }, [candles, symbol, market, interval, stockId, trainingSessionId, timeframe])
+
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chartReady || !chart) return
+    const ts = chart.timeScale()
+    const onRange = (bereich: { from: number; to: number } | null) => {
+      if (!brauchtVorlauf(bereich?.from, vorlaufLaeuft, vorlaufAmAnfang)) return
+      vorlaufHolen()
+    }
+    ts.subscribeVisibleLogicalRangeChange(onRange)
+    return () => ts.unsubscribeVisibleLogicalRangeChange(onRange)
+  }, [chartReady, vorlaufLaeuft, vorlaufAmAnfang, vorlaufHolen])
+
   // Daten + Marker setzen (Mapping je Chart-Typ).
   useEffect(() => {
     const series = seriesRef.current
@@ -1436,8 +1614,29 @@ export function PriceChart({
     const replayFenster = replayMode && replayStandJetzt != null
     const ersteZeit = len > 0 ? chartCandles[0].time : 0
 
+    // Ist die erste Kerze gewandert, weil WIR links nachgeladen haben? Dann ist
+    // das kein Reihenwechsel, sondern derselbe Anblick mit mehr Vergangenheit.
+    const vorlaufZuwachs = vorlauf.length - lastVorlaufRef.current
+    lastVorlaufRef.current = vorlauf.length
+    const durchVorlauf = vorlaufZuwachs > 0
+
+    // Wie weit der Replay-Stand seit dem letzten Durchlauf gesprungen ist —
+    // die Unterscheidung zwischen „läuft" und „ist woandershin versetzt worden".
+    const standJetzt = replayStandJetzt ?? 0
+    const standSprung = standJetzt - lastStandRef.current
+    lastStandRef.current = standJetzt
+
     // Die Entscheidung selbst steht rein und getestet in `lib/replay-start.ts`.
-    if (ansichtNeuSetzen(viewRef.current, { key: viewKey, ersteZeit, replayFenster, len })) {
+    if (
+      ansichtNeuSetzen(viewRef.current, {
+        key: viewKey,
+        ersteZeit,
+        replayFenster,
+        len,
+        vorlauf: durchVorlauf,
+        standSprung,
+      })
+    ) {
       viewRef.current = {
         key: viewKey,
         hatteReplay: replayMode ? replayFenster : true,
@@ -1456,6 +1655,16 @@ export function PriceChart({
       } else {
         chart.timeScale().fitContent()
       }
+    } else if (durchVorlauf && before) {
+      // Der Blick bleibt auf denselben Kerzen stehen: Sie sind durch die
+      // vorangestellten um genau `vorlaufZuwachs` Stellen nach rechts gerückt.
+      // Ohne diese Verschiebung springt der Chart in dem Augenblick nach vorn,
+      // in dem die gesuchte Vergangenheit eintrifft.
+      viewRef.current = { ...viewRef.current!, ersteZeit }
+      chart.timeScale().setVisibleLogicalRange({
+        from: before.from + vorlaufZuwachs,
+        to: before.to + vorlaufZuwachs,
+      })
     } else if (before && folgtDemRand && len !== prevLen) {
       // Dieselbe Ansicht, nur mehr (oder weniger) Kerzen — Zoomstufe halten und
       // den Ausschnitt um die Differenz mitziehen.
@@ -1470,6 +1679,7 @@ export function PriceChart({
     lastLenRef.current = len
   }, [
     chartCandles,
+    vorlauf,
     days,
     seriesMarkers,
     chartStyle,
@@ -1957,7 +2167,10 @@ export function PriceChart({
       {/* Gezählt wird in Kerzen der BASIS-Ebene, nicht der angesehenen: „eine
           Kerze weiter" muss beim Wechsel auf den Tageschart dasselbe bedeuten
           wie vorher, sonst springt der Durchlauf. */}
-      {replayMode && basisKerzen && replayStandJetzt != null && (
+      {/* Im geführten Modus gibt es hier nichts zu bedienen: Der Stand gehört
+          dem Arbeitschart. Eine zweite Leiste würde anbieten, ihn zu verstellen
+          — und damit anbieten, an ihm vorbeizulaufen. */}
+      {replayMode && !replayFollow && basisKerzen && replayStandJetzt != null && (
         <ChartReplayControls
           total={basisKerzen.length}
           visible={replayStandJetzt}

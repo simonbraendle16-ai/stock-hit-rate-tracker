@@ -133,6 +133,21 @@ Koordinaten-Eingabe, dreiwertige Strichart, Fib-`Reverse`, Kanal mit Extend/Fül
 
 ---
 
+## Offen aus Etappe 15 (übergeordneter Kontext)
+
+- **Auswertung des Feldes „übergeordneter Kontext"** (`training_session.higherContext`,
+  Migration 0033). Bewusst noch nicht gebaut: Erst muss sich über eine Reihe von Übungen
+  zeigen, wie tatsächlich hineingeschrieben wird. Eine Kennzahl auf zehn Freitexten wäre
+  eine Zahl auf Vermutung — genau das, was die App nicht tut. Denkbar später: „Übungen mit
+  benanntem Kontext gegen Übungen ohne", als Schwelle („x von 20"), nie als Quote aus zu
+  wenig Daten.
+- **Preisachse im Kontext-Chart unterdrücken** — Rückfallebene, falls sich zeigt, dass eine
+  markante Kursgeschichte über Jahrzehnte das verdeckte Instrument erratbar macht. Die
+  Entscheidung im Drill war: echter Kontext geht vor perfekter Verdeckung. Erst messen, ob
+  die Übungen dadurch wirklich wertlos werden.
+
+---
+
 ## Douglas-Filter für alles hier
 
 Aus `CLAUDE.md`: Gebaut wird, was **Prozess und vordefiniertes Risiko** stärkt. Nicht gebaut wird,
