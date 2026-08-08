@@ -15,6 +15,7 @@ import {
   gesteAuswerten,
   istZeichenwerkzeug,
   istZug,
+  punkteVerschieben,
   vorschauPunkte,
   werkzeugBleibt,
 } from '@/lib/drawing-interaction'
@@ -678,11 +679,16 @@ export function DrawingLayer({
           versatz = Math.max(-Math.min(...idx), versatz)
         }
 
-        next = drag.startPoints.map((p, k) => {
-          const price = p.price + delta
-          if (versatz === 0) return { ...p, price }
-          return { time: logicalToTime(times, step, idx[k] + versatz), price }
-        })
+        // Die Rechnung selbst steht rein und getestet in
+        // `lib/drawing-interaction.ts` — dort auch, warum sie einen Sprung
+        // hatte, der eine WXY-Zeichnung beim Anfassen flackern ließ.
+        next = punkteVerschieben(
+          drag.startPoints,
+          versatz,
+          delta,
+          (t) => timeToLogical(times, step, t),
+          (i) => logicalToTime(times, step, i),
+        )
       }
       onUpdate(drag.id, next)
       return

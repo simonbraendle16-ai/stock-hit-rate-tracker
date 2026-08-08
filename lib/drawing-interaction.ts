@@ -184,3 +184,50 @@ export function werkzeugBleibt(tool: DrawTool, festhalten: boolean): boolean {
   // Der Radiergummi bleibt ohnehin aktiv, und `cursor` ist kein Werkzeug.
   return istZeichenwerkzeug(tool)
 }
+
+/**
+ * Eine ganze Zeichnung verschieben: neue Punkte aus Balken-Versatz und
+ * Preis-Differenz.
+ *
+ * WARUM DAS HIER STEHT UND NICHT IN DER ZEICHENEBENE
+ * Diese Rechnung hatte einen Sprung, und er war von außen nicht zu sehen: Bei
+ * `versatz === 0` blieb die Originalzeit eines Punktes stehen, bei
+ * `versatz !== 0` wurde sie aus dem GERUNDETEN Rasterindex neu erzeugt. Liegt
+ * eine Zeichnung nicht exakt auf dem Raster der gerade angesehenen Ebene, ist
+ * dieser Rundungsfehler je Punkt verschieden — die Zeichnung verformt sich in
+ * dem Augenblick, in dem der Versatz von 0 auf 1 kippt. Und weil ein Zittern
+ * der Hand genau dort hin- und herkippt, schwenkte eine WXY-Zeichnung beim
+ * Anfassen schnell hin und her.
+ *
+ * Gemessen auf Wochenkerzen mit einer auf Stundenbasis gezogenen Zeichnung:
+ * Beim Schritt von 0 auf 1 Balken wanderten die vier Punkte um 4, 5, 9 und 6
+ * Tage statt einheitlich um 7.
+ *
+ * Nicht theoretisch: Der Kontext-Chart im Trainer macht genau das zum
+ * Normalfall — auf der Wochenebene zeichnen, auf der Arbeitsebene anfassen.
+ *
+ * DIE REGEL
+ * Der Versatz wird als ZEITDIFFERENZ aufgeschlagen, gemessen am gerundeten
+ * Index. Damit rückt jeder Punkt um dieselbe Zahl Balken, und seine Lage
+ * innerhalb des Balkens bleibt erhalten. Für eine Zeichnung, die auf DIESER
+ * Ebene entstand, ändert das nichts (sie liegt ohnehin auf dem Raster); für
+ * eine von einer anderen Ebene bleibt sie unversehrt, statt beim ersten
+ * Anfassen auf ein fremdes Raster gezwungen zu werden.
+ */
+export function punkteVerschieben(
+  startPoints: DrawingPoint[],
+  versatz: number,
+  preisDelta: number,
+  zuIndex: (time: number) => number,
+  zuZeit: (index: number) => number,
+): DrawingPoint[] {
+  return startPoints.map((p) => {
+    const price = p.price + preisDelta
+    if (versatz === 0) return { ...p, price }
+    const idx = Math.round(zuIndex(p.time))
+    // Beide Enden über dieselbe Umrechnung — die Differenz ist der Versatz in
+    // echter Zeit, und nur die wird aufgeschlagen.
+    const zeitVersatz = zuZeit(idx + versatz) - zuZeit(idx)
+    return { time: p.time + zeitVersatz, price }
+  })
+}

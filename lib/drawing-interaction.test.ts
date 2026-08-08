@@ -5,9 +5,12 @@ import {
   gesteAuswerten,
   istZeichenwerkzeug,
   istZug,
+  punkteVerschieben,
   vorschauPunkte,
   werkzeugBleibt,
 } from './drawing-interaction'
+import { barStep, logicalToTime, timeToLogical } from './chart-coords'
+import type { DrawingPoint } from '@/app/actions/drawings'
 
 const p = (time: number, price: number) => ({ time, price })
 
@@ -135,5 +138,84 @@ describe('istZeichenwerkzeug / werkzeugBleibt', () => {
     expect(werkzeugBleibt('trendline', true)).toBe(true)
     expect(werkzeugBleibt('trendline', false)).toBe(false)
     expect(werkzeugBleibt('cursor', true)).toBe(false)
+  })
+})
+
+describe('punkteVerschieben', () => {
+  const STUNDE = 3600
+  const TAG = 86400
+  const gitter = (n: number, schritt: number, ab = 1_700_000_000) =>
+    Array.from({ length: n }, (_, i) => ab + i * schritt)
+
+  const rechner = (times: number[]) => {
+    const step = barStep(times)
+    return {
+      zuIndex: (t: number) => timeToLogical(times, step, t),
+      zuZeit: (i: number) => logicalToTime(times, step, i),
+    }
+  }
+
+  const pkt = (time: number, price = 100): DrawingPoint => ({ time, price })
+
+  it('lässt die Zeichnung stehen, wenn sie nur senkrecht wandert', () => {
+    const times = gitter(300, STUNDE)
+    const { zuIndex, zuZeit } = rechner(times)
+    const punkte = [pkt(times[50]), pkt(times[70]), pkt(times[90]), pkt(times[110])]
+    const neu = punkteVerschieben(punkte, 0, 5, zuIndex, zuZeit)
+    expect(neu.map((p) => p.time)).toEqual(punkte.map((p) => p.time))
+    expect(neu.map((p) => p.price)).toEqual([105, 105, 105, 105])
+  })
+
+  it('rückt jeden Punkt um DIESELBE Zahl Balken', () => {
+    const times = gitter(300, STUNDE)
+    const { zuIndex, zuZeit } = rechner(times)
+    const punkte = [pkt(times[50]), pkt(times[70]), pkt(times[90]), pkt(times[110])]
+    for (const versatz of [1, -1, 7, -12]) {
+      const neu = punkteVerschieben(punkte, versatz, 0, zuIndex, zuZeit)
+      for (let k = 0; k < punkte.length; k++) {
+        expect(neu[k].time - punkte[k].time).toBe(versatz * STUNDE)
+      }
+    }
+  })
+
+  /**
+   * Der gemeldete Fehler: Eine WXY-Zeichnung schwenkte beim Anfassen schnell
+   * hin und her. Ursache war ein Sprung genau zwischen Versatz 0 und 1 — die
+   * Punkte wurden dort aus ihrem GERUNDETEN Rasterindex neu erzeugt und
+   * wanderten dabei unterschiedlich weit (gemessen: 4, 5, 9 und 6 Tage statt
+   * einheitlich 7). Ein Zittern der Hand kippt genau dort hin und her.
+   */
+  it('verformt eine Zeichnung nicht, die von einer feineren Ebene stammt', () => {
+    // Wochenkerzen (Kontext-Chart), Zeichnung auf Stundenbasis gezogen.
+    const times = gitter(300, 7 * TAG)
+    const { zuIndex, zuZeit } = rechner(times)
+    const punkte = [
+      pkt(times[50] + 3 * TAG),
+      pkt(times[70] + 2 * TAG),
+      pkt(times[90] + 5 * TAG),
+      pkt(times[110] + 1 * TAG),
+    ]
+
+    const bei0 = punkteVerschieben(punkte, 0, 0, zuIndex, zuZeit)
+    const bei1 = punkteVerschieben(punkte, 1, 0, zuIndex, zuZeit)
+
+    // Der Schritt von 0 auf 1 Balken bewegt JEDEN Punkt um genau eine Woche.
+    for (let k = 0; k < punkte.length; k++) {
+      expect(bei1[k].time - bei0[k].time).toBe(7 * TAG)
+    }
+
+    // Und die Abstände untereinander bleiben erhalten — nichts verformt sich.
+    const abstand = (ps: DrawingPoint[]) =>
+      ps.slice(1).map((p, i) => p.time - ps[i].time)
+    expect(abstand(bei1)).toEqual(abstand(punkte))
+  })
+
+  it('ist umkehrbar — hin und zurück ergibt den Ausgangszustand', () => {
+    const times = gitter(300, 7 * TAG)
+    const { zuIndex, zuZeit } = rechner(times)
+    const punkte = [pkt(times[40] + 2 * TAG), pkt(times[60] + 6 * TAG)]
+    const hin = punkteVerschieben(punkte, 5, 3, zuIndex, zuZeit)
+    const zurueck = punkteVerschieben(hin, -5, -3, zuIndex, zuZeit)
+    expect(zurueck).toEqual(punkte)
   })
 })
