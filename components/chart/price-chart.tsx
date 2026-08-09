@@ -586,29 +586,87 @@ export function PriceChart({
 
   // ---- Zeichenwerkzeuge (AP 5 + AP 9) --------------------------------------
   const [tool, setTool] = useState<DrawTool>('cursor')
-  const [drawings, setDrawings] = useState<Drawing[]>(initialDrawings)
 
   /**
-   * Abgleich mit der Außenwelt — bewusst über die REFERENZ und nicht über den
-   * Inhalt.
+   * Wer hält den Stand der Zeichnungen?
    *
-   * Der Kreis schließt sich dadurch von selbst: Wer die Änderung ausgelöst hat,
-   * bekommt genau das Feld zurück, das er gerade gemeldet hat; `setDrawings`
-   * auf dieselbe Referenz ändert nichts und React bricht ab. Der andere Chart
-   * sieht eine neue Referenz und übernimmt. Ein Vergleich über den Inhalt wäre
-   * teurer und träfe dieselbe Entscheidung.
+   * Mit `onDrawingsChange` der Aufrufer — dann ist diese Ebene GESTEUERT und
+   * hält gar keine eigene Kopie.
+   *
+   * WARUM DAS SO SEIN MUSS (der Grund für das Zittern beim Verschieben)
+   * Vorher gab es beides: einen eigenen State UND den Stand des Aufrufers, dazu
+   * zwei Effekte, die beide abglichen. Eine einzige Änderung lief damit als
+   * Kette durch drei Renderdurchgänge — eigener State, dann der Elternteil,
+   * dann der Geschwister-Chart, der sie über denselben Weg wieder zurückmeldet.
+   * Im Trainer hängen Kontext- und Arbeitschart an derselben Liste, und beim
+   * Ziehen einer Zeichnung kommen die Änderungen schneller herein, als die
+   * Kette sie abarbeiten kann: React zählte die verschachtelten Aktualisierungen
+   * hoch und brach den Durchgang mit „Maximum update depth exceeded" ab
+   * (gemessen im Trainer, in der Konsole je Zieh-Bewegung). Sichtbar war das als
+   * Flimmern und Wackeln — die Zeichnung sprang hin und her, statt dem Zeiger zu
+   * folgen. Mit zugeklapptem Kontext-Chart trat es nicht auf, und genau deshalb
+   * fiel es NUR im Trainer auf.
+   *
+   * Eine Quelle statt zwei heißt: ein Rendern je Zeigerbewegung, keine Kette.
+   * Ohne `onDrawingsChange` (Instrument-Chart) bleibt es beim eigenen State —
+   * dort gibt es niemanden, mit dem etwas abzugleichen wäre.
+   */
+  const gesteuert = onDrawingsChange != null
+  const [eigeneZeichnungen, setEigeneZeichnungen] = useState<Drawing[]>(initialDrawings)
+  const drawings = gesteuert ? initialDrawings : eigeneZeichnungen
+
+  /**
+   * Der jetzige Stand, auch INNERHALB eines Ereignisses.
+   *
+   * `setDrawings` wertet eine Aktualisierungs-Funktion sofort aus; bis zum
+   * nächsten Rendern ist `drawings` aber noch der alte Stand. Ohne diesen Ref
+   * verlöre die zweite von zwei Änderungen im selben Klick die erste.
+   */
+  const drawingsRef = useRef(drawings)
+  if (drawingsRef.current !== drawings) drawingsRef.current = drawings
+
+  /**
+   * Der Melder liegt in einem Ref, damit `setDrawings` seine Identität NIE
+   * ändert.
+   *
+   * Sonst hinge sie an `onDrawingsChange`, und jede der acht Rückrufe, die
+   * `setDrawings` benutzen (Anlegen, Verschieben, Löschen, Rückgängig …),
+   * müsste sie in ihrer Abhängigkeitsliste führen. Keine tut das — es gibt in
+   * diesem Projekt kein ESLint, das daran erinnert. Solange der Aufrufer eine
+   * stabile Funktion reicht (der Trainer reicht `setZeichnungen`), fällt das
+   * nicht auf; reicht einer eines Tages eine im Rendern erzeugte Funktion,
+   * meldeten alle acht stumm an den Stand von gestern, und Änderungen gingen
+   * verloren, ohne dass irgendwo ein Fehler erschiene. Eine unveränderliche
+   * Funktion nimmt dieser Falle die Grundlage, statt sie an acht Stellen zu
+   * umgehen.
+   */
+  const meldenRef = useRef(onDrawingsChange)
+  if (meldenRef.current !== onDrawingsChange) meldenRef.current = onDrawingsChange
+
+  const setDrawings = useCallback(
+    (next: Drawing[] | ((ds: Drawing[]) => Drawing[])) => {
+      const wert = typeof next === 'function' ? next(drawingsRef.current) : next
+      if (wert === drawingsRef.current) return
+      drawingsRef.current = wert
+      const melden = meldenRef.current
+      if (melden) melden(wert)
+      else setEigeneZeichnungen(wert)
+    },
+    [],
+  )
+
+  /**
+   * Ohne Aufrufer-Stand: eine von außen neu gereichte Liste übernehmen.
+   * Verglichen wird die REFERENZ, nicht der Inhalt — wer die Änderung ausgelöst
+   * hat, bekommt genau das Feld zurück, das er gerade gemeldet hat.
    */
   const letzteVorlage = useRef(initialDrawings)
   useEffect(() => {
+    if (gesteuert) return
     if (letzteVorlage.current === initialDrawings) return
     letzteVorlage.current = initialDrawings
-    setDrawings(initialDrawings)
-  }, [initialDrawings])
-
-  useEffect(() => {
-    letzteVorlage.current = drawings
-    onDrawingsChange?.(drawings)
-  }, [drawings, onDrawingsChange])
+    setEigeneZeichnungen(initialDrawings)
+  }, [initialDrawings, gesteuert])
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [drawError, setDrawError] = useState<string | null>(null)
   const [drawingsLocked, setDrawingsLocked] = useState(false)
