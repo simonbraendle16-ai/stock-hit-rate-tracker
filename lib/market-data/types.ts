@@ -61,6 +61,52 @@ export const DELIVERY_LIMIT: Record<Interval, number> = {
 /** Obergrenze für ein ausdrücklich angefragtes `limit` — schützt vor Unsinn. */
 export const MAX_DELIVERY_LIMIT = 8000
 
+/**
+ * Wie viele Kerzen je Reihe AUFBEWAHRT werden — die Grenze gegen das
+ * Speicherlimit der Datenbank.
+ *
+ * Warum es das überhaupt gibt: Der Kerzenspeicher wächst sonst unbegrenzt. Der
+ * stündliche Sammellauf pflegt rund 637 Reihen (etwa 90 Instrumente mal sieben
+ * Zeitebenen) für immer weiter, und ein einzelner Lauf schrieb schon 299.133
+ * Kerzen. Sowohl Supabase als auch Neon geben im Gratistarif 500 MB
+ * Datenbankgröße — ohne Grenze läuft das absehbar voll, und zwar bei jedem
+ * Anbieter. Das ist ein anderes Problem als der Netzwerk-Transfer und braucht
+ * deshalb eine eigene Antwort.
+ *
+ * Gerechnet: eine Zeile in `candle_cache` kostet mit Tupel-Kopf, Ausrichtung
+ * und Primärschlüssel-Index rund 140 Byte. Die Staffel unten ergibt bei 90
+ * Instrumenten etwa 1,64 Mio. Zeilen, also grob 230 MB — knapp die Hälfte des
+ * Budgets, der Rest bleibt für Trades, Training und Auth.
+ *
+ * **Die Staffel ist nicht gleichmäßig, und das ist der Kern.** Sie richtet sich
+ * danach, was der Anbieter NACHLIEFERN kann:
+ *
+ * - `15min`/`1h` sind am großzügigsten. Yahoo gibt 15-Minuten-Kerzen nur 60 Tage
+ *   weit heraus (rund 1.560 Stück) — alles davor existiert ausschließlich hier.
+ *   Was hier gelöscht wird, ist unwiederbringlich weg.
+ * - `1day` bleibt knapper. Die liefert Yahoo jahrzehntelang auf Zuruf; sie hier
+ *   zu horten kostet Speicher, den die knappen Reihen brauchen.
+ * - `1week`/`1month` binden praktisch nie: 1.500 Wochenkerzen sind 29 Jahre,
+ *   600 Monatskerzen sind 50 Jahre. Die Werte stehen als Deckel da, nicht als
+ *   Schnitt.
+ *
+ * **Untergrenze für jeden Wert ist `TRAINING_CANDLE_LIMIT` (3.000) aus
+ * `app/api/candles/route.ts`** — außer dort, wo so viele Kerzen zeitlich gar
+ * nicht existieren können (Woche, Monat). Läge eine Grenze darunter, würde der
+ * Replay-Trainer bei jeder Aktualisierung mehr Kerzen anfordern, als aufbewahrt
+ * werden: Der Anbieter liefert sie, sie werden geschrieben, das Aufräumen
+ * schneidet sie sofort wieder weg — ein Schreib-Karussell ohne jeden Nutzen.
+ */
+export const RETENTION_LIMIT: Record<Interval, number> = {
+  '15min': 5000,
+  '30min': 3500,
+  '1h': 5000,
+  '4h': 3000,
+  '1day': 3000,
+  '1week': 1500,
+  '1month': 600,
+}
+
 export class MarketDataError extends Error {
   constructor(
     message: string,

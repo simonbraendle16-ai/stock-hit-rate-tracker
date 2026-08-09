@@ -27,7 +27,13 @@ Tailwind v4 + shadcn · recharts · pnpm via corepack.
 - Dev `pnpm dev` · Build `pnpm build` · **Prüfen: `pnpm test` + `pnpm exec tsc --noEmit`**
   (`pnpm lint` schlägt fehl, ESLint fehlt). Meist läuft schon ein `next dev` auf :3000.
 - Migrationen: **handgeschriebenes SQL** in `drizzle/`, additiv + idempotent, angewendet per
-  `node scripts/apply-migration.mjs`. Die DB enthält echte Trades.
+  `node scripts/apply-migration.mjs`. Die Dateien setzen ein Basis-Schema voraus — eine leere
+  DB zuerst mit `drizzle-kit push` aus `lib/db/schema.ts` aufbauen, sonst scheitert `0001`.
+- **Datenbank: Supabase** (seit 09.08.2026, vorher Neon). Verbindung über den Transaction-Pooler
+  (Port 6543); `uselibpqcompat=true&sslmode=require` ist Pflicht, weil `pg` 8.22 ein blosses
+  `sslmode=require` als `verify-full` auslegt und an Supabases eigener CA scheitert.
+  **Die DB ist derzeit leer** — die echten Trades liegen noch bei Neon und sind erst ab
+  **01.09.2026** abholbar (`node scripts/migrate-neon-to-supabase.mjs`, siehe `NEON_DATABASE_URL`).
 - Nach Ordner-Verschiebung: `CI=true corepack pnpm install`.
 
 ## Architektur
@@ -49,6 +55,12 @@ Tailwind v4 + shadcn · recharts · pnpm via corepack.
   über seinen Ticker — **wer Marktdaten holt, reicht `stockId` mit**. Syntaxprüfung nur über
   `lib/market-data/symbol-syntax.ts`.
 - **Kerzen nur über `getCachedCandles`, Kurse nur aus `quote_snapshot`** — nie direkt vom Anbieter.
+- **Nie eine Kerzenreihe unbegrenzt lesen.** Die Mengengrenze gehört ins SQL (`ORDER BY time
+  DESC LIMIT n`), nicht in ein `takeLast()` danach. Genau dieser Fehler hat 5 GB Transfer
+  verbraucht und die Datenbank abgeschaltet: Der Kurs-Snapshot holte 17.000 Kerzen, um EINE zu
+  lesen — gemessen 730 KB statt 44 Byte, hochgerechnet 6.163 MB/Monat für einen einzigen Alarm.
+  Ebenso gilt `RETENTION_LIMIT` (`lib/market-data/types.ts`): Der Kerzenspeicher wird im
+  Sammellauf zurückgeschnitten, sonst sprengt er die 500 MB des Gratistarifs.
 - **Guards:** Pre-Trade-Gate (9 Fragen) · Plan-Lock · Revenge-Guard (60 Min) · bewusste
   Verlustannahme · Emotions-Check-in. Ob ein Guard greift, entscheidet `lib/trade-kind.ts`.
 - **Geldkennzahlen filtern immer auf `tradedWithMoney`** (Echtgeld ≠ Demo).

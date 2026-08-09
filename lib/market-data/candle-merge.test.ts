@@ -176,3 +176,62 @@ describe('Sammellauf-Fälligkeit', () => {
     expect(isDueForCollection('1day', new Date('2026-07-20T12:00:00Z'), jetzt)).toBe(true)
   })
 })
+
+/**
+ * Die Rechtfertigung für die SQL-Begrenzung in `readStoredCandles`.
+ *
+ * `getStoredCandles` liest seit dem Transfer-Fix nicht mehr die ganze Reihe,
+ * sondern nur noch deren jüngste `limit` Kerzen, und führt DIESEN Ausschnitt
+ * mit dem frischen Satz des Anbieters zusammen. Das ist nur zulässig, wenn
+ * dabei exakt dasselbe herauskommt wie beim Zusammenführen der vollständigen
+ * Reihe. Genau das prüfen diese Tests — fällt einer, ist die Begrenzung nicht
+ * mehr verlustfrei und der Chart zeigt stillschweigend etwas anderes an.
+ */
+describe('Ausschnitt statt Vollabzug (Transfer-Fix)', () => {
+  const alle = Array.from({ length: 500 }, (_, i) => k(1000 + i * 60, 100 + i))
+  const limit = 50
+
+  it('liefert dasselbe Fenster wie der Vollabzug, wenn der Anbieter anschließt', () => {
+    // Anbieter liefert die letzten drei Kerzen neu plus zwei echte neue.
+    const frisch = [
+      k(1000 + 497 * 60, 999),
+      k(1000 + 498 * 60, 998),
+      k(1000 + 499 * 60, 997),
+      k(1000 + 500 * 60, 996),
+      k(1000 + 501 * 60, 995),
+    ]
+    const schwanz = takeLast(alle, limit)
+
+    expect(takeLast(mergeCandles(schwanz, frisch), limit)).toEqual(
+      takeLast(mergeCandles(alle, frisch), limit),
+    )
+  })
+
+  it('liefert dasselbe Fenster, wenn der Anbieter gar nichts Neues hat', () => {
+    const schwanz = takeLast(alle, limit)
+    expect(takeLast(mergeCandles(schwanz, []), limit)).toEqual(
+      takeLast(mergeCandles(alle, []), limit),
+    )
+  })
+
+  it('übernimmt Korrekturen des Anbieters an bereits gespeicherten Kerzen', () => {
+    // Dieselbe Zeit, anderer Schluss — der frische Satz muss gewinnen.
+    const korrigiert = k(1000 + 499 * 60, 4242)
+    const schwanz = takeLast(alle, limit)
+    const fenster = takeLast(mergeCandles(schwanz, [korrigiert]), limit)
+
+    expect(fenster[fenster.length - 1].close).toBe(4242)
+    expect(fenster).toEqual(takeLast(mergeCandles(alle, [korrigiert]), limit))
+  })
+
+  it('vergleicht nur das Fenster, das der Anbieter überhaupt abdeckt', () => {
+    // `candlesToWrite` bekommt seit dem Fix nur noch die gespeicherten Kerzen
+    // ab dem ältesten frischen Zeitpunkt. Ältere können mit keiner frischen
+    // Kerze kollidieren — das Ergebnis muss daher identisch sein.
+    const frisch = [k(1000 + 498 * 60, 998), k(1000 + 499 * 60, 997), k(1000 + 500 * 60, 996)]
+    const aeltester = Math.min(...frisch.map((c) => c.time))
+    const fenster = alle.filter((c) => c.time >= aeltester)
+
+    expect(candlesToWrite(fenster, frisch)).toEqual(candlesToWrite(alle, frisch))
+  })
+})

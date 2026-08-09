@@ -16,13 +16,14 @@
  *      Ein Ausfall bedeutet einen alten Stand, keinen leeren Chart.
  */
 
-import { and, asc, eq, inArray, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, inArray, lt, sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { candleCache, candleSeries } from '@/lib/db/schema'
 import { resolveProvider } from './index'
 import type { Candle, Interval, Market } from './types'
-import { DELIVERY_LIMIT, MAX_DELIVERY_LIMIT, MarketDataError } from './types'
-import { candlesToWrite, coverageOf, isFresh, mergeCandles, takeLast } from './candle-merge'
+import { DELIVERY_LIMIT, MAX_DELIVERY_LIMIT, MarketDataError, RETENTION_LIMIT } from './types'
+import type { SeriesCoverage } from './candle-merge'
+import { candlesToWrite, isFresh, mergeCandles, takeLast } from './candle-merge'
 
 /**
  * Auf so viele Zeilen wird eine Schreiboperation aufgeteilt.
@@ -35,23 +36,91 @@ import { candlesToWrite, coverageOf, isFresh, mergeCandles, takeLast } from './c
  */
 const CHUNK = 2000
 
+/** Womit ein Lesevorgang eingegrenzt wird — siehe `readStoredCandles`. */
+interface StoredReadOptions {
+  /** Nur die jüngsten `limit` Kerzen. Ohne Angabe: die ganze Reihe. */
+  limit?: number
+  /** Nur Kerzen VOR diesem Zeitpunkt (Unix-Sekunden). */
+  before?: number
+  /** Nur Kerzen AB diesem Zeitpunkt (Unix-Sekunden, einschließlich). */
+  since?: number
+}
+
+/**
+ * Kerzen aus dem Speicher lesen — **mit der Mengenbegrenzung im SQL**.
+ *
+ * Das war der teuerste Fehler dieser Datei: Bis hierher las diese Funktion
+ * IMMER die vollständige Reihe und ließ erst `takeLast()` in JavaScript davon
+ * übrig, was gebraucht wurde. Für den Chart hieß das rund 900 Kerzen aus
+ * 17.000 gelesenen; für den Kurs-Snapshot, der nur die LETZTE Kerze braucht,
+ * wurden dieselben 17.000 übertragen — und das alle fünf Minuten je Alarm,
+ * angestoßen vom Takt in `.github/workflows/check-alerts.yml`. So sind bei Neon
+ * 5 GB Netzwerk-Transfer in wenigen Wochen verbraucht worden, bis die Datenbank
+ * abgeschaltet wurde. Supabase hat dasselbe Limit; die Begrenzung gehört
+ * deshalb dorthin, wo sie Übertragung spart, und das ist die Datenbank.
+ *
+ * `ORDER BY time DESC LIMIT n` liest die jüngsten Kerzen, das Umdrehen danach
+ * stellt die aufsteigende Reihenfolge her, auf die sich alle Aufrufer verlassen.
+ */
 export async function readStoredCandles(
   symbol: string,
   interval: Interval,
+  options: StoredReadOptions = {},
 ): Promise<Candle[]> {
+  const bedingungen = [eq(candleCache.symbol, symbol), eq(candleCache.interval, interval)]
+  if (options.before != null && Number.isFinite(options.before)) {
+    bedingungen.push(lt(candleCache.time, Math.floor(options.before)))
+  }
+  if (options.since != null && Number.isFinite(options.since)) {
+    bedingungen.push(gte(candleCache.time, Math.floor(options.since)))
+  }
+
+  const spalten = {
+    time: candleCache.time,
+    open: candleCache.open,
+    high: candleCache.high,
+    low: candleCache.low,
+    close: candleCache.close,
+    volume: candleCache.volume,
+  }
+  const begrenzt = Number.isFinite(options.limit) && (options.limit ?? 0) > 0
+
+  if (!begrenzt) {
+    return db.select(spalten).from(candleCache).where(and(...bedingungen)).orderBy(asc(candleCache.time))
+  }
+
   const rows = await db
+    .select(spalten)
+    .from(candleCache)
+    .where(and(...bedingungen))
+    .orderBy(desc(candleCache.time))
+    .limit(options.limit as number)
+  return rows.reverse()
+}
+
+/**
+ * Abdeckung einer Reihe als Aggregat — `min`, `max`, `count` rechnet Postgres.
+ *
+ * Vorher lief das über `coverageOf()` in JavaScript, was voraussetzte, dass die
+ * KOMPLETTE Reihe vorher durch die Leitung gegangen war. Genau diese Annahme
+ * fällt mit der Begrenzung oben weg. Drei Zahlen zu holen ist ohnehin billiger,
+ * als Zehntausende Zeilen zu holen, um sie selbst abzuzählen.
+ */
+async function readCoverage(symbol: string, interval: Interval): Promise<SeriesCoverage> {
+  const [row] = await db
     .select({
-      time: candleCache.time,
-      open: candleCache.open,
-      high: candleCache.high,
-      low: candleCache.low,
-      close: candleCache.close,
-      volume: candleCache.volume,
+      firstTime: sql<number | null>`min(${candleCache.time})`,
+      lastTime: sql<number | null>`max(${candleCache.time})`,
+      count: sql<number>`count(*)::int`,
     })
     .from(candleCache)
     .where(and(eq(candleCache.symbol, symbol), eq(candleCache.interval, interval)))
-    .orderBy(asc(candleCache.time))
-  return rows
+
+  return {
+    firstTime: row?.firstTime ?? null,
+    lastTime: row?.lastTime ?? null,
+    count: row?.count ?? 0,
+  }
 }
 
 async function readSeries(symbol: string, interval: Interval) {
@@ -107,14 +176,20 @@ function sqlExcluded(column: string) {
   return sql.raw(`excluded."${column}"`)
 }
 
+/**
+ * Die Reihe fortschreiben.
+ *
+ * Nimmt die Abdeckung als fertige Zahlen entgegen (aus `readCoverage`), statt
+ * sie sich aus einem vollständigen Kerzen-Array zu rechnen — das Array gibt es
+ * seit der SQL-Begrenzung in `readStoredCandles` bewusst nicht mehr.
+ */
 async function writeSeries(
   symbol: string,
   interval: Interval,
   market: Market | null,
-  alle: Candle[],
+  abdeckung: SeriesCoverage,
   fehler: string | null,
 ): Promise<void> {
-  const abdeckung = coverageOf(alle)
   const jetzt = new Date()
 
   await db
@@ -187,49 +262,123 @@ export async function getStoredCandles(
     options.limit && options.limit > 0 ? options.limit : DELIVERY_LIMIT[interval],
   )
 
-  const [gespeichert, serie] = await Promise.all([
-    readStoredCandles(symbol, interval),
+  // Blick nach hinten: was da ist, sonst nichts. Siehe `before` oben — der
+  // Anbieter hat zu dieser Frage nichts beizutragen. Die Grenze steht jetzt im
+  // SQL, statt eine ganze Reihe zu holen und sie hier wegzufiltern.
+  if (options.before != null && Number.isFinite(options.before)) {
+    return readStoredCandles(symbol, interval, { before: options.before, limit })
+  }
+
+  // Ab hier wird höchstens `limit` gelesen. Das genügt für ALLE verbleibenden
+  // Wege: Was ausgeliefert wird, sind immer die jüngsten `limit` Kerzen — und
+  // die können nur aus den jüngsten `limit` gespeicherten stammen oder aus dem
+  // frischen Satz des Anbieters, der ohnehin am aktuellen Rand liegt.
+  const [schwanz, serie] = await Promise.all([
+    readStoredCandles(symbol, interval, { limit }),
     readSeries(symbol, interval),
   ])
 
-  // Blick nach hinten: was da ist, sonst nichts. Siehe `before` oben — der
-  // Anbieter hat zu dieser Frage nichts beizutragen.
-  if (options.before != null && Number.isFinite(options.before)) {
-    const grenze = Math.floor(options.before)
-    return takeLast(
-      gespeichert.filter((c) => c.time < grenze),
-      limit,
-    )
-  }
+  if (options.storedOnly) return schwanz
 
-  if (options.storedOnly) return takeLast(gespeichert, limit)
-
-  if (gespeichert.length > 0 && isFresh(interval, serie?.fetchedAt ?? null)) {
-    return takeLast(gespeichert, limit)
+  if (schwanz.length > 0 && isFresh(interval, serie?.fetchedAt ?? null)) {
+    return schwanz
   }
 
   try {
     const frisch = await resolveProvider(market).getCandles(symbol, interval)
-    const zuSchreiben = candlesToWrite(gespeichert, frisch)
-    const alle = mergeCandles(gespeichert, frisch)
 
+    // Vergleichsfenster für den Abgleich: nur der Zeitraum, den der Anbieter
+    // überhaupt liefert. Ältere gespeicherte Kerzen können mit keiner frischen
+    // Kerze kollidieren — sie zu laden wäre genau die Verschwendung, die diese
+    // Datenbank abgeschaltet hat. Ohne frische Kerzen entfällt der Abgleich ganz.
+    const vergleichsfenster = frisch.length
+      ? await readStoredCandles(symbol, interval, {
+          since: Math.min(...frisch.map((c) => c.time)),
+        })
+      : []
+
+    const zuSchreiben = candlesToWrite(vergleichsfenster, frisch)
     if (zuSchreiben.length > 0) await writeCandles(symbol, interval, zuSchreiben)
-    await writeSeries(symbol, interval, market, alle, null)
 
-    return takeLast(alle, limit)
+    // Die Abdeckung erst NACH dem Schreiben erheben, und als Aggregat aus der
+    // Datenbank — sie soll die ganze Reihe beschreiben, nicht nur das Fenster,
+    // das wir gerade in der Hand hatten.
+    await writeSeries(symbol, interval, market, await readCoverage(symbol, interval), null)
+
+    return takeLast(mergeCandles(schwanz, frisch), limit)
   } catch (err) {
     const meldung = err instanceof Error ? err.message : 'Unbekannter Fehler'
     // Den Fehlschlag festhalten, aber die Reihe nicht als „geholt" markieren.
-    await writeSeries(symbol, interval, market, gespeichert, meldung).catch(() => {})
+    // Die Abdeckung bleibt dabei unangetastet — der Fehlerzweig von
+    // `writeSeries` schreibt ohnehin nur `lastError` und `failCount` fort.
+    await writeSeries(
+      symbol,
+      interval,
+      market,
+      { firstTime: null, lastTime: null, count: 0 },
+      meldung,
+    ).catch(() => {})
 
     // Ein Anbieterausfall darf einen vorhandenen Verlauf nicht verdecken —
     // dieselbe Haltung wie beim Kurs: lieber ein alter Stand als ein leeres
     // Feld. Nur wenn wirklich nichts da ist, geht der Fehler nach oben.
-    if (gespeichert.length > 0) return takeLast(gespeichert, limit)
+    if (schwanz.length > 0) return schwanz
     throw err instanceof MarketDataError
       ? err
       : new MarketDataError('Kursdaten konnten nicht geladen werden.', 'upstream')
   }
+}
+
+/**
+ * Eine Reihe auf `RETENTION_LIMIT` zurückschneiden — die Grenze gegen das
+ * 500-MB-Speicherlimit des Gratistarifs.
+ *
+ * Behalten werden immer die JÜNGSTEN Kerzen; der Schnitt liegt am alten Ende.
+ * Der Grenzwert wird dafür in einer Unterabfrage bestimmt (`OFFSET n LIMIT 1`)
+ * statt Zeilen einzeln zu zählen — Postgres läuft dafür den Primärschlüssel
+ * rückwärts und kommt ohne vollen Durchlauf aus.
+ *
+ * Liegt die Reihe unter der Grenze, liefert die Unterabfrage NULL und der
+ * Vergleich `time < NULL` trifft keine Zeile — dann passiert schlicht nichts.
+ *
+ * Gibt die Anzahl gelöschter Kerzen zurück, damit der Sammellauf sie protokollieren
+ * kann. Ein Aufräumen, das niemand sieht, ist von einem ausgefallenen nicht zu
+ * unterscheiden.
+ */
+export async function pruneStoredCandles(symbol: string, interval: Interval): Promise<number> {
+  const grenze = RETENTION_LIMIT[interval]
+  if (!grenze || grenze <= 0) return 0
+
+  const ergebnis = await db.execute(sql`
+    DELETE FROM ${candleCache}
+    WHERE ${candleCache.symbol} = ${symbol}
+      AND ${candleCache.interval} = ${interval}
+      AND ${candleCache.time} < (
+        SELECT c."time" FROM ${candleCache} c
+        WHERE c."symbol" = ${symbol} AND c."interval" = ${interval}
+        ORDER BY c."time" DESC
+        OFFSET ${grenze} LIMIT 1
+      )
+  `)
+  const geloescht = ergebnis.rowCount ?? 0
+  if (geloescht === 0) return 0
+
+  // Die Reihe beschreibt jetzt etwas anderes als vorher. Bliebe `candleCount`
+  // stehen, stünde in der Datenbank eine plausible falsche Zahl — genau das,
+  // was dieses Projekt nicht duldet. `fetchedAt` und `lastError` bleiben dabei
+  // unangetastet: Aufräumen ist kein Anbieterabruf und darf die Frischeprüfung
+  // nicht beeinflussen.
+  const abdeckung = await readCoverage(symbol, interval)
+  await db
+    .update(candleSeries)
+    .set({
+      firstTime: abdeckung.firstTime,
+      lastTime: abdeckung.lastTime,
+      candleCount: abdeckung.count,
+    })
+    .where(and(eq(candleSeries.symbol, symbol), eq(candleSeries.interval, interval)))
+
+  return geloescht
 }
 
 /** Abdeckung mehrerer Reihen auf einmal — für die Anzeige im Trainer. */

@@ -28,7 +28,7 @@ import { and, desc, eq, inArray } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { candleCollectRun, candleSeries, stock } from '@/lib/db/schema'
 import type { Interval, Market } from './types'
-import { getStoredCandles } from './candle-store'
+import { getStoredCandles, pruneStoredCandles } from './candle-store'
 import { isDueForCollection, orderByStaleness } from './candle-merge'
 
 /** Höchstzahl an Anbieter-Abrufen je Lauf. */
@@ -79,6 +79,8 @@ export interface CollectReport {
   seriesFetched: number
   seriesFailed: number
   candlesAdded: number
+  /** Wie viele alte Kerzen das Aufräumen zurückgeschnitten hat (`RETENTION_LIMIT`). */
+  candlesPruned: number
   error: string | null
 }
 
@@ -120,6 +122,7 @@ export async function runCandleCollect(options: {
         seriesFetched: 0,
         seriesFailed: 0,
         candlesAdded: 0,
+        candlesPruned: 0,
         error: null,
       }
     }
@@ -133,6 +136,8 @@ export async function runCandleCollect(options: {
   let fetched = 0
   let failed = 0
   let added = 0
+  /** Wie viele alte Kerzen dieser Lauf zurückgeschnitten hat. */
+  let pruned = 0
   let due = 0
   let fehler: string | null = null
 
@@ -164,6 +169,7 @@ export async function runCandleCollect(options: {
         seriesFetched: 0,
         seriesFailed: 0,
         candlesAdded: 0,
+        candlesPruned: 0,
         error: null,
       }
     }
@@ -226,6 +232,12 @@ export async function runCandleCollect(options: {
             ),
           )
         added += Math.max(0, (nachher?.candleCount ?? 0) - vorher)
+
+        // Erst zählen, dann zurückschneiden — sonst wäre `added` um genau die
+        // Kerzen zu klein, die dieser Lauf gerade geholt hat. Das Aufräumen
+        // hält den Speicher unter dem 500-MB-Limit des Gratistarifs; ohne es
+        // wächst der Kerzenspeicher unbegrenzt weiter (siehe `RETENTION_LIMIT`).
+        pruned += await pruneStoredCandles(reihe.symbol, reihe.interval)
       } catch {
         // Der Fehlschlag steht bereits an der Reihe (`lastError`, `failCount`);
         // ein einzelnes unbekanntes Symbol darf den Lauf nicht beenden.
@@ -245,6 +257,7 @@ export async function runCandleCollect(options: {
     seriesFetched: fetched,
     seriesFailed: failed,
     candlesAdded: added,
+    candlesPruned: pruned,
     error: fehler,
   }
 }

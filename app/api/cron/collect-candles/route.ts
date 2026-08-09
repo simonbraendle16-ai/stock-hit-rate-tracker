@@ -55,6 +55,7 @@ export async function GET(req: NextRequest) {
     seriesFetched: report.seriesFetched,
     seriesFailed: report.seriesFailed,
     candlesAdded: report.candlesAdded,
+    candlesPruned: report.candlesPruned,
     error: report.error,
   })
 }
