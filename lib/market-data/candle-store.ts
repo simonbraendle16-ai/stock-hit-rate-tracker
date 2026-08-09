@@ -334,9 +334,14 @@ export async function getStoredCandles(
  * 500-MB-Speicherlimit des Gratistarifs.
  *
  * Behalten werden immer die JÜNGSTEN Kerzen; der Schnitt liegt am alten Ende.
- * Der Grenzwert wird dafür in einer Unterabfrage bestimmt (`OFFSET n LIMIT 1`)
+ * Der Grenzwert wird dafür in einer Unterabfrage bestimmt (`OFFSET n-1 LIMIT 1`)
  * statt Zeilen einzeln zu zählen — Postgres läuft dafür den Primärschlüssel
  * rückwärts und kommt ohne vollen Durchlauf aus.
+ *
+ * Das `-1` ist nicht kosmetisch: `OFFSET grenze` trifft die (grenze+1)-te Kerze,
+ * und da alles ÄLTERE gelöscht wird, blieben grenze+1 Kerzen stehen. Gemessen
+ * gegen die echte Datenbank: 5001 statt 5000. Eine Konstante namens
+ * `RETENTION_LIMIT` muss halten, was ihr Name sagt.
  *
  * Liegt die Reihe unter der Grenze, liefert die Unterabfrage NULL und der
  * Vergleich `time < NULL` trifft keine Zeile — dann passiert schlicht nichts.
@@ -357,7 +362,7 @@ export async function pruneStoredCandles(symbol: string, interval: Interval): Pr
         SELECT c."time" FROM ${candleCache} c
         WHERE c."symbol" = ${symbol} AND c."interval" = ${interval}
         ORDER BY c."time" DESC
-        OFFSET ${grenze} LIMIT 1
+        OFFSET ${grenze - 1} LIMIT 1
       )
   `)
   const geloescht = ergebnis.rowCount ?? 0
