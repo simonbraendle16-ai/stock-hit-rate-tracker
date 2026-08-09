@@ -16,6 +16,16 @@
 # Hinweis: GitHub führt geplante Läufe unter Last verzögert aus; fünf Minuten
 # sind der Wunsch, nicht die Garantie. Für geplante Einstiege trägt das —
 # ein Signal, das auf die Sekunde kommen muss, gehört ohnehin nicht in eine Mail.
+#
+# MELDEVERHALTEN (seit 09.08.2026)
+# Ein roter Lauf erzeugt eine GitHub-Mail. Bei einem Fünf-Minuten-Takt sind das
+# bis zu 288 Mails am Tag, solange eine Störung dauert — beim Neon-Transferlimit
+# im August genau so geschehen. Zwei Bremsen stehen deshalb davor:
+#   1. Dreimal versuchen, bevor etwas als Ausfall gilt (gegen einzelne Aussetzer).
+#   2. Rot wird nur der ERSTE Fehlschlag einer Störung; solange sie anhält,
+#      bleiben die Läufe grün. Erst nach einer Erholung meldet sich die nächste
+#      Störung wieder.
+# Ergebnis: eine Mail je Störung statt einer Mail je Lauf.
 
 name: Alarme prüfen
 
@@ -24,23 +34,74 @@ on:
     - cron: '*/5 * * * *'
   workflow_dispatch: # von Hand anstoßbar, zum Testen
 
+permissions:
+  contents: read
+  # Für den Blick auf den vorherigen Lauf (siehe „Nur einmal Bescheid geben").
+  actions: read
+
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
       - name: Prüflauf anstoßen
+        id: pruefen
         run: |
-          code=$(curl --silent --show-error --location \
-            --max-time 60 \
-            --output response.json \
-            --write-out '%{http_code}' \
-            --header "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            "${{ secrets.APP_URL }}/api/cron/check-alerts")
-          echo "HTTP $code"
-          cat response.json
-          # Ein fehlgeschlagener Aufruf soll im Actions-Protokoll rot sein —
-          # sonst fällt ein toter Alarm-Takt niemandem auf.
-          if [ "$code" != "200" ]; then exit 1; fi
+          # Dreimal versuchen, bevor das als Ausfall gilt. Ein einzelner
+          # Aussetzer — Kaltstart der Funktion, kurzer Netzhänger — ist kein
+          # toter Alarm-Takt, hat aber bisher zuverlässig eine Mail ausgelöst.
+          code=000
+          for versuch in 1 2 3; do
+            code=$(curl --silent --show-error --location \
+              --max-time 60 \
+              --output response.json \
+              --write-out '%{http_code}' \
+              --header "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+              "${{ secrets.APP_URL }}/api/cron/check-alerts")
+            echo "Versuch $versuch: HTTP $code"
+            [ "$code" = "200" ] && break
+            [ "$versuch" -lt 3 ] && sleep 10
+          done
+          cat response.json || true
+          if [ "$code" = "200" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # NUR EINMAL BESCHEID GEBEN
+      #
+      # Ein roter Lauf ist eine Mail. Bei einem Takt von fünf Minuten sind das
+      # 288 Mails am Tag, solange der Ausfall dauert — beim Neon-Transferlimit
+      # im August genau so passiert. Eine Meldung, die im Minutentakt kommt,
+      # liest niemand mehr; sie richtet also das Gegenteil dessen an, wofür sie
+      # da ist.
+      #
+      # Deshalb: rot wird nur der ERSTE Fehlschlag einer Störung. War der
+      # vorherige Lauf schon rot, bleibt dieser grün — die Störung ist bereits
+      # gemeldet. Sobald es wieder läuft, ist der nächste Fehlschlag wieder
+      # eine neue Störung und meldet sich erneut.
+      #
+      # Ein dauerhaft toter Takt fällt damit weiterhin auf: Die erste Mail kam,
+      # und die Lauf-Übersicht bleibt rot. Nur die Wiederholung entfällt.
+      - name: Ausfall bewerten
+        if: steps.pruefen.outputs.ok == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          vorher=$(gh run list \
+            --repo "${{ github.repository }}" \
+            --workflow "${{ github.workflow }}" \
+            --status completed \
+            --limit 1 \
+            --json conclusion \
+            --jq '.[0].conclusion' 2>/dev/null || echo "unbekannt")
+          echo "Vorheriger Lauf: $vorher"
+          if [ "$vorher" = "failure" ]; then
+            echo "::warning::Alarm-Takt weiterhin gestört — bereits gemeldet, keine erneute Meldung."
+            exit 0
+          fi
+          echo "::error::Alarm-Takt gestört: /api/cron/check-alerts antwortet nicht mit 200."
+          exit 1
 
       # Derselbe Takt füllt den Kerzenspeicher (Migration 0027). Die Route
       # entscheidet SELBST, ob sie fällig ist (alle zwei Stunden) und antwortet
