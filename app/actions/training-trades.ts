@@ -23,13 +23,19 @@
 
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
-import { trainingCheckpoint, trainingSession, trainingTrade } from '@/lib/db/schema'
-import { and, asc, eq, sql } from 'drizzle-orm'
+import {
+  trainingCheckpoint,
+  trainingSession,
+  trainingTrade,
+  trainingTradeTarget,
+} from '@/lib/db/schema'
+import { and, asc, eq, inArray, sql } from 'drizzle-orm'
 import { headers } from 'next/headers'
 import { revalidatePath } from 'next/cache'
 import { intervalForTimeframe } from '@/lib/chart-timeframes'
 import { getCachedCandles } from '@/lib/market-data/cached'
-import { createSymbolResolver, lookupProviderSymbol } from '@/lib/market-data/lookup'
+import { aufgeloestesSymbolFuerAnfrage } from '@/lib/market-data/lookup'
+import { unaufgeloestMeldung } from '@/lib/market-data/symbol-syntax'
 import type { Market } from '@/lib/market-data/types'
 import { parseSetupTags, sanitizeSetupTags, serializeSetupTags } from '@/lib/setups'
 import { computeExcursion } from '@/lib/excursion'
@@ -47,14 +53,17 @@ import {
 import {
   MAX_SESSION_TRADES,
   computeInterventionCost,
+  findEntryFill,
   fortschrittZeit,
   isCheckpointDecision,
-  measureOutcome,
+  istOrderStatus,
+  measureStagedOutcome,
   validateTradeDraft,
   type CheckpointDecision,
   type InterventionCost,
   type TrainingTradeView,
 } from '@/lib/training-trade'
+import { normalizeTargets } from '@/lib/trade-targets'
 
 async function getUserId() {
   const session = await auth.api.getSession({ headers: await headers() })
@@ -72,7 +81,10 @@ async function loadSession(userId: string, sessionId: number) {
   return row
 }
 
-function toView(r: typeof trainingTrade.$inferSelect): TrainingTradeView {
+function toView(
+  r: typeof trainingTrade.$inferSelect,
+  targets: { price: number; sharePct: number }[] = [],
+): TrainingTradeView {
   return {
     id: r.id,
     seq: r.seq,
@@ -96,6 +108,19 @@ function toView(r: typeof trainingTrade.$inferSelect): TrainingTradeView {
     errorTags: parseErrorTags(r.errorTags),
     note: r.note,
     ratedAt: r.ratedAt,
+    orderStatus: istOrderStatus(r.orderStatus) ? r.orderStatus : 'ausgeloest',
+    filledCandleTime: r.filledCandleTime,
+    orderInvalidation: r.orderInvalidation,
+    reachedTarget: r.reachedTarget,
+    // Altbestand hat keine Zeilen in `training_trade_target`. Damit dieselbe
+    // Messung für beide gilt, tritt dort `takeProfit` als einzige Stufe zu
+    // 100 % an — das ist genau die Rechnung, die vorher galt.
+    targets:
+      targets.length > 0
+        ? targets
+        : r.takeProfit != null
+          ? [{ price: r.takeProfit, sharePct: 100 }]
+          : [],
   }
 }
 
@@ -107,7 +132,13 @@ export async function listSessionTrades(sessionId: number): Promise<TrainingTrad
     .from(trainingTrade)
     .where(and(eq(trainingTrade.sessionId, sessionId), eq(trainingTrade.userId, userId)))
     .orderBy(asc(trainingTrade.seq), asc(trainingTrade.id))
-  return rows.map(toView)
+  // Eine Abfrage für alle Stufen statt einer je Trade — bei bis zu 20 Trades je
+  // Sitzung wären das sonst 20 Rundreisen für eine Liste.
+  const stufen = await ladeStufenJeTrade(
+    userId,
+    rows.map((r) => r.id),
+  )
+  return rows.map((r) => toView(r, stufen.get(r.id) ?? []))
 }
 
 /**
@@ -130,6 +161,13 @@ export async function commitTrainingTrade(input: {
   thesisNote?: string | null
   setupTags?: unknown
   entryCandleTime?: number | null
+  /**
+   * Teilziele. Leer/weggelassen = `takeProfit` ist der ganze Plan — genau die
+   * Form, in der der Altbestand liegt.
+   */
+  targets?: { price: number; sharePct: number }[]
+  /** Preisniveau, das die liegende Order tötet, bevor sie ausgelöst wird. */
+  orderInvalidation?: number | null
 }): Promise<{ ok: true; trade: TrainingTradeView } | { ok: false; errors: string[] }> {
   const userId = await getUserId()
   const session = await loadSession(userId, input.sessionId)
@@ -167,6 +205,43 @@ export async function commitTrainingTrade(input: {
   const errors = validateTradeDraft(draft, session.mode as TrainingMode)
   if (errors.length > 0) return { ok: false, errors }
 
+  // Teilziele über dieselbe Prüfung wie bei echten Trades. `normalizeTargets`
+  // wirft mit sprechendem Text — das wird zur Formularmeldung, statt still
+  // etwas zurechtzubiegen.
+  let stufen: { price: number; sharePct: number }[] = []
+  if (input.targets && input.targets.length > 0) {
+    try {
+      stufen = normalizeTargets({
+        entry: draft.entryPrice!,
+        stopLoss: draft.stopLoss!,
+        direction: draft.direction!,
+        targets: input.targets,
+      }).map((t) => ({ price: t.price, sharePct: t.sharePct }))
+    } catch (err) {
+      return { ok: false, errors: [err instanceof Error ? err.message : 'Teilziele ungültig.'] }
+    }
+  }
+
+  // Die Invalidierung muss auf der Verlustseite des Einstiegs liegen, sonst
+  // wäre die Order tot, bevor der Kurs sie überhaupt erreichen kann.
+  const orderInvalidation = zahl(input.orderInvalidation)
+  if (orderInvalidation != null && draft.entryPrice != null) {
+    const falscheSeite =
+      draft.direction === 'short'
+        ? orderInvalidation <= draft.entryPrice
+        : orderInvalidation >= draft.entryPrice
+    if (falscheSeite) {
+      return {
+        ok: false,
+        errors: [
+          draft.direction === 'short'
+            ? 'Die Invalidierung muss über dem Einstieg liegen.'
+            : 'Die Invalidierung muss unter dem Einstieg liegen.',
+        ],
+      }
+    }
+  }
+
   const [row] = await db
     .insert(trainingTrade)
     .values({
@@ -176,14 +251,31 @@ export async function commitTrainingTrade(input: {
       direction: draft.direction!,
       entryPrice: draft.entryPrice,
       stopLoss: draft.stopLoss,
-      takeProfit: draft.takeProfit,
+      // Die letzte Stufe IST das Kursziel — so bleibt `takeProfit` auch bei
+      // Teilzielen der Wert, an dem der Altbestand-Weg weiter hängt.
+      takeProfit: stufen.length > 0 ? stufen[stufen.length - 1].price : draft.takeProfit,
       elliottCount: draft.elliottCount,
       invalidation: draft.invalidation,
       thesisNote: draft.thesisNote,
       setupTags: serializeSetupTags(draft.setupTags),
       entryCandleTime: zahl(input.entryCandleTime),
+      orderInvalidation,
+      // Eine Enthaltung wartet auf nichts — sie ist sofort abgeschlossen.
+      orderStatus: draft.direction === 'keine' ? 'ausgeloest' : 'liegt',
     })
     .returning()
+
+  if (stufen.length > 0) {
+    await db.insert(trainingTradeTarget).values(
+      stufen.map((t, i) => ({
+        tradeId: row.id,
+        userId,
+        sortOrder: i,
+        price: t.price,
+        sharePct: t.sharePct,
+      })),
+    )
+  }
 
   // Die Sitzung gilt ab dem ersten Trade als festgeschrieben — ab da gibt der
   // Replay Kerzen frei.
@@ -195,11 +287,97 @@ export async function commitTrainingTrade(input: {
   }
 
   revalidatePath(`/trainer/${input.sessionId}`)
-  return { ok: true, trade: toView(row) }
+  return { ok: true, trade: toView(row, stufen) }
 }
 
 /**
- * Das Ergebnis eines Trades aus den Kerzen messen und festschreiben.
+ * Eine noch nicht ausgelöste Order zurückziehen.
+ *
+ * **Löscht nie.** Die Zeile bleibt als `gestrichen` stehen: Dass eine Order
+ * gelegt und wieder zurückgenommen wurde, ist Teil des Übungsverlaufs — sie
+ * verschwinden zu lassen hieße, sich die eigene Unentschlossenheit
+ * wegzuräumen. Aus der Trefferquote bleibt sie draußen, sie war kein Trade.
+ *
+ * Nachbessern gibt es bewusst nicht: Wer die Marken ändern will, streicht und
+ * setzt neu. Nur so bleibt „festgeschriebene These" wörtlich wahr.
+ */
+export async function cancelTrainingOrder(input: {
+  sessionId: number
+  tradeId: number
+}): Promise<{ ok: true; trade: TrainingTradeView } | { ok: false; reason: string }> {
+  const userId = await getUserId()
+  await loadSession(userId, input.sessionId)
+
+  const [row] = await db
+    .select()
+    .from(trainingTrade)
+    .where(
+      and(
+        eq(trainingTrade.id, input.tradeId),
+        eq(trainingTrade.sessionId, input.sessionId),
+        eq(trainingTrade.userId, userId),
+      ),
+    )
+  if (!row) return { ok: false, reason: 'Order nicht gefunden.' }
+  if (row.orderStatus !== 'liegt') {
+    return { ok: false, reason: 'Nur eine noch nicht ausgelöste Order lässt sich streichen.' }
+  }
+
+  const [neu] = await db
+    .update(trainingTrade)
+    .set({ orderStatus: 'gestrichen', cancelledAt: new Date() })
+    .where(eq(trainingTrade.id, input.tradeId))
+    .returning()
+
+  revalidatePath(`/trainer/${input.sessionId}`)
+  return { ok: true, trade: toView(neu, await ladeStufen(userId, input.tradeId)) }
+}
+
+/**
+ * Die Teilziele mehrerer Trades — **nach Trade getrennt**, aufsteigend nach
+ * Stufe. Eine flache Liste wäre hier ein stiller Fehler: Die Stufen zweier
+ * paralleler Orders sähen aus wie die Stufen einer einzigen.
+ */
+async function ladeStufenJeTrade(
+  userId: string,
+  tradeIds: number[],
+): Promise<Map<number, { price: number; sharePct: number }[]>> {
+  const map = new Map<number, { price: number; sharePct: number }[]>()
+  if (tradeIds.length === 0) return map
+  const rows = await db
+    .select()
+    .from(trainingTradeTarget)
+    .where(
+      and(
+        inArray(trainingTradeTarget.tradeId, tradeIds),
+        eq(trainingTradeTarget.userId, userId),
+      ),
+    )
+    .orderBy(asc(trainingTradeTarget.sortOrder))
+  for (const r of rows) {
+    const liste = map.get(r.tradeId) ?? []
+    liste.push({ price: r.price, sharePct: r.sharePct })
+    map.set(r.tradeId, liste)
+  }
+  return map
+}
+
+/** Die Teilziele genau eines Trades. */
+async function ladeStufen(
+  userId: string,
+  tradeId: number,
+): Promise<{ price: number; sharePct: number }[]> {
+  return (await ladeStufenJeTrade(userId, [tradeId])).get(tradeId) ?? []
+}
+
+/**
+ * Eine Order abarbeiten: erst der Einstieg, dann das Ergebnis.
+ *
+ * ZWEI SCHRITTE, WEIL ES ZWEI FRAGEN SIND
+ * 1. Wurde der geplante Einstieg überhaupt berührt? Vor dieser Ausbaustufe galt
+ *    er beim Festschreiben als gefüllt — damit gingen Trades in die Quote ein,
+ *    die es nie gegeben hat.
+ * 2. Erst wenn er berührt wurde, wird ab **dieser** Kerze gemessen.
  *
  * Wird nur einmal geschrieben: Ein bereits gemessenes Ergebnis bleibt stehen,
  * auch wenn später mehr Historie vorliegt — sonst änderte sich rückwirkend,
@@ -219,8 +397,13 @@ export async function resolveTrainingTrade(input: {
     .from(trainingTrade)
     .where(and(eq(trainingTrade.id, input.tradeId), eq(trainingTrade.userId, userId)))
   if (!row) return { ok: false, reason: 'Trade nicht gefunden.' }
-  if (row.outcome) return { ok: true, trade: toView(row) }
+
+  const stufen = await ladeStufen(userId, row.id)
+  if (row.outcome) return { ok: true, trade: toView(row, stufen) }
   if (row.direction === 'keine') return { ok: false, reason: 'Eine Enthaltung wird nicht gemessen.' }
+  if (row.orderStatus === 'gestrichen') {
+    return { ok: false, reason: 'Diese Order wurde gestrichen.' }
+  }
   if (row.entryPrice == null || row.stopLoss == null || row.takeProfit == null) {
     return { ok: false, reason: 'Ohne Einstieg, Stop und Ziel ist nichts zu messen.' }
   }
@@ -229,10 +412,17 @@ export async function resolveTrainingTrade(input: {
   }
 
   // Kerzen über denselben Weg wie der Chart: Rohticker → Anbieter-Symbol über
-  // das verknüpfte Instrument (Etappe 11), nie den Ticker direkt fragen.
-  const providerSymbol = session.stockId
-    ? (await createSymbolResolver(userId))(session.symbol, session.stockId)
-    : (await lookupProviderSymbol(userId, session.symbol)).symbol
+  // das verknüpfte Instrument (Etappe 11), nie den Ticker direkt fragen. Ohne
+  // bestätigte Auflösung wird gar nicht erst gefragt — eine Übung an den Kerzen
+  // eines fremden Papiers auszuwerten wäre schlimmer als kein Ergebnis.
+  const { symbol: providerSymbol, aufgeloest } = await aufgeloestesSymbolFuerAnfrage(
+    userId,
+    session.symbol,
+    session.stockId,
+  )
+  if (!aufgeloest) {
+    return { ok: false, reason: unaufgeloestMeldung(session.symbol) }
+  }
   const candles = await getCachedCandles(
     providerSymbol,
     session.market as Market,
@@ -240,32 +430,88 @@ export async function resolveTrainingTrade(input: {
     { limit: 5000 },
   )
 
-  const messung = measureOutcome(
+  // --- Schritt 1: Ist die Order ausgelöst worden? ---
+  let filledAt = row.filledCandleTime
+  let orderStatus = istOrderStatus(row.orderStatus) ? row.orderStatus : 'ausgeloest'
+
+  if (orderStatus === 'liegt') {
+    const fill = findEntryFill(
+      {
+        direction: row.direction as TrainingDirection,
+        entryPrice: row.entryPrice,
+        orderInvalidation: row.orderInvalidation,
+      },
+      candles,
+      row.entryCandleTime,
+    )
+    if (!fill) return { ok: false, reason: 'Für diesen Zeitraum liegen keine Kerzen vor.' }
+
+    if (fill.status !== 'ausgeloest') {
+      // Nie berührt oder vorher invalidiert: kein Trade, kein Ergebnis. Die
+      // Zeile bleibt stehen und wird ausgewiesen, zählt aber nicht in die Quote.
+      const [aus] = await db
+        .update(trainingTrade)
+        .set({ orderStatus: fill.status })
+        .where(eq(trainingTrade.id, row.id))
+        .returning()
+      revalidatePath(`/trainer/${input.sessionId}`)
+      return { ok: true, trade: toView(aus, stufen) }
+    }
+
+    filledAt = fill.atTime
+    orderStatus = 'ausgeloest'
+  }
+
+  // Altbestand ohne `filledCandleTime` wurde als sofort gefüllt gemessen —
+  // dort bleibt `entryCandleTime` der Startpunkt, damit seine Zahlen stehen.
+  const messAb = filledAt ?? row.entryCandleTime
+
+  // --- Schritt 2: Wie ist er ausgegangen? ---
+  const messung = measureStagedOutcome(
     {
       direction: row.direction as TrainingDirection,
       entryPrice: row.entryPrice,
       stopLoss: row.stopLoss,
-      takeProfit: row.takeProfit,
+      targets: stufen.length > 0 ? stufen : [{ price: row.takeProfit, sharePct: 100 }],
+      // Nach Absprache immer: Der Stop wandert nach der ersten Stufe auf den
+      // Einstand. Nur wirksam, wenn es überhaupt mehr als eine Stufe gibt.
+      stopAufEinstand: stufen.length > 1,
     },
     candles,
-    row.entryCandleTime,
+    messAb,
   )
-  if (!messung) return { ok: false, reason: 'Für diesen Zeitraum liegen keine Kerzen vor.' }
+  if (!messung) {
+    // Die Order ist ausgelöst, das Ergebnis steht aber noch aus — der Zustand
+    // wird trotzdem festgehalten, sonst prüfte der nächste Lauf ihn erneut.
+    if (orderStatus !== row.orderStatus) {
+      const [aus] = await db
+        .update(trainingTrade)
+        .set({ orderStatus, filledCandleTime: filledAt })
+        .where(eq(trainingTrade.id, row.id))
+        .returning()
+      revalidatePath(`/trainer/${input.sessionId}`)
+      return { ok: true, trade: toView(aus, stufen) }
+    }
+    return { ok: false, reason: 'Für diesen Zeitraum liegen keine Kerzen vor.' }
+  }
 
   const [updated] = await db
     .update(trainingTrade)
     .set({
+      orderStatus,
+      filledCandleTime: filledAt,
       outcome: messung.outcome,
       outcomeCandleTime: messung.atTime,
       exitPrice: messung.exitPrice,
       rMultiple: messung.rMultiple,
       ambiguous: messung.ambiguous,
+      reachedTarget: messung.reachedTarget,
     })
     .where(eq(trainingTrade.id, row.id))
     .returning()
 
   revalidatePath(`/trainer/${input.sessionId}`)
-  return { ok: true, trade: toView(updated) }
+  return { ok: true, trade: toView(updated, stufen) }
 }
 
 /**
@@ -451,9 +697,14 @@ export async function getSessionReview(sessionId: number): Promise<{
   if (messbar.length > 0) {
     try {
       const session = await loadSession(userId, sessionId)
-      const providerSymbol = session.stockId
-        ? (await createSymbolResolver(userId))(session.symbol, session.stockId)
-        : (await lookupProviderSymbol(userId, session.symbol)).symbol
+      // Ohne bestätigte Auflösung bleibt MAE/MFE leer, statt eine Zahl aus den
+      // Kerzen eines fremden Papiers zu erfinden.
+      const { symbol: providerSymbol, aufgeloest } = await aufgeloestesSymbolFuerAnfrage(
+        userId,
+        session.symbol,
+        session.stockId,
+      )
+      if (!aufgeloest) throw new Error(unaufgeloestMeldung(session.symbol))
       const candles = await getCachedCandles(
         providerSymbol,
         session.market as Market,

@@ -660,6 +660,38 @@ export const trainingTrade = pgTable('training_trade', {
   note: text('note'),
   ratedAt: timestamp('ratedAt', { withTimezone: true }),
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
+  // --- Ausbaustufe 3 (Migration 0034): die These liegt als Order im Markt ---
+  // liegt | ausgeloest | gestrichen | nicht_ausgeloest | invalidiert
+  //
+  // Vorgabe 'ausgeloest' hält den Altbestand exakt so, wie er gemessen wurde:
+  // Vor dieser Stufe galt der Einstieg beim Festschreiben als gefüllt.
+  orderStatus: text('orderStatus').notNull().default('ausgeloest'),
+  /** Kerze, in der der Einstieg BERÜHRT wurde — Startpunkt der Messung. */
+  filledCandleTime: integer('filledCandleTime'),
+  /** Preisniveau, das die liegende Order tötet. Nicht die Elliott-`invalidation`. */
+  orderInvalidation: doublePrecision('orderInvalidation'),
+  cancelledAt: timestamp('cancelledAt', { withTimezone: true }),
+  /** Höchste erreichte Zielstufe (0 = keine) — neben `outcome`, nicht statt. */
+  reachedTarget: integer('reachedTarget').notNull().default(0),
+})
+
+// Die Teilziele einer geübten Order (Migration 0034).
+//
+// Aufbau wie `trade_target` bei echten Trades, damit `lib/trade-targets.ts`
+// für beide Seiten gilt — ein zweites Ziel-Modell wäre eine zweite Stelle, an
+// der Anteile und Reihenfolge auseinanderlaufen können.
+export const trainingTradeTarget = pgTable('training_trade_target', {
+  id: serial('id').primaryKey(),
+  tradeId: integer('tradeId').notNull(),
+  userId: text('userId').notNull(),
+  /** 0-basiert, aufsteigend nach Abstand zum Einstieg (Stufe 1 = am nächsten). */
+  sortOrder: integer('sortOrder').notNull().default(0),
+  price: doublePrecision('price').notNull(),
+  /** Anteil der ANFANGSposition (0..100]. Die Summe darf unter 100 bleiben. */
+  sharePct: doublePrecision('sharePct').notNull(),
+  executedCandleTime: integer('executedCandleTime'),
+  executedPrice: doublePrecision('executedPrice'),
+  createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
 })
 
 // Was an einem Haltepunkt entschieden wurde (Migration 0029).

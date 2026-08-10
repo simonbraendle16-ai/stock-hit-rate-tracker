@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { TradePlanForm } from './trade-plan-form'
 import { TradeVerdictForm } from './trade-verdict-form'
 import {
+  cancelTrainingOrder,
   getSessionReview,
   endTrainingSession,
   logTrainingCheckpoint,
@@ -13,6 +14,7 @@ import {
 import { TRAINING_TASKS, type TrainingMode } from '@/lib/training'
 import {
   CHECKPOINT_DECISIONS,
+  ORDER_STATUS_LABELS,
   summarizeSession,
   type CheckpointDecision,
   type PickField,
@@ -30,8 +32,20 @@ function fmt(n: number | null | undefined, stellen = 2): string {
 }
 
 /** Ein geübter Trade in der Liste — Plan links, Ergebnis rechts. */
-function TradeRow({ t }: { t: TrainingTradeView }) {
+function TradeRow({
+  t,
+  onCancel,
+}: {
+  t: TrainingTradeView
+  /** Fehlt sie, lässt sich nichts streichen (beendete Sitzung). */
+  onCancel?: (tradeId: number) => void
+}) {
   const enthaltung = t.direction === 'keine'
+  const liegt = t.orderStatus === 'liegt'
+  const nichtGehandelt =
+    t.orderStatus === 'gestrichen' ||
+    t.orderStatus === 'nicht_ausgeloest' ||
+    t.orderStatus === 'invalidiert'
   const ton =
     t.outcome === 'ziel'
       ? 'text-positive'
@@ -57,11 +71,46 @@ function TradeRow({ t }: { t: TrainingTradeView }) {
           <span className="font-mono text-[11px] text-muted-foreground">
             {fmt(t.entryPrice)} · S {fmt(t.stopLoss)} · Z {fmt(t.takeProfit)}
           </span>
+          {t.reachedTarget > 0 && t.targets.length > 1 && (
+            <span
+              className="font-mono text-[10px] text-muted-foreground"
+              title="Erreichte Zielstufe — nach der ersten steht der Stop auf dem Einstand."
+            >
+              TP{t.reachedTarget}/{t.targets.length}
+            </span>
+          )}
           <span className="grow" />
-          {t.outcome ? (
+          {nichtGehandelt ? (
+            // Kein Treffer und kein Fehlschlag: Die Order wurde nie zum Trade.
+            // Sie steht hier, zählt aber nicht in die Quote.
+            <span className="font-mono text-[11px] text-muted-foreground">
+              {ORDER_STATUS_LABELS[t.orderStatus]}
+            </span>
+          ) : t.outcome ? (
             <span className={`font-mono text-xs font-semibold ${ton}`}>
               {t.outcome === 'ziel' ? 'Ziel' : t.outcome === 'stop' ? 'Stop' : 'offen'}{' '}
               {t.rMultiple != null && `${t.rMultiple >= 0 ? '+' : ''}${fmt(t.rMultiple)} R`}
+            </span>
+          ) : liegt ? (
+            <span className="flex items-center gap-2">
+              <span
+                className="font-mono text-[11px] text-warning"
+                title="Wartet darauf, dass der Kurs den Einstieg berührt."
+              >
+                liegt im Markt
+              </span>
+              {onCancel && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 px-2 font-mono text-[10px] text-muted-foreground"
+                  title="Order zurückziehen — sie zählt dann nicht als Trade."
+                  onClick={() => onCancel(t.id)}
+                >
+                  streichen
+                </Button>
+              )}
             </span>
           ) : (
             <span className="font-mono text-[11px] text-muted-foreground">läuft</span>
@@ -154,22 +203,57 @@ export function SessionPanel({
   }, [ended, sessionId, trades.length])
 
   const auftrag = TRAINING_TASKS[mode]
-  // Offen ist ein Trade, der gehandelt wurde und noch kein Ergebnis hat.
-  const offener = trades.find((t) => t.direction !== 'keine' && t.outcome == null) ?? null
+  // Offen ist ein Trade, dessen Order ausgelöst wurde und der noch kein
+  // Ergebnis hat. Eine liegende Order ist noch kein laufender Trade.
+  const laufende = trades.filter(
+    (t) => t.direction !== 'keine' && t.orderStatus === 'ausgeloest' && t.outcome == null,
+  )
+  const liegende = trades.filter((t) => t.orderStatus === 'liegt')
   const unbewertet = trades.find((t) => t.outcome != null && t.rating == null) ?? null
   const bilanz = summarizeSession(
     trades.map((t) => ({
       outcome: t.direction === 'keine' ? null : t.outcome,
       rMultiple: t.rMultiple,
+      orderStatus: t.orderStatus,
     })),
   )
 
-  async function checkpoint(decision: CheckpointDecision) {
+  /**
+   * Eine liegende Order zurückziehen. Sie verschwindet nicht, sondern steht
+   * danach als „gestrichen" in der Liste — dass man eine Order gelegt und
+   * wieder genommen hat, gehört zum Übungsverlauf.
+   */
+  async function orderStreichen(tradeId: number) {
+    try {
+      const res = await cancelTrainingOrder({ sessionId, tradeId })
+      if (!res.ok) {
+        toast.error(res.reason)
+        return
+      }
+      toast.success('Order gestrichen', {
+        description: 'Sie zählt nicht als Trade. Du kannst jetzt eine neue setzen.',
+      })
+      await onTradesChanged()
+    } catch {
+      toast.error('Konnte nicht gestrichen werden.')
+    }
+  }
+
+  /**
+   * Eine Haltepunkt-Entscheidung festhalten — **je Trade**.
+   *
+   * `tradeId` wird ausdrücklich übergeben und nicht mehr aus „dem einen offenen
+   * Trade" abgeleitet: Laufen zwei Trades nebeneinander, muss unterscheidbar
+   * bleiben, für welchen man aussteigen wollte. Sonst kann
+   * `computeInterventionCost` Ursache und Wirkung nicht mehr trennen.
+   * `null` heißt weiterhin „hingesehen, nichts offen".
+   */
+  async function checkpoint(decision: CheckpointDecision, tradeId: number | null = null) {
     setBusy(true)
     try {
       await logTrainingCheckpoint({
         sessionId,
-        tradeId: offener?.id ?? null,
+        tradeId,
         candleTime: visibleCandleTime,
         decision,
       })
@@ -305,7 +389,7 @@ export function SessionPanel({
 
         <div className="space-y-1.5">
           {trades.map((t) => (
-            <TradeRow key={t.id} t={t} />
+            <TradeRow key={t.id} t={t} onCancel={ended ? undefined : orderStreichen} />
           ))}
         </div>
       </div>
@@ -386,10 +470,30 @@ export function SessionPanel({
         )}
       </div>
 
-      {offener ? (
+      {liegende.length > 0 && (
         <div className="space-y-2">
-          <p className="eyebrow">Dein laufender Trade</p>
-          <TradeRow t={offener} />
+          <p className="eyebrow">
+            {liegende.length === 1 ? 'Deine liegende Order' : `Deine ${liegende.length} liegenden Orders`}
+          </p>
+          {liegende.map((t) => (
+            <TradeRow key={t.id} t={t} onCancel={ended ? undefined : orderStreichen} />
+          ))}
+          <p className="note">
+            Sie wird erst zum Trade, wenn der Kurs den Einstieg berührt. Passt sie nicht mehr:
+            streichen und eine neue setzen — nachbessern lässt sich eine festgeschriebene
+            These bewusst nicht.
+          </p>
+        </div>
+      )}
+
+      {laufende.length > 0 ? (
+        <div className="space-y-2">
+          <p className="eyebrow">
+            {laufende.length === 1 ? 'Dein laufender Trade' : `Deine ${laufende.length} laufenden Trades`}
+          </p>
+          {laufende.map((t) => (
+            <TradeRow key={t.id} t={t} />
+          ))}
           <p className="note">
             Lass den Replay laufen. Berührt der Kurs Stop oder Ziel, wird das Ergebnis
             gemessen — du musst es nicht selbst ablesen.
@@ -398,24 +502,51 @@ export function SessionPanel({
           {atCheckpoint && (
             <div className="panel-sunken space-y-2 p-3">
               <p className="eyebrow">Haltepunkt — trägt die These noch?</p>
-              <div className="flex flex-wrap gap-1.5">
-                {CHECKPOINT_DECISIONS.filter((d) => d.needsTrade).map((d) => (
-                  <Button
-                    key={d.id}
-                    size="sm"
-                    variant="outline"
-                    className="h-8 px-2.5 font-mono text-[11px]"
-                    title={d.hint}
-                    disabled={busy}
-                    onClick={() => checkpoint(d.id)}
-                  >
-                    {d.label}
-                  </Button>
-                ))}
-              </div>
+              {/* Je laufendem Trade eine eigene Antwort. Eine Sammelantwort
+                  für alle wäre schneller geklickt, aber danach ließe sich nicht
+                  mehr sagen, welcher Ausstiegswunsch welchen Trade gekostet
+                  hat — genau das rechnet `computeInterventionCost`. */}
+              {laufende.map((t) => (
+                <div key={t.id} className="space-y-1">
+                  {laufende.length > 1 && (
+                    <p className="note text-muted-foreground">
+                      #{t.seq} · {t.direction === 'long' ? 'Long' : 'Short'} {fmt(t.entryPrice)}
+                    </p>
+                  )}
+                  <div className="flex flex-wrap gap-1.5">
+                    {CHECKPOINT_DECISIONS.filter((d) => d.needsTrade).map((d) => (
+                      <Button
+                        key={d.id}
+                        size="sm"
+                        variant="outline"
+                        className="h-8 px-2.5 font-mono text-[11px]"
+                        title={d.hint}
+                        disabled={busy}
+                        onClick={() => checkpoint(d.id, t.id)}
+                      >
+                        {d.label}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
 
+          {/* Ein zweites Setup darf danebenlaufen. Vorher war das Planen
+              gesperrt, solange ein Trade offen war — damit ließ sich weder
+              absichern noch ein zweites Setup im selben Chart üben. */}
+          {!ended && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-9 gap-1.5 px-3"
+              onClick={() => setPlanen(true)}
+            >
+              <CheckCircle2 className="size-3.5" />
+              Weiteren Trade planen
+            </Button>
+          )}
         </div>
       ) : (
         <div className="space-y-2">
@@ -444,18 +575,21 @@ export function SessionPanel({
         </div>
       )}
 
-      {/* Der laufende Trade steht schon oben — hier nur das Abgeschlossene,
+      {/* Laufende und liegende stehen schon oben — hier nur das Abgeschlossene,
           sonst stünde derselbe Trade zweimal auf dem Bildschirm. */}
-      {trades.some((t) => t.id !== offener?.id) && (
-        <div className="space-y-1.5">
-          <p className="eyebrow">Bisher in dieser Sitzung</p>
-          {trades
-            .filter((t) => t.id !== offener?.id)
-            .map((t) => (
-              <TradeRow key={t.id} t={t} />
+      {(() => {
+        const obenGezeigt = new Set([...laufende, ...liegende].map((t) => t.id))
+        const rest = trades.filter((t) => !obenGezeigt.has(t.id))
+        if (rest.length === 0) return null
+        return (
+          <div className="space-y-1.5">
+            <p className="eyebrow">Bisher in dieser Sitzung</p>
+            {rest.map((t) => (
+              <TradeRow key={t.id} t={t} onCancel={ended ? undefined : orderStreichen} />
             ))}
-        </div>
-      )}
+          </div>
+        )
+      })()}
 
       <Button
         size="sm"

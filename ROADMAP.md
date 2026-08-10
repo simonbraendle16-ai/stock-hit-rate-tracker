@@ -1520,3 +1520,86 @@ sobald Einstieg, Stop oder Ziel sich bewegen.
 - **Browser-MCP auf `/trades/[id]`:** Die Detailseite eines aktiven Trades erreicht wegen des
   Minutentakts der Kursaktualisierung nie `document_idle`; die Automatisierung muss deshalb
   unmittelbar nach dem Laden zugreifen. Für die Bedienung von Hand ist das folgenlos.
+
+---
+
+# Etappe 16 — Chart-Werkzeuge und Trainer-Orders (10.08.2026)
+
+## Stil-Leiste ins linke obere Eck
+
+Die Leiste saß mittig **über** der ausgewählten Zeichnung und verdeckte damit genau den
+Ausschnitt, den man gerade bearbeitet. Sie hängt jetzt an einem festen Anker aus dem
+Chart-Rahmen (`price-chart.tsx`, `leisteAnker`) — und zwar **unter** der OHLC-Legende, deren
+Unterkante gemessen wird (`legendRef`): bündig oben hätte sie nur den Kurs statt der Zeichnung
+verdeckt. Verschieben bleibt möglich, beim Wechsel der Auswahl fällt sie in die Ecke zurück.
+Der Auswahlrahmen (`onSelectionBox` → `auswahlRahmen`) wird für die Lage nicht mehr gebraucht
+und ist aus `price-chart.tsx` entfernt; der optionale Prop in `drawing-layer.tsx` blieb stehen.
+
+## Fib-Werkzeuge auf TradingView-Niveau
+
+- **Je Level** eigene Farbe, Stärke und Strichart (`FibLevel.staerke` / `.art`, `setLevel`).
+  `FibStrichart` ist ein Alias auf `Strichart` aus `lib/drawing-style.ts` — zwei Aufzählungen
+  mit denselben Werten wären zwei Gelegenheiten auseinanderzulaufen.
+- **Beide Seiten getrennt verlängerbar** (`verlaengernLinks`) und **Flächen-Deckkraft**
+  (`flaecheDeckkraft`, 0…1) statt fest verdrahteter 0,07/0,03.
+- **Level-Tabelle** im Panel statt der Chip-Reihe: Häkchen · Verhältnis · Farbe · Stärke · Art ·
+  Zurücksetzen · Entfernen. „auto" heißt jeweils „es gilt, was die Zeichnung trägt".
+- **Vorlagen** (`DrawingDefaults.fibVorlagen`, höchstens 12) über die vorhandenen Actions
+  `loadDrawingDefaults`/`saveDrawingDefaults` — **keine Migration**, der Wert liegt als JSON.
+- `fibLinien` löst Stärke und Art auf, damit die Zeichenschicht nicht ein zweites Mal über
+  Standards entscheidet. Rückfall ist die Zeichnung selbst (`stil.width`), nicht `fib.staerke`.
+
+## Trainer: liegende Orders, Teilziele, parallele Trades (Migration 0034)
+
+**Der Messfehler.** Der Einstieg galt beim Festschreiben als ausgeführt — auch wenn der
+geplante Kurs nie gehandelt wurde. Damit gingen Trades in die Trefferquote ein, die es nie
+gegeben hat.
+
+- **`orderStatus`** (`liegt · ausgeloest · gestrichen · nicht_ausgeloest · invalidiert`),
+  Vorgabe `ausgeloest` — Altbestand behält seine Zahlen ohne Backfill.
+- **`findEntryFill`** nutzt `directionForLevel` + `candleReachesLevel` aus `lib/alerts.ts`,
+  dieselben Helfer wie `simulateMissedTrade` beim Bot-Zwilling. Einstieg UND Invalidierung in
+  derselben Kerze → **der Einstieg gilt**: Die bequeme Lesart würde einen wahrscheinlichen
+  Verlust als „gar nicht gehandelt" wegdefinieren.
+- **`orderInvalidation`** ist bewusst NICHT die Elliott-`invalidation` — eine Zählung kann
+  halten, während die Order nicht mehr sinnvoll ist.
+- **`measureStagedOutcome`** rechnet gestaffelte Ausstiege über `training_trade_target`
+  (Aufbau wie `trade_target`, Prüfung über `normalizeTargets`). `measureOutcome` ist nur noch
+  die Hülle mit einer Stufe zu 100 % — ein einziger Kerzenlauf für beide Fälle.
+- **Vom Nutzer so entschieden, gegen die Empfehlung:** Der Stop wandert nach der ersten Stufe
+  auf den Einstand, und `outcome` ist `ziel`, sobald irgendeine Stufe lief. Beides schmeichelt
+  der Quote — deshalb stehen `reachedTarget`, die einzelnen `exits` und das gemischte R daneben,
+  und `summarizeSession` weist `nichtGehandelt` getrennt aus.
+- **Parallele Trades:** `training-workspace.tsx` prüft alle offenen statt nur des ersten
+  (`.find()` → `.filter()`), Haltepunkte fragen **je laufendem Trade** (sonst kann
+  `computeInterventionCost` Ursache und Wirkung nicht mehr trennen), und ein weiterer Trade
+  lässt sich planen, während einer läuft.
+- **Revidieren = streichen und neu setzen.** `cancelTrainingOrder` löscht nie, sondern setzt
+  `gestrichen` — dass eine Order gelegt und zurückgenommen wurde, gehört zum Übungsverlauf.
+  Nachbessern einer liegenden Order gibt es bewusst nicht.
+
+## Trade ohne Instrument — die Ursache von „Unbekannter Ticker bei Twelve Data"
+
+Zwei von drei Trades hingen an keinem Instrument (`stockId` leer). Ohne Instrument gibt es
+keine Symbolauflösung, also ging der **Rohticker** an den Anbieter — was diese App verbietet.
+Yahoo scheiterte, der Rückfall Twelve Data kannte das Kürzel ebenfalls nicht, und **dessen**
+Name stand in der Fehlermeldung. Die Meldung beschuldigte damit die falsche Stelle.
+
+- **`grundTicker`** (`lib/instrument-link.ts`) als dritte Stufe der Zuordnung: `RHM` trifft
+  `RHM.DE`. Gattungssuffixe (`BRK.B`) und Anbieter-Schreibweisen (`GC=F`, `^GDAXI`) bleiben
+  unangetastet, und bei zwei Börsen desselben Papiers wird nicht geraten.
+- **`createInstrumentForTrade`** legt ein Instrument an, wenn es keins gibt (Sektion
+  „Aus Trades"), in `createTrade` und über `scripts/link-trades.ts --anlegen`. Bei
+  `mehrdeutig` wird NICHT angelegt. Erst damit gilt „jeder Trade ist aufgelöst".
+- **`resolveProvider`** nennt nicht mehr den Rückfall-Anbieter, wenn dieser ein Kürzel nicht
+  kennt — dass Twelve Data weder Terminkontrakte noch Indizes noch XETRA kann, ist erwartbar
+  und sagt nichts über die Ursache.
+
+## Offen / bewusst nicht dabei
+
+- **Kein Nachziehen von Stop oder Ziel nach dem Fill** — ausdrücklich nicht gewünscht.
+- **Keine Änderungshistorie für Orders**; streichen und neu setzen ist der Weg.
+- **`XAUUSDT` löst bei keinem Anbieter auf.** Der Trade hängt jetzt am vorhandenen
+  Gold-Instrument `GC=F` (wie der `XAUUSD`-Trade), statt ein zweites Gold zu führen und die
+  Trefferquote zu teilen.
+- **Fib-Werkzeuge brauchen zwei Klicks**, keinen Zug — für die Browser-Automatisierung wichtig.

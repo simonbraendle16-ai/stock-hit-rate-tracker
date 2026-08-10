@@ -21,7 +21,7 @@
  * Level erreicht ist, wären zwei Wahrheiten.
  */
 
-import { candleReachesLevel } from './alerts'
+import { candleReachesLevel, directionForLevel } from './alerts'
 import type { Candle } from './market-data/types'
 import type { TrainingDirection, TrainingMode, TrainingRating } from './training'
 
@@ -262,12 +262,88 @@ export function measureOutcome(
   candles: readonly Candle[],
   fromSec: number,
 ): OutcomeMeasurement | null {
-  const { direction, entryPrice: entry, stopLoss: stop, takeProfit: ziel } = trade
+  // Eine Stufe zu 100 % ist derselbe Fall — gerechnet wird deshalb an genau
+  // einer Stelle. Zwei Kerzenläufe wären zwei Gelegenheiten, verschieden zu
+  // entscheiden, wann ein Level als berührt gilt.
+  return measureStagedOutcome(
+    { ...trade, targets: [{ price: trade.takeProfit, sharePct: 100 }], stopAufEinstand: false },
+    candles,
+    fromSec,
+  )
+}
+
+/** Eine Zielstufe der geübten Order. */
+export interface StagedTarget {
+  price: number
+  /** Anteil der ANFANGSposition auf dieser Stufe (0..100]. */
+  sharePct: number
+}
+
+/** Ein abgerechneter Teilausstieg. */
+export interface StagedExit {
+  /** 1-basierte Stufe; 0 steht für den Rest am Stop bzw. am Ende. */
+  stufe: number
+  preis: number
+  /** Tatsächlich abgerechneter Anteil in Prozent. */
+  anteil: number
+  atTime: number
+  /** Gewichteter R-Beitrag dieses Teils. */
+  r: number
+}
+
+export interface StagedMeasurement extends OutcomeMeasurement {
+  /** Höchste erreichte Zielstufe (0 = keine). */
+  reachedTarget: number
+  exits: StagedExit[]
+}
+
+/**
+ * Das Ergebnis einer geübten Order mit Teilzielen aus den Kerzen bestimmen.
+ *
+ * Die Regeln, alle vom Nutzer so entschieden:
+ *
+ *  - **Stufen der Reihe nach.** Jede Stufe nimmt ihren Anteil der ANFANGS-
+ *    position; die Summe darf unter 100 % bleiben, der Rest läuft weiter.
+ *  - **`stopAufEinstand`**: Nach der ersten abgerechneten Stufe wandert der Stop
+ *    auf den Einstieg. Das schmeichelt der Statistik gegenüber dem ursprünglich
+ *    geplanten Risiko — deshalb stehen die Teilausstiege einzeln in `exits`,
+ *    damit man sieht, woraus das R entstanden ist.
+ *  - **Stop und Ziel in derselben Kerze → der Stop gilt.** Unverändert
+ *    konservativ: Aus einer Kerze geht nicht hervor, was zuerst kam.
+ *  - **`outcome` ist 'ziel', sobald irgendeine Stufe lief.** Wie weit es
+ *    wirklich kam, sagt `reachedTarget`.
+ *
+ * `null` heißt nicht messbar — der Aufrufer weist das aus, statt eine Null zu
+ * erfinden.
+ */
+export function measureStagedOutcome(
+  trade: {
+    direction: TrainingDirection
+    entryPrice: number
+    stopLoss: number
+    targets: readonly StagedTarget[]
+    /** Stop nach der ersten Stufe auf den Einstieg ziehen. */
+    stopAufEinstand: boolean
+  },
+  candles: readonly Candle[],
+  fromSec: number,
+): StagedMeasurement | null {
+  const { direction, entryPrice: entry, stopLoss: stop } = trade
   if (direction === 'keine') return null
-  if (![entry, stop, ziel, fromSec].every((n) => Number.isFinite(n))) return null
+  if (![entry, stop, fromSec].every((n) => Number.isFinite(n))) return null
 
   const risiko = Math.abs(entry - stop)
   if (risiko <= 0) return null
+
+  const stufen = trade.targets
+    .filter((t) => Number.isFinite(t.price) && t.sharePct > 0)
+    // Nach Abstand zum Einstieg: Stufe 1 ist die nächstliegende. Die Reihenfolge
+    // ist die Abrechnungsreihenfolge und darf nicht von der Eingabe abhängen.
+    .map((t) => ({ ...t }))
+    .sort((a, b) =>
+      direction === 'short' ? b.price - a.price : a.price - b.price,
+    )
+  if (stufen.length === 0) return null
 
   const fenster = candles.filter((c) => c.time > fromSec)
   if (fenster.length === 0) return null
@@ -276,40 +352,162 @@ export function measureOutcome(
   const zielRichtung = direction === 'short' ? 'below' : 'above'
 
   /** Gewinn je Einheit → R. Bei Short zählt die Bewegung nach unten positiv. */
-  const inR = (kurs: number) =>
-    ((direction === 'short' ? entry - kurs : kurs - entry) / risiko)
+  const inR = (kurs: number) => (direction === 'short' ? entry - kurs : kurs - entry) / risiko
+
+  let stopAktuell = stop
+  let rest = 100
+  let summeR = 0
+  let reached = 0
+  const exits: StagedExit[] = []
+
+  const fertig = (
+    outcome: TradeOutcome,
+    preis: number,
+    atTime: number,
+    ambiguous: boolean,
+  ): StagedMeasurement => ({
+    outcome,
+    exitPrice: preis,
+    atTime,
+    rMultiple: summeR,
+    ambiguous,
+    reachedTarget: reached,
+    exits,
+  })
 
   for (const c of fenster) {
-    const trifftStop = candleReachesLevel(stopRichtung, stop, c)
-    const trifftZiel = candleReachesLevel(zielRichtung, ziel, c)
+    const trifftStop = candleReachesLevel(stopRichtung, stopAktuell, c)
+    const offeneStufen = stufen.slice(reached)
+    const trifftIrgendeinZiel = offeneStufen.some((t) =>
+      candleReachesLevel(zielRichtung, t.price, c),
+    )
+
     if (trifftStop) {
-      return {
-        outcome: 'stop',
-        exitPrice: stop,
-        atTime: c.time,
-        rMultiple: inR(stop),
-        ambiguous: trifftZiel,
-      }
+      const anteil = rest
+      const r = (anteil / 100) * inR(stopAktuell)
+      summeR += r
+      exits.push({ stufe: 0, preis: stopAktuell, anteil, atTime: c.time, r })
+      // Lief vorher schon eine Stufe, war es kein reiner Fehlschlag — nach der
+      // Absprache zählt das als Treffer, und `reachedTarget` hält fest, wie weit.
+      return fertig(reached > 0 ? 'ziel' : 'stop', stopAktuell, c.time, trifftIrgendeinZiel)
     }
-    if (trifftZiel) {
-      return {
-        outcome: 'ziel',
-        exitPrice: ziel,
-        atTime: c.time,
-        rMultiple: inR(ziel),
-        ambiguous: false,
-      }
+
+    for (const t of offeneStufen) {
+      if (!candleReachesLevel(zielRichtung, t.price, c)) break
+      const anteil = Math.min(t.sharePct, rest)
+      if (anteil <= 0) break
+      const r = (anteil / 100) * inR(t.price)
+      summeR += r
+      rest -= anteil
+      reached += 1
+      exits.push({ stufe: reached, preis: t.price, anteil, atTime: c.time, r })
+      if (trade.stopAufEinstand) stopAktuell = entry
+      if (rest <= 0) return fertig('ziel', t.price, c.time, false)
     }
   }
 
+  // Nichts mehr getroffen: Der Rest wird zum letzten Kurs bewertet.
   const letzte = fenster[fenster.length - 1]
-  return {
-    outcome: 'offen',
-    exitPrice: letzte.close,
-    atTime: letzte.time,
-    rMultiple: inR(letzte.close),
-    ambiguous: false,
+  if (rest > 0) {
+    const r = (rest / 100) * inR(letzte.close)
+    summeR += r
+    exits.push({ stufe: 0, preis: letzte.close, anteil: rest, atTime: letzte.time, r })
   }
+  return fertig(reached > 0 ? 'ziel' : 'offen', letzte.close, letzte.time, false)
+}
+
+/** Wie es einer liegenden Order ergangen ist. */
+export type OrderStatus =
+  | 'liegt'
+  | 'ausgeloest'
+  | 'gestrichen'
+  | 'nicht_ausgeloest'
+  | 'invalidiert'
+
+export const ORDER_STATUS: OrderStatus[] = [
+  'liegt',
+  'ausgeloest',
+  'gestrichen',
+  'nicht_ausgeloest',
+  'invalidiert',
+]
+
+/** Beschriftung für die Oberfläche — an einer Stelle, damit sie überall gleich heißt. */
+export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
+  liegt: 'liegt im Markt',
+  ausgeloest: 'ausgelöst',
+  gestrichen: 'gestrichen',
+  nicht_ausgeloest: 'nicht ausgelöst',
+  invalidiert: 'invalidiert',
+}
+
+export function istOrderStatus(v: unknown): v is OrderStatus {
+  return typeof v === 'string' && (ORDER_STATUS as string[]).includes(v)
+}
+
+export interface EntryFill {
+  status: 'ausgeloest' | 'nicht_ausgeloest' | 'invalidiert'
+  /** Kerze der Auslösung; `null`, wenn sie nie kam. */
+  atTime: number | null
+}
+
+/**
+ * Wurde der geplante Einstieg überhaupt erreicht?
+ *
+ * Bis zu dieser Ausbaustufe galt er im Moment des Festschreibens als gefüllt —
+ * damit gingen Trades in die Quote ein, die es nie gegeben hat. Die Prüfung ist
+ * dieselbe wie bei echten Trades (`simulateMissedTrade`, `lib/bot-twin.ts`):
+ * Aus welcher Richtung der Kurs auf den Einstieg zuläuft, entscheidet
+ * `directionForLevel` gegen den letzten sichtbaren Schlusskurs.
+ *
+ * **Einstieg und Invalidierung in derselben Kerze → der Einstieg gilt.** Das ist
+ * die unbequeme Annahme: Eine für ungültig erklärte Order wäre gar kein Trade
+ * und fiele aus der Quote — die bequeme Lesart würde also einen wahrscheinlichen
+ * Verlust wegdefinieren. Dieselbe Haltung wie bei „Stop schlägt Ziel".
+ */
+export function findEntryFill(
+  order: {
+    direction: TrainingDirection
+    entryPrice: number
+    /** Preisniveau, das die Order tötet, bevor sie ausgelöst wird. */
+    orderInvalidation?: number | null
+  },
+  candles: readonly Candle[],
+  fromSec: number,
+): EntryFill | null {
+  const { entryPrice: entry } = order
+  if (order.direction === 'keine') return null
+  if (![entry, fromSec].every((n) => Number.isFinite(n))) return null
+
+  const fenster = candles.filter((c) => c.time > fromSec)
+  if (fenster.length === 0) return null
+
+  // Bezug ist der Schlusskurs der letzten SICHTBAREN Kerze — der Kurs, zu dem
+  // die Order gelegt wurde. Fehlt sie (Ausschnitt fängt später an), tut es die
+  // erste Kerze danach.
+  const beiAuftrag = candles.find((c) => c.time === fromSec)
+  const referenz = beiAuftrag ? beiAuftrag.close : fenster[0].close
+
+  const einstiegRichtung = directionForLevel(entry, referenz)
+  // Kein Abstand zum Kurs: Die Order liegt bereits im Markt und ist sofort drin.
+  if (einstiegRichtung == null) {
+    return { status: 'ausgeloest', atTime: fenster[0].time }
+  }
+
+  const inv = order.orderInvalidation
+  const invRichtung =
+    inv != null && Number.isFinite(inv) ? directionForLevel(inv, referenz) : null
+
+  for (const c of fenster) {
+    if (candleReachesLevel(einstiegRichtung, entry, c)) {
+      return { status: 'ausgeloest', atTime: c.time }
+    }
+    if (inv != null && invRichtung != null && candleReachesLevel(invRichtung, inv, c)) {
+      return { status: 'invalidiert', atTime: c.time }
+    }
+  }
+
+  return { status: 'nicht_ausgeloest', atTime: null }
 }
 
 /**
@@ -357,6 +555,31 @@ export interface TrainingTradeView {
   errorTags: string[]
   note: string | null
   ratedAt: Date | null
+  // --- Ausbaustufe 3: die These liegt als Order im Markt ---
+  orderStatus: OrderStatus
+  /** Kerze, in der der Einstieg berührt wurde. `null`, solange sie liegt. */
+  filledCandleTime: number | null
+  orderInvalidation: number | null
+  /** Höchste erreichte Zielstufe (0 = keine). */
+  reachedTarget: number
+  /** Die geplanten Teilziele, aufsteigend nach Abstand zum Einstieg. */
+  targets: { price: number; sharePct: number }[]
+}
+
+/** Ob eine Order noch auf ihre Auslösung wartet. */
+export function istLiegend(t: { orderStatus: OrderStatus }): boolean {
+  return t.orderStatus === 'liegt'
+}
+
+/**
+ * Zählt dieser Trade in die Trefferquote?
+ *
+ * Gestrichene, nie ausgelöste und invalidierte Orders waren **keine Trades** —
+ * sie gehören ausgewiesen, aber nicht in die Quote. Genau daran hing der
+ * Messfehler dieser Ausbaustufe.
+ */
+export function zaehltInQuote(t: { orderStatus: OrderStatus; direction: TrainingDirection }): boolean {
+  return t.direction !== 'keine' && t.orderStatus === 'ausgeloest'
 }
 
 // ---------------------------------------------------------------------------
@@ -371,6 +594,13 @@ export interface SessionSummary {
   offen: number
   /** Bewusste Enthaltungen — sie zählen NICHT in die Trefferquote. */
   keinSetup: number
+  /**
+   * Orders, die nie zu einem Trade wurden: gestrichen, nie ausgelöst oder vor
+   * dem Einstieg invalidiert. Ausgewiesen, aber **nicht** in der Quote — sie
+   * waren keine Trades. Genau hier saß der Messfehler: Vor Ausbaustufe 3 galt
+   * jede geplante Order als ausgeführt.
+   */
+  nichtGehandelt: number
   /** Summe in R über die entschiedenen Trades. */
   summeR: number
   /** Trefferquote in Prozent (Ziel / entschieden) — `null`, wenn nichts entschieden ist. */
@@ -446,7 +676,12 @@ export function computeInterventionCost(
  * geübt werden soll.
  */
 export function summarizeSession(
-  trades: readonly { outcome: TradeOutcome | null; rMultiple: number | null }[],
+  trades: readonly {
+    outcome: TradeOutcome | null
+    rMultiple: number | null
+    /** Fehlt sie (Altbestand, Tests), gilt die Order als ausgeführt. */
+    orderStatus?: OrderStatus
+  }[],
 ): SessionSummary {
   const out: SessionSummary = {
     entschieden: 0,
@@ -454,11 +689,24 @@ export function summarizeSession(
     stop: 0,
     offen: 0,
     keinSetup: 0,
+    nichtGehandelt: 0,
     summeR: 0,
     quote: null,
   }
 
   for (const t of trades) {
+    // Eine Order, die nie ausgelöst hat, ist weder Treffer noch Fehlschlag —
+    // und auch keine Enthaltung: Der Wille war da, der Markt kam nicht.
+    if (
+      t.orderStatus === 'gestrichen' ||
+      t.orderStatus === 'nicht_ausgeloest' ||
+      t.orderStatus === 'invalidiert'
+    ) {
+      out.nichtGehandelt++
+      continue
+    }
+    // Eine noch liegende Order ist schlicht noch nichts.
+    if (t.orderStatus === 'liegt') continue
     if (t.outcome == null) {
       out.keinSetup++
       continue

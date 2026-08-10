@@ -18,7 +18,8 @@ import {
 import {
   PICK_LABELS,
   isStopMode,
-  measureOutcome,
+  findEntryFill,
+  measureStagedOutcome,
   nextStopAt,
   type PickField,
   type StopMode,
@@ -465,46 +466,83 @@ export function TrainingWorkspace({
     naechsteFreigabe,
   ])
 
+  // Jeder noch nicht abgeschlossene Trade wird geprüft, nicht nur der erste.
+  //
+  // Vorher stand hier ein `.find()` — damit lief faktisch immer nur EIN Trade,
+  // und ein zweiter daneben blieb liegen, bis der erste abgerechnet war. Genau
+  // das machte parallele Setups unmöglich. Der Server bleibt die Messstelle:
+  // Hier wird nur vorgefiltert, damit nicht bei jeder Kerze für jeden Trade
+  // eine Anfrage rausgeht.
   useEffect(() => {
     if (altModell || ended || candles.length === 0 || messungLaeuft.current) return
-    const offen = trades.find((t) => t.direction !== 'keine' && t.outcome == null)
-    if (
-      !offen ||
-      offen.entryCandleTime == null ||
-      offen.entryPrice == null ||
-      offen.stopLoss == null ||
-      offen.takeProfit == null
-    ) {
-      return
-    }
 
-    const treffer = measureOutcome(
-      {
-        direction: offen.direction,
-        entryPrice: offen.entryPrice,
-        stopLoss: offen.stopLoss,
-        takeProfit: offen.takeProfit,
-      },
-      candles.slice(0, visible),
-      offen.entryCandleTime,
-    )
-    // 'offen' heißt: bis hierher ist nichts passiert — dann bleibt der Trade
-    // stehen und läuft weiter.
-    if (!treffer || treffer.outcome === 'offen') return
+    const sichtbar = candles.slice(0, visible)
+    const faellig = trades.filter((t) => {
+      if (t.direction === 'keine' || t.outcome != null) return false
+      if (t.orderStatus === 'gestrichen') return false
+      if (t.entryCandleTime == null || t.entryPrice == null || t.stopLoss == null) return false
+
+      // Liegt die Order noch, ist die Frage nicht „Ziel oder Stop", sondern
+      // „ist sie überhaupt ausgelöst worden".
+      if (t.orderStatus === 'liegt') {
+        const fill = findEntryFill(
+          {
+            direction: t.direction,
+            entryPrice: t.entryPrice,
+            orderInvalidation: t.orderInvalidation,
+          },
+          sichtbar,
+          t.entryCandleTime,
+        )
+        // 'nicht_ausgeloest' heißt nur „bis hierher nicht" — das kann noch
+        // kommen und ist erst am Ende des Ausschnitts eine Aussage.
+        return fill != null && fill.status !== 'nicht_ausgeloest'
+      }
+
+      const treffer = measureStagedOutcome(
+        {
+          direction: t.direction,
+          entryPrice: t.entryPrice,
+          stopLoss: t.stopLoss,
+          targets: t.targets,
+          stopAufEinstand: t.targets.length > 1,
+        },
+        sichtbar,
+        t.filledCandleTime ?? t.entryCandleTime,
+      )
+      // 'offen' heißt: bis hierher ist nichts passiert — dann läuft er weiter.
+      return treffer != null && treffer.outcome !== 'offen'
+    })
+
+    if (faellig.length === 0) return
 
     messungLaeuft.current = true
-    resolveTrainingTrade({ sessionId: session.id, tradeId: offen.id })
-      .then((res) => {
-        // Der Moment, in dem der Plan aufgeht oder scheitert, ist der
+    Promise.all(
+      faellig.map((t) => resolveTrainingTrade({ sessionId: session.id, tradeId: t.id })),
+    )
+      .then((ergebnisse) => {
+        // Der Moment, in dem ein Plan aufgeht oder scheitert, ist der
         // lehrreichste der ganzen Übung — er darf nicht beiläufig passieren.
         // Der Replay hält an: Weiterlaufen würde über die Stelle hinwegspielen,
-        // an der man hinsehen soll.
-        if (res.ok && res.trade.outcome && res.trade.outcome !== 'offen') {
-          setFreigabe(visible)
+        // an der man hinsehen soll. Das gilt schon, wenn EINER fertig wurde.
+        let anhalten = false
+        for (const res of ergebnisse) {
+          if (!res.ok) continue
+          if (res.trade.orderStatus === 'invalidiert') {
+            anhalten = true
+            toast.warning('Order invalidiert', {
+              description: 'Das Niveau wurde berührt, bevor der Einstieg kam — kein Trade.',
+            })
+            continue
+          }
+          if (!res.trade.outcome || res.trade.outcome === 'offen') continue
+          anhalten = true
           const r = res.trade.rMultiple
           const inR = r != null ? ` · ${r >= 0 ? '+' : ''}${r.toFixed(2)} R` : ''
+          const stufe =
+            res.trade.reachedTarget > 0 ? ` (Stufe ${res.trade.reachedTarget})` : ''
           if (res.trade.outcome === 'ziel') {
-            toast.success(`Ziel erreicht${inR}`, {
+            toast.success(`Ziel erreicht${stufe}${inR}`, {
               description: 'Der Plan ist aufgegangen. Ordne ihn rechts ein.',
             })
           } else {
@@ -513,6 +551,7 @@ export function TrainingWorkspace({
             })
           }
         }
+        if (anhalten) setFreigabe(visible)
         return tradesNeuLaden()
       })
       .catch(() => {
