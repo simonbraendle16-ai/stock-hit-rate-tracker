@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState, useTransition } from 'react'
+import { useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import type { StockWithStats } from '@/app/actions/stocks'
@@ -22,17 +22,31 @@ import {
   SymbolRepairDialog,
   type RepairTarget,
 } from '@/components/watchlist/symbol-repair-dialog'
-import { syncAllSymbols } from '@/app/actions/symbols'
+import { addStockFromSearch, searchSymbols, syncAllSymbols } from '@/app/actions/symbols'
 import {
   AlertTriangle,
   ChevronDown,
   ChevronRight,
   ChevronsUpDown,
   FolderInput,
+  Loader2,
+  Plus,
   RefreshCw,
   Search,
 } from 'lucide-react'
 import { toast } from 'sonner'
+
+/** Yahoos `quoteType` in der Trefferliste — englische Rohwerte zeigt niemand gern. */
+const QUOTE_TYPE_LABELS: Record<string, string> = {
+  EQUITY: 'Aktie',
+  ETF: 'ETF',
+  MUTUALFUND: 'Fonds',
+  CRYPTOCURRENCY: 'Krypto',
+  CURRENCY: 'Devisen',
+  FUTURE: 'Future',
+  OPTION: 'Option',
+  INDEX: 'Index',
+}
 
 const MARKET_LABELS: Record<string, string> = {
   aktien: 'Aktien',
@@ -498,6 +512,102 @@ export function WatchlistGrid({
   const [syncing, setSyncing] = useState(false)
   const { sparks, reload: reloadQuotes } = useSparklines()
 
+  // --- Symbolsuche -------------------------------------------------------
+  // Dasselbe Feld filtert die eigene Liste UND findet neue Instrumente. Zwei
+  // getrennte Eingaben nebeneinander wären nur mehr Fläche für dieselbe Frage:
+  // „wo ist X?" — die Antwort ist mal ein vorhandenes, mal ein neues Papier.
+  const [hits, setHits] = useState<
+    Array<{ symbol: string; name: string; exchange: string; quoteType: string }>
+  >([])
+  const [searching, setSearching] = useState(false)
+  const [adding, setAdding] = useState<string | null>(null)
+  const [dropdownOffen, setDropdownOffen] = useState(false)
+  const suchBox = useRef<HTMLDivElement | null>(null)
+  const debounce = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    const q = query.trim()
+    if (debounce.current) clearTimeout(debounce.current)
+    if (q.length < 2) {
+      setHits([])
+      setSearching(false)
+      return
+    }
+    setSearching(true)
+    debounce.current = setTimeout(async () => {
+      try {
+        setHits(await searchSymbols(q))
+      } catch {
+        // Die Suche ist eine Zugabe: Fällt Yahoo aus, filtert das Feld weiter
+        // die eigene Liste. Ein Fehlerbalken dafür wäre lauter als der Nutzen.
+        setHits([])
+      } finally {
+        setSearching(false)
+      }
+    }, 300)
+    return () => {
+      if (debounce.current) clearTimeout(debounce.current)
+    }
+  }, [query])
+
+  // Klick daneben und Escape schließen die Liste.
+  useEffect(() => {
+    if (!dropdownOffen) return
+    const beiKlick = (e: MouseEvent) => {
+      if (suchBox.current && !suchBox.current.contains(e.target as Node)) setDropdownOffen(false)
+    }
+    const beiTaste = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setDropdownOffen(false)
+    }
+    document.addEventListener('mousedown', beiKlick)
+    document.addEventListener('keydown', beiTaste)
+    return () => {
+      document.removeEventListener('mousedown', beiKlick)
+      document.removeEventListener('keydown', beiTaste)
+    }
+  }, [dropdownOffen])
+
+  /** Was schon in der Watchlist steht, gehört nicht unter „Hinzufügen". */
+  const bekannteSymbole = useMemo(() => {
+    const set = new Set<string>()
+    for (const s of stocks) {
+      set.add(s.ticker.toUpperCase())
+      if (s.providerSymbol) set.add(s.providerSymbol.toUpperCase())
+    }
+    return set
+  }, [stocks])
+
+  const neueTreffer = useMemo(
+    () => hits.filter((h) => !bekannteSymbole.has(h.symbol.toUpperCase())),
+    [hits, bekannteSymbole],
+  )
+
+  const hinzufuegen = (hit: { symbol: string; name: string; quoteType: string }) => {
+    setAdding(hit.symbol)
+    startTransition(async () => {
+      try {
+        const r = await addStockFromSearch(hit)
+        if (r.bereitsVorhanden) {
+          toast.info(`${r.ticker} steht bereits in der Watchlist.`)
+        } else if (r.hinweis) {
+          // Angelegt, aber ohne bestätigtes Anbieter-Symbol — das muss sichtbar
+          // sein, sonst wundert sich der Nutzer über die fehlende Kursangabe.
+          toast.warning(`${r.ticker} angelegt, Symbol noch offen: ${r.hinweis}`)
+        } else {
+          toast.success(`${r.ticker} zur Watchlist hinzugefügt.`)
+        }
+        setQuery('')
+        setDropdownOffen(false)
+        router.refresh()
+        reloadQuotes()
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Instrument konnte nicht angelegt werden.')
+      } finally {
+        setAdding(null)
+      }
+    })
+  }
+
   const cardById = useMemo(() => {
     const m = new Map<number, InstrumentStats>()
     for (const c of cards) m.set(c.stockId, c)
@@ -635,14 +745,85 @@ export function WatchlistGrid({
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <div className="relative">
+        <div ref={suchBox} className="relative">
           <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Suchen …"
+            placeholder="Symbol suchen oder filtern …"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            className="h-9 w-56 pl-8 font-mono text-xs"
+            onChange={(e) => {
+              setQuery(e.target.value)
+              setDropdownOffen(true)
+            }}
+            onFocus={() => setDropdownOffen(true)}
+            className="h-9 w-72 pl-8 font-mono text-xs"
           />
+          {searching && (
+            <Loader2 className="absolute right-2.5 top-1/2 size-3.5 -translate-y-1/2 animate-spin text-muted-foreground" />
+          )}
+
+          {dropdownOffen && query.trim().length >= 2 && (
+            <div className="panel-raised absolute left-0 top-full z-30 mt-1 max-h-80 w-[22rem] overflow-y-auto p-1">
+              <p className="px-2 py-1 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+                In deiner Watchlist
+              </p>
+              {filtered.length === 0 ? (
+                <p className="px-2 pb-1.5 font-mono text-[11px] text-muted-foreground">
+                  Kein Treffer — die Liste unten ist leer.
+                </p>
+              ) : (
+                filtered.slice(0, 5).map((s) => (
+                  <Link
+                    key={s.id}
+                    href={`/stock/${s.id}`}
+                    className="flex items-baseline gap-2 rounded-md px-2 py-1.5 hover:bg-muted/60"
+                  >
+                    <span className="font-mono text-xs text-foreground">{s.ticker}</span>
+                    <span className="truncate text-[11px] text-muted-foreground">{s.name}</span>
+                  </Link>
+                ))
+              )}
+
+              <div className="my-1 border-t border-border" />
+              <p className="px-2 py-1 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+                Hinzufügen
+              </p>
+              {searching && neueTreffer.length === 0 && (
+                <p className="px-2 pb-1.5 font-mono text-[11px] text-muted-foreground">
+                  Suche läuft …
+                </p>
+              )}
+              {!searching && neueTreffer.length === 0 && (
+                <p className="px-2 pb-1.5 font-mono text-[11px] text-muted-foreground">
+                  Nichts Neues gefunden.
+                </p>
+              )}
+              {neueTreffer.map((h) => (
+                <button
+                  key={`${h.symbol}-${h.exchange}`}
+                  type="button"
+                  disabled={adding !== null}
+                  onClick={() => hinzufuegen(h)}
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-muted/60 disabled:opacity-50"
+                >
+                  {adding === h.symbol ? (
+                    <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+                  ) : (
+                    <Plus className="size-3.5 shrink-0 text-muted-foreground" />
+                  )}
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-baseline gap-2">
+                      <span className="font-mono text-xs text-foreground">{h.symbol}</span>
+                      <span className="truncate text-[11px] text-muted-foreground">{h.name}</span>
+                    </span>
+                    <span className="font-mono text-[10px] text-muted-foreground">
+                      {h.exchange}
+                      {h.quoteType ? ` · ${QUOTE_TYPE_LABELS[h.quoteType] ?? h.quoteType}` : ''}
+                    </span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         <select
           value={marketFilter}

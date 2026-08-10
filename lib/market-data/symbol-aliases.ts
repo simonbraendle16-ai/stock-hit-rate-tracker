@@ -278,3 +278,42 @@ export const LEGAL_SUFFIXES = [
   'o.n.',
   'the',
 ]
+
+/**
+ * Yahoo-Symbol → die Schreibweise, die der Nutzer selbst tippen würde.
+ *
+ * Gegenrichtung zu den Tabellen oben, gebraucht seit die Watchlist Symbole aus
+ * der Yahoo-Suche übernimmt: Die Suche liefert WTI-Öl als `CL=F` und den
+ * S&P 500 als `^GSPC` — in der Watchlist stehen aber `CL1!` und `SPX`, weil so
+ * getippt wurde. Ohne Rückübersetzung mischt eine Liste zwei Notationen für
+ * dasselbe Instrument.
+ *
+ * Bei mehreren Aliassen gewinnt der kürzeste, bei gleicher Länge der
+ * alphabetisch erste — das ist stabil und trifft die gebräuchliche Form
+ * (`SPX` statt `SPX500`, `DAX` statt `GDAXI`).
+ */
+const UMKEHRTABELLE: Record<string, string> = (() => {
+  const map: Record<string, string> = {}
+  const eintragen = (nutzerform: string, yahoo: string) => {
+    const bisher = map[yahoo]
+    if (
+      !bisher ||
+      nutzerform.length < bisher.length ||
+      (nutzerform.length === bisher.length && nutzerform < bisher)
+    ) {
+      map[yahoo] = nutzerform
+    }
+  }
+  for (const [root, yahoo] of Object.entries(FUTURES_ROOTS)) eintragen(`${root}1!`, yahoo)
+  for (const [alias, yahoo] of Object.entries(INDEX_ALIASES)) eintragen(alias, yahoo)
+  return map
+})()
+
+/**
+ * Übersetzt ein Yahoo-Symbol zurück. Ohne hinterlegte Entsprechung bleibt es
+ * unverändert — lieber das Anbieter-Symbol als eine erfundene Schreibweise.
+ */
+export function toUserTicker(yahooSymbol: string): string {
+  const clean = yahooSymbol.trim().toUpperCase()
+  return UMKEHRTABELLE[clean] ?? clean
+}

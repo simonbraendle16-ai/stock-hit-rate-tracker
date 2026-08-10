@@ -91,7 +91,22 @@ export function resolveProvider(market: Market): MarketDataProvider {
         } catch (err) {
           lastError = err
           const code = err instanceof MarketDataError ? err.code : 'upstream'
-          if (code === 'unknown_symbol' || code === 'unsupported') throw err
+          if (code === 'unknown_symbol' || code === 'unsupported') {
+            // Der ERSTE Anbieter darf seinen Fehler unverändert weiterreichen —
+            // er ist die maßgebliche Quelle.
+            if (i === 0) throw err
+            // Ein späterer Anbieter aber nicht: Dass die Rückfallebene das
+            // Kürzel nicht kennt, ist zu erwarten (Twelve Data kann weder
+            // Terminkontrakte noch Indizes noch XETRA) und sagt nichts über die
+            // eigentliche Ursache. Die Meldung nannte trotzdem dessen Namen —
+            // und schickte die Fehlersuche damit an die falsche Stelle.
+            throw new MarketDataError(
+              `Für „${symbol}“ liefert keiner der Anbieter (${chain
+                .map((c) => c.name)
+                .join(', ')}) Daten. Meist fehlt dem Instrument die Symbolauflösung.`,
+              'unknown_symbol',
+            )
+          }
           if (i === chain.length - 1) throw err
         }
       }

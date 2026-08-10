@@ -1,28 +1,7 @@
 'use client'
 
 import { useMemo } from 'react'
-
-/**
- * TV-Symbol aus Ticker/Markt ableiten; ein `symbol=`-Parameter im gespeicherten
- * Chart-Link (z. B. tradingview.com/chart/?symbol=NASDAQ:AAPL) gewinnt immer.
- */
-function toTvSymbol(ticker: string, market: string, chartUrl: string | null): string {
-  if (chartUrl) {
-    try {
-      const fromUrl = new URL(chartUrl).searchParams.get('symbol')
-      if (fromUrl) return fromUrl
-    } catch {
-      /* kein valider Link → normale Ableitung */
-    }
-  }
-  const t = ticker.toUpperCase().replace('/', '')
-  if (market === 'krypto') {
-    return t.endsWith('USDT') || t.endsWith('USD') ? `BINANCE:${t}` : `BINANCE:${t}USDT`
-  }
-  if (market === 'forex') return `FX:${t}`
-  if (market === 'rohstoffe' && /^[A-Z]{6}$/.test(t)) return `OANDA:${t}`
-  return t
-}
+import { toTradingViewSymbol } from '@/lib/market-data/tradingview-symbol'
 
 /**
  * Offizielles TradingView Advanced-Chart-Widget (gratis Embed) — AP 10/S6:
@@ -34,16 +13,24 @@ export function TradingViewWidget({
   ticker,
   market,
   chartUrl,
+  exchange,
 }: {
   ticker: string
   market: string
   chartUrl: string | null
+  /** Börse aus der bestätigten Symbolauflösung (`stock.resolvedExchange`). */
+  exchange?: string | null
 }) {
   // Direktes iframe-Embed (statt TV-Script): robust gegen React-Remounts.
   // Douglas-Filter: pures Advanced Chart — keine Hotlists, kein Ideen-Feed.
+  const tvSymbol = useMemo(
+    () => toTradingViewSymbol(ticker, market, chartUrl, exchange),
+    [ticker, market, chartUrl, exchange],
+  )
+
   const src = useMemo(() => {
     const params = new URLSearchParams({
-      symbol: toTvSymbol(ticker, market, chartUrl),
+      symbol: tvSymbol,
       interval: 'D',
       theme: 'dark',
       style: '1',
@@ -59,7 +46,7 @@ export function TradingViewWidget({
       frameElementId: 'tv-advanced-chart',
     })
     return `https://s.tradingview.com/widgetembed/?${params.toString()}`
-  }, [ticker, market, chartUrl])
+  }, [tvSymbol])
 
   return (
     <div className="panel rise-in overflow-hidden p-0">
@@ -71,9 +58,14 @@ export function TradingViewWidget({
         allow="fullscreen"
         allowFullScreen
       />
+      {/* Welches Symbol wirklich läuft, gehört sichtbar hin: Bei Terminkontrakten
+          zeigt das Embed die frei abrufbare Notierung desselben Basiswerts
+          (`CL1!` → `TVC:USOIL`), weil die Börsenreihe dort leer bleibt. Ohne
+          diese Zeile wäre das ein stiller Tausch. */}
       <p className="note border-t border-border px-3 py-1.5">
-        TradingView-Modus: alle TV-Tools &amp; Indikatoren — Zeichnungen werden hier
-        nicht in der App gespeichert. Plan-Linien &amp; persistente Zeichnungen: Cockpit-Chart.
+        TradingView-Modus · Symbol <span className="font-mono">{tvSymbol}</span> — alle
+        TV-Tools &amp; Indikatoren, Zeichnungen werden hier nicht in der App gespeichert.
+        Plan-Linien &amp; persistente Zeichnungen: Cockpit-Chart.
       </p>
     </div>
   )

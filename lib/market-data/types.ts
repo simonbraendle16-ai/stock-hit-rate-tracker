@@ -22,6 +22,28 @@ export type Market =
   | 'sonstiges'
 
 /**
+ * Yahoos `quoteType` → Markt der App.
+ *
+ * Gebraucht, seit die Watchlist Instrumente direkt aus der Symbolsuche anlegt:
+ * Der Markt steuert Kerzenintervalle, Alarmregeln und die Auflösung, darf also
+ * nicht pauschal auf „aktien“ fallen. Unbekannte Typen landen bewusst auf
+ * `sonstiges` statt auf einer plausiblen Vermutung.
+ */
+export const QUOTE_TYPE_MARKET: Record<string, Market> = {
+  EQUITY: 'aktien',
+  ETF: 'etf',
+  // Ein Investmentfonds ist KEIN ETF — er wird nicht börslich gehandelt und hat
+  // keinen fortlaufenden Kurs. Ihn unter „ETF" zu führen wäre genau der stille
+  // Falschwert, den die App vermeiden soll.
+  MUTUALFUND: 'sonstiges',
+  CRYPTOCURRENCY: 'krypto',
+  CURRENCY: 'forex',
+  FUTURE: 'rohstoffe',
+  OPTION: 'optionen',
+  INDEX: 'sonstiges',
+}
+
+/**
  * Anzahl Kerzen, die pro Intervall beim Anbieter angefragt werden.
  *
  * Gilt für Anbieter, die eine Stückzahl erwarten (Twelve Data, Binance). Yahoo

@@ -449,6 +449,8 @@ export type StockDetail = {
   ticker: string
   market: string
   chartUrl: string | null
+  /** Börse aus der bestätigten Symbolauflösung — schärft das TV-Symbol. */
+  resolvedExchange: string | null
   createdAt: string // ISO date
   correct: number
   wrong: number
@@ -525,6 +527,7 @@ export async function getStockDetail(
     ticker: owned.ticker,
     market: owned.market,
     chartUrl: owned.chartUrl,
+    resolvedExchange: owned.resolvedExchange,
     createdAt: new Date(owned.createdAt).toISOString(),
     correct,
     wrong,

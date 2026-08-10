@@ -16,11 +16,14 @@ export function ChartModeTabs({
   ticker,
   market,
   chartUrl,
+  exchange,
   children,
 }: {
   ticker: string
   market: string
   chartUrl: string | null
+  /** Börse aus der Symbolauflösung — schärft das TradingView-Symbol. */
+  exchange?: string | null
   children: ReactNode
 }) {
   const [mode, setMode] = useState<Mode>('cockpit')
@@ -67,7 +70,12 @@ export function ChartModeTabs({
       {/* Cockpit bleibt gemountet (Zeichnungen/State), TV lädt nur bei Bedarf. */}
       <div className={mode === 'cockpit' ? '' : 'hidden'}>{children}</div>
       {mode === 'tv' && (
-        <TradingViewWidget ticker={ticker} market={market} chartUrl={chartUrl} />
+        <TradingViewWidget
+          ticker={ticker}
+          market={market}
+          chartUrl={chartUrl}
+          exchange={exchange}
+        />
       )}
     </div>
   )

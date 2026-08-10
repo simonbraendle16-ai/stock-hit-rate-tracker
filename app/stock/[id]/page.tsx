@@ -155,6 +155,7 @@ export default async function StockDetailPage({
             ticker={detail.ticker}
             market={detail.market}
             chartUrl={detail.chartUrl}
+            exchange={detail.resolvedExchange}
           >
             {/* Phase 2 des Trainer-Plans: derselbe Chart, auf Knopfdruck im
                 Replay — ohne die Seite zu verlassen. */}

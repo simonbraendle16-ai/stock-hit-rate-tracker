@@ -2,7 +2,12 @@
 // Instrument, weil der erfasste Ticker von dem der Watchlist abwich.
 
 import { describe, expect, it } from 'vitest'
-import { matchInstrument, normalizeTicker, type LinkableInstrument } from './instrument-link'
+import {
+  grundTicker,
+  matchInstrument,
+  normalizeTicker,
+  type LinkableInstrument,
+} from './instrument-link'
 
 const watchlist: LinkableInstrument[] = [
   { id: 1, ticker: 'BTCUSD', providerSymbol: 'BTC-USD' },
@@ -68,5 +73,63 @@ describe('matchInstrument', () => {
 
   it('behandelt leere Eingaben als kein Treffer statt zu raten', () => {
     expect(matchInstrument('   ', 'BTC-USD', watchlist).stockId).toBeNull()
+  })
+})
+
+describe('grundTicker', () => {
+  it('entfernt Börsensuffix und Präfix', () => {
+    expect(grundTicker('RHM.DE')).toBe('RHM')
+    expect(grundTicker('NASDAQ:AAPL')).toBe('AAPL')
+    expect(grundTicker('XETR:SAP')).toBe('SAP')
+    expect(grundTicker('0700.HK')).toBe('0700')
+  })
+
+  it('lässt Gattungen und Anbieter-Schreibweisen stehen', () => {
+    // `.B` ist eine Aktiengattung, keine Börse — sie wegzuwerfen würde
+    // BRK.A und BRK.B zu demselben Papier machen.
+    expect(grundTicker('BRK.B')).toBe('BRK.B')
+    expect(grundTicker('GC=F')).toBe('GC=F')
+    expect(grundTicker('^GDAXI')).toBe('^GDAXI')
+    expect(grundTicker('BTC-USD')).toBe('BTC-USD')
+  })
+})
+
+describe('matchInstrument — Grundticker', () => {
+  it('verbindet einen Trade auf RHM mit dem Instrument RHM.DE', () => {
+    // Genau der Fall aus dem Bestand: Der Trade lief ohne Instrument, weil
+    // weder Ticker noch aufgelöstes Symbol übereinstimmten.
+    const r = matchInstrument('RHM', null, [
+      { id: 56, ticker: 'RHM.DE', providerSymbol: 'RHM.DE' },
+      { id: 9, ticker: 'SAP.DE', providerSymbol: 'SAP.DE' },
+    ])
+    expect(r.stockId).toBe(56)
+    expect(r.reason).toBe('grundticker')
+  })
+
+  it('rät nicht, wenn dasselbe Papier an zwei Börsen geführt wird', () => {
+    const r = matchInstrument('RHM', null, [
+      { id: 1, ticker: 'RHM.DE', providerSymbol: 'RHM.DE' },
+      { id: 2, ticker: 'RHM.F', providerSymbol: 'RHM.F' },
+    ])
+    expect(r.stockId).toBeNull()
+    expect(r.reason).toBe('mehrdeutig')
+    expect(r.competing).toEqual([1, 2])
+  })
+
+  it('verbindet nicht über blosse Namensähnlichkeit', () => {
+    const r = matchInstrument('RHM', null, [
+      { id: 1, ticker: 'RHEINMETALL', providerSymbol: null },
+    ])
+    expect(r.stockId).toBeNull()
+    expect(r.reason).toBe('kein-treffer')
+  })
+
+  it('lässt die exakte Tickergleichheit vorgehen', () => {
+    const r = matchInstrument('RHM', null, [
+      { id: 1, ticker: 'RHM', providerSymbol: null },
+      { id: 2, ticker: 'RHM.DE', providerSymbol: 'RHM.DE' },
+    ])
+    expect(r.stockId).toBe(1)
+    expect(r.reason).toBe('exakter-ticker')
   })
 })

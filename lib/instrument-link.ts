@@ -28,8 +28,11 @@ export interface LinkableInstrument {
 export type LinkReason =
   | 'exakter-ticker'
   | 'anbieter-symbol'
+  | 'grundticker'
   | 'mehrdeutig'
   | 'kein-treffer'
+  /** Es gab keins — deshalb wurde eins angelegt (`createInstrumentForTrade`). */
+  | 'angelegt'
 
 export interface LinkResult {
   /** Das gefundene Instrument — null, wenn nichts eindeutig passt. */
@@ -42,6 +45,28 @@ export interface LinkResult {
 /** Vergleichsform eines Tickers: ohne Rand, Großschreibung, `_` wie `-`. */
 export function normalizeTicker(ticker: string): string {
   return ticker.trim().toUpperCase().replace(/_/g, '-')
+}
+
+/**
+ * Der Ticker ohne Börsenangabe — `RHM.DE` → `RHM`, `NASDAQ:AAPL` → `AAPL`.
+ *
+ * Genau hier lag die Lücke: Ein Trade auf `RHM` und das Instrument `RHM.DE`
+ * sind offensichtlich dasselbe Papier, aber weder die Tickergleichheit noch das
+ * Anbieter-Symbol brachten sie zusammen — der Rohticker `RHM` löst bei Yahoo
+ * auf etwas anderes auf als `RHM.DE`. Der Grundticker ist der Schlüssel, der
+ * beide Schreibweisen verbindet.
+ *
+ * Ein Suffix ist nur, was wie eine Börsenangabe aussieht (Buchstaben, höchstens
+ * drei). `BRK.B` behält damit sein `.B`, denn das ist eine Aktiengattung und
+ * keine Börse — und `GC=F` bleibt unangetastet.
+ */
+export function grundTicker(ticker: string): string {
+  const t = normalizeTicker(ticker)
+  const ohnePraefix = t.includes(':') ? t.slice(t.indexOf(':') + 1) : t
+  // Bekannte Gattungssuffixe, die KEINE Börse sind — sie dürfen nicht wegfallen.
+  const gattung = /\.(A|B|C)$/
+  if (gattung.test(ohnePraefix)) return ohnePraefix
+  return ohnePraefix.replace(/\.[A-Z]{1,3}$/, '')
 }
 
 /**
@@ -96,6 +121,21 @@ export function matchInstrument(
     }
   }
 
+  // 3. Gleicher Grundticker, unterschiedliche Börse. `RHM` trifft `RHM.DE`,
+  //    `AAPL` trifft `AAPL` — aber `RHM` trifft NICHT `RHEINMETALL`, hier wird
+  //    weiterhin nicht geraten. Auch das nur bei EINDEUTIGKEIT: Führt jemand
+  //    dasselbe Papier an zwei Börsen, entscheidet er selbst.
+  const wantedBase = grundTicker(wanted)
+  if (wantedBase) {
+    const byBase = instruments.filter((s) => grundTicker(s.ticker) === wantedBase)
+    if (byBase.length === 1) {
+      return { stockId: byBase[0].id, reason: 'grundticker', competing: [] }
+    }
+    if (byBase.length > 1) {
+      return { stockId: null, reason: 'mehrdeutig', competing: byBase.map((s) => s.id) }
+    }
+  }
+
   return { stockId: null, reason: 'kein-treffer', competing: [] }
 }
 
@@ -106,9 +146,13 @@ export function describeLinkReason(reason: LinkReason): string {
       return 'Ticker stimmt genau überein.'
     case 'anbieter-symbol':
       return 'Zugeordnet über das gemeinsame Anbieter-Symbol.'
+    case 'grundticker':
+      return 'Zugeordnet über den Grundticker (gleiches Papier, andere Börse).'
     case 'mehrdeutig':
       return 'Mehrere Instrumente passen gleich gut — bitte selbst zuordnen.'
     case 'kein-treffer':
       return 'Kein passendes Instrument in der Watchlist.'
+    case 'angelegt':
+      return 'Kein Instrument vorhanden — eines angelegt und verknüpft.'
   }
 }

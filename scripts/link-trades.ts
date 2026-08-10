@@ -32,12 +32,16 @@ if (!process.env.DATABASE_URL) {
 }
 
 const dry = process.argv.includes('--dry')
+// `--anlegen`: Findet sich kein Instrument, wird eins angelegt. Nur damit gilt
+// „jeder Trade ist aufgelöst" wirklich — ohne den Schalter bleibt das alte,
+// vorsichtige Verhalten (nur verknüpfen, was schon da ist).
+const anlegen = process.argv.includes('--anlegen')
 
 async function main() {
   const { linkLooseTrades } = await import('../lib/link-trades.js')
   const { describeLinkReason } = await import('../lib/instrument-link.js')
 
-  const report = await linkLooseTrades({ dryRun: dry })
+  const report = await linkLooseTrades({ dryRun: dry, anlegen })
 
   console.log(dry ? '\n=== PROBELAUF — es wird nichts geschrieben ===' : '\n=== Verknüpfung ===')
   console.log(`Trades ohne Instrument: ${report.checked}`)

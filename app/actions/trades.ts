@@ -382,6 +382,40 @@ export async function createTrade(input: TradeInput): Promise<{ id: number }> {
         instruments,
       )
       stockId = found.stockId
+
+      // Letzte Stufe: Gibt es schlicht kein Instrument, wird eins angelegt.
+      //
+      // Ohne das bleibt der Trade ohne `stockId` — und dann wird der ROHTICKER
+      // an den Anbieter gereicht, was diese App verbietet. Genau daraus entstand
+      // die Meldung „Unbekannter Ticker bei Twelve Data" an laufenden Trades:
+      // Yahoo scheiterte, der Rückfall kannte das Kürzel auch nicht, und der
+      // Trade stand dauerhaft ohne Kurs da.
+      //
+      // Bei `mehrdeutig` wird NICHT angelegt: Dort gibt es Kandidaten, und ein
+      // weiteres Instrument daneben verdoppelte die Verwirrung.
+      if (stockId === null && found.reason === 'kein-treffer') {
+        const { createInstrumentForTrade } = await import('@/lib/link-trades')
+        stockId = await createInstrumentForTrade({
+          userId,
+          ticker,
+          market: (input.market ?? 'aktien') as Market,
+        })
+
+        // Sofort auflösen und den ersten Kurs holen — dieselbe Entscheidung wie
+        // in `addStock`: Ein frisch angelegtes Instrument, das eine Viertelstunde
+        // ohne Kurs dasteht, ist genau der Zustand, den das hier beseitigen soll.
+        // Fehlschläge sind folgenlos, der Hintergrundlauf holt es nach.
+        try {
+          const { runSymbolSync } = await import('@/lib/market-data/sync')
+          await runSymbolSync({
+            trigger: 'manual',
+            onlyStockIds: [stockId],
+            forceResolve: true,
+          })
+        } catch {
+          /* siehe oben */
+        }
+      }
     } catch {
       // Auflösung nicht möglich (Anbieter weg) → Trade wird trotzdem angelegt.
       // Der Hintergrundlauf holt die Verknüpfung nach.

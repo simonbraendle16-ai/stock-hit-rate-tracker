@@ -86,16 +86,59 @@ export async function findInstrumentFor(
   return { stockId: viaSymbol.stockId, reason: viaSymbol.reason, viaSymbol: providerSymbol }
 }
 
+/** Sektion, unter der selbst angelegte Instrumente in der Watchlist landen. */
+export const SEKTION_AUS_TRADES = 'Aus Trades'
+
+/**
+ * Ein Instrument für einen Trade anlegen, für den keines existiert.
+ *
+ * **Warum das sein muss.** Ohne Instrument hat ein Trade keine Symbolauflösung —
+ * und ohne die wird der ROHTICKER an den Anbieter gereicht, was diese App
+ * ausdrücklich verbietet. Genau daraus entstand die Meldung „Unbekannter Ticker
+ * bei Twelve Data": Yahoo scheiterte am Rohticker, der Rückfall kannte ihn
+ * ebenfalls nicht, und der Trade stand dauerhaft ohne Kurs da.
+ *
+ * Das neue Instrument ist bewusst als solches erkennbar (eigene Sektion) und
+ * kann natürlich falsch aufgelöst sein. Aber es ist ein **sichtbarer,
+ * reparierbarer** Zustand an genau einer Stelle — statt eines Trades, der still
+ * für immer ohne Kurs bleibt.
+ */
+export async function createInstrumentForTrade(args: {
+  userId: string
+  ticker: string
+  market: Market
+}): Promise<number> {
+  const [row] = await db
+    .insert(stock)
+    .values({
+      userId: args.userId,
+      // Mehr als den Ticker weiß ein Trade nicht. Die Auflösung trägt gleich
+      // den echten Namen nach (`resolvedName`).
+      name: args.ticker,
+      ticker: args.ticker,
+      market: args.market,
+      watchlistSection: SEKTION_AUS_TRADES,
+    })
+    .returning({ id: stock.id })
+  return row.id
+}
+
 /**
  * Verknüpft alle Trades ohne `stockId`.
  *
  * `dryRun` schreibt nichts und liefert nur, was passieren würde — damit sich das
  * Ergebnis kontrollieren lässt, bevor Zuordnungen in echten Trades landen.
  * Bestehende Zuordnungen werden NIE angefasst (`stockId IS NULL` im Filter).
+ *
+ * `anlegen` schließt die letzte Lücke: Findet sich kein Instrument, wird eins
+ * erzeugt. Nur damit gilt „jeder Trade ist aufgelöst" wirklich. Bei
+ * `mehrdeutig` wird NICHT angelegt — dort gibt es Kandidaten, und ein neues
+ * Instrument daneben würde die Verwirrung verdoppeln statt sie aufzulösen.
  */
 export async function linkLooseTrades(options: {
   userId?: string
   dryRun?: boolean
+  anlegen?: boolean
 } = {}): Promise<LinkReport> {
   const rows = await db
     .select({
@@ -127,22 +170,44 @@ export async function linkLooseTrades(options: {
     }
 
     const res = await findInstrumentFor(row.ticker, row.market as Market, instruments)
+
+    let stockId = res.stockId
+    let reason = res.reason
+    let angelegt = false
+
+    // Letzte Stufe: nichts gefunden UND nicht mehrdeutig → Instrument anlegen.
+    if (stockId === null && reason === 'kein-treffer' && options.anlegen) {
+      angelegt = true
+      reason = 'angelegt'
+      if (!options.dryRun) {
+        stockId = await createInstrumentForTrade({
+          userId: row.userId,
+          ticker: row.ticker,
+          market: row.market as Market,
+        })
+        // Der Zwischenspeicher muss mitwachsen, sonst legt ein zweiter Trade
+        // auf denselben Ticker ein zweites Instrument an.
+        instruments.push({ id: stockId, ticker: row.ticker, providerSymbol: null })
+        byId.set(stockId, row.ticker)
+      }
+    }
+
     report.attempts.push({
       tradeId: row.id,
       ticker: row.ticker,
-      stockId: res.stockId,
-      reason: res.reason,
+      stockId,
+      reason,
       viaSymbol: res.viaSymbol,
-      instrumentTicker: res.stockId ? (byId.get(res.stockId) ?? null) : null,
+      instrumentTicker: angelegt ? row.ticker : stockId ? (byId.get(stockId) ?? null) : null,
     })
 
-    if (res.stockId !== null && !options.dryRun) {
+    if (stockId !== null && !options.dryRun) {
       await db
         .update(trade)
-        .set({ stockId: res.stockId })
+        .set({ stockId })
         .where(and(eq(trade.id, row.id), isNull(trade.stockId)))
       report.linked++
-    } else if (res.stockId !== null) {
+    } else if (stockId !== null || angelegt) {
       report.linked++
     }
   }

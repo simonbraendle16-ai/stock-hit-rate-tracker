@@ -15,6 +15,8 @@ import type { ResolutionCandidate } from '@/lib/market-data/resolve'
 import { resolveSymbol } from '@/lib/market-data/resolve'
 import { runSymbolSync, refreshQuotesIfStale } from '@/lib/market-data/sync'
 import { searchYahoo } from '@/lib/market-data/yahoo'
+import { toUserTicker } from '@/lib/market-data/symbol-aliases'
+import { QUOTE_TYPE_MARKET } from '@/lib/market-data/types'
 import type { Market, WatchlistQuote } from '@/lib/market-data/types'
 import { and, eq } from 'drizzle-orm'
 import { headers } from 'next/headers'
@@ -205,6 +207,65 @@ export async function pinStockSymbol(
   revalidatePath('/watchlist')
 
   return { price: q.price, name: q.name }
+}
+
+/**
+ * Ein Instrument direkt aus einem Suchtreffer anlegen.
+ *
+ * Der Weg über die Suche ersetzt das Tippen von Name, Ticker und Markt. Zwei
+ * Dinge macht er dabei bewusst anders als das Formular:
+ *
+ * - **Rückübersetzung.** Yahoo liefert `CL=F`, in der Watchlist steht `CL1!`.
+ *   `toUserTicker` führt das zusammen, sonst stünde dasselbe Öl je nach
+ *   Eingabeweg unter zwei Kürzeln in derselben Liste.
+ * - **Festschreiben.** Das Anbieter-Symbol ist durch die Suche bereits bekannt.
+ *   Es wird gepinnt, statt die Automatik dieselbe Frage nochmal raten zu
+ *   lassen — das war die Quelle der falschen Auflösungen.
+ *
+ * Schlägt das Festschreiben fehl (kein Kurs bei Yahoo), bleibt das Instrument
+ * trotzdem bestehen: Der Klick des Nutzers geht nie verloren, der reguläre
+ * Auflösungslauf übernimmt, und die Watchlist weist den Zustand ohnehin aus.
+ */
+export async function addStockFromSearch(hit: {
+  symbol: string
+  name: string
+  quoteType: string
+}): Promise<{ id: number; ticker: string; bereitsVorhanden: boolean; hinweis: string | null }> {
+  const userId = await getUserId()
+
+  const providerSymbol = hit.symbol.trim().toUpperCase()
+  if (!providerSymbol) throw new Error('Kein Symbol im Suchtreffer.')
+
+  const ticker = toUserTicker(providerSymbol)
+  const markt = QUOTE_TYPE_MARKET[hit.quoteType?.toUpperCase() ?? ''] ?? 'sonstiges'
+
+  // Doppelte abfangen — sonst steht dasselbe Instrument nach zwei Klicks zweimal
+  // in der Liste, mit getrennten Prognosen und Trades.
+  const [vorhanden] = await db
+    .select({ id: stock.id })
+    .from(stock)
+    .where(and(eq(stock.userId, userId), eq(stock.ticker, ticker)))
+    .limit(1)
+  if (vorhanden) {
+    return { id: vorhanden.id, ticker, bereitsVorhanden: true, hinweis: null }
+  }
+
+  const { addStock } = await import('./stocks')
+  const { id } = await addStock({
+    name: hit.name?.trim() || ticker,
+    ticker,
+    market: markt,
+  })
+
+  let hinweis: string | null = null
+  try {
+    await pinStockSymbol(id, providerSymbol)
+  } catch (err) {
+    hinweis = err instanceof Error ? err.message : 'Symbol konnte nicht festgeschrieben werden.'
+  }
+
+  revalidatePath('/watchlist')
+  return { id, ticker, bereitsVorhanden: false, hinweis }
 }
 
 /** Freie Symbolsuche für die Handauswahl im Reparatur-Dialog. */
