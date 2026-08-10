@@ -4,7 +4,7 @@ import { trainingSession } from '@/lib/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { Interval, Market, MarketDataError } from '@/lib/market-data'
 import { getCachedCandles } from '@/lib/market-data/cached'
-import { createSymbolResolver, lookupProviderSymbol } from '@/lib/market-data/lookup'
+import { aufgeloestesSymbolFuerAnfrage } from '@/lib/market-data/lookup'
 import {
   istGueltigerTicker,
   istGueltigesAnbieterSymbol,
@@ -110,15 +110,22 @@ export async function GET(req: NextRequest) {
   try {
     // Der Aufrufer schickt den Ticker, wie er in der Watchlist steht (`CL1!`).
     // Beim Anbieter heißt derselbe Wert anders (`CL=F`) — die Übersetzung
-    // passiert zentral in `lookupProviderSymbol`, nie hier von Hand.
-    const providerSymbol = stockId
-      ? (await createSymbolResolver(session.user.id))(symbol, stockId)
-      : (await lookupProviderSymbol(session.user.id, symbol)).symbol
+    // passiert zentral in `aufgeloestesSymbolFuerAnfrage`, nie hier von Hand.
+    const { symbol: providerSymbol, aufgeloest } = await aufgeloestesSymbolFuerAnfrage(
+      session.user.id,
+      symbol,
+      stockId,
+    )
     // Ein unaufgelöster Rohticker geht NICHT an den Anbieter — und er darf auch
     // nicht in den Kerzenspeicher, der ihn sonst dauerhaft behielte. Genau so
     // ist unter dem Schlüssel `BTC` eine Reihe eines fremden Papiers entstanden
     // (Kurse um 30 statt 65.000), die der Sammellauf danach weiter pflegte.
-    if (!istGueltigesAnbieterSymbol(providerSymbol)) {
+    //
+    // Die Musterprüfung allein reicht dafür nicht: `RHM` ist ein syntaktisch
+    // einwandfreies Anbieter-Symbol und kam deshalb durch — Yahoo lieferte
+    // darauf ein fremdes Papier zu gut einem Dollar. Erst `aufgeloest` trennt
+    // die bestätigte Auflösung vom bloßen Rückfall.
+    if (!aufgeloest || !istGueltigesAnbieterSymbol(providerSymbol)) {
       return NextResponse.json(
         { error: unaufgeloestMeldung(symbol), code: 'unresolved' },
         { status: 422 },

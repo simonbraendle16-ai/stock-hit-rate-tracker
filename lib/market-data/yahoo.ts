@@ -98,12 +98,54 @@ export const ERWARTETE_GRANULARITAET: Record<Interval, string> = {
  * **nachweislich** Falsches, nicht Unbekanntes — sonst fiele die Kursversorgung
  * aus, sobald Yahoo das Feld einmal weglässt.
  */
+/**
+ * Schreibweisen, die DIESELBE Granularität meinen.
+ *
+ * Yahoo nimmt die Stunde als `60m` entgegen, meldet sie in `dataGranularity`
+ * aber als `1h` zurück. Der Vergleich verglich damit Frage- gegen
+ * Antwortvokabular und verwarf **jede** Stundenreihe — Status 200, Daten
+ * vollständig, trotzdem weggeworfen. Folge: Der Kurs-Snapshot (`quoteInterval`
+ * = `1h`) fiel bei jedem Papier auf Twelve Data durch, und weil das weder XETRA
+ * noch Euronext kennt, endete er dort mit „Unbekannter Ticker" — der Fehler
+ * trug den Namen eines Anbieters, der nichts falsch gemacht hatte.
+ *
+ * Alle übrigen Intervalle kommen wortgleich zurück (gemessen: `15m`, `30m`,
+ * `1d`, `1wk`, `1mo`); die Tabelle hält sie trotzdem, damit eine künftige
+ * Umbenennung hier landet und nicht wieder in einem stillen Verwurf.
+ *
+ * `1m` steht bewusst NICHT hier: Das ist bei Yahoo die Minute, nicht der Monat.
+ */
+const GRANULARITAET_KANON: Record<string, string> = {
+  '15m': '15m',
+  '15min': '15m',
+  '30m': '30m',
+  '30min': '30m',
+  '60m': '1h',
+  '1h': '1h',
+  '1d': '1d',
+  '1day': '1d',
+  '1wk': '1wk',
+  '1w': '1wk',
+  '1week': '1wk',
+  '1mo': '1mo',
+  '1month': '1mo',
+}
+
+/** Vergleichsform einer Granularitätsangabe. Unbekanntes bleibt, wie es ist. */
+function kanonischeGranularitaet(wert: string): string {
+  const k = wert.trim().toLowerCase()
+  return GRANULARITAET_KANON[k] ?? k
+}
+
 export function passtGranularitaet(
   interval: Interval,
   granularity: string | null | undefined,
 ): boolean {
   if (typeof granularity !== 'string' || granularity.trim() === '') return true
-  return granularity.trim().toLowerCase() === ERWARTETE_GRANULARITAET[interval].toLowerCase()
+  return (
+    kanonischeGranularitaet(granularity) ===
+    kanonischeGranularitaet(ERWARTETE_GRANULARITAET[interval])
+  )
 }
 
 // --- Crumb-Verwaltung ------------------------------------------------------

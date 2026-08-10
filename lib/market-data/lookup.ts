@@ -61,6 +61,54 @@ export function lookupProviderSymbol(
   )()
 }
 
+export interface AngefragtesSymbol {
+  /** Was an den Anbieter ginge. */
+  symbol: string
+  /**
+   * Steht dahinter eine BESTÄTIGTE Auflösung — oder nur der Rohticker?
+   *
+   * `symbol` allein beantwortet das nicht: Ein unaufgelöster `RHM` sieht
+   * syntaktisch aus wie ein gültiges Anbieter-Symbol und kommt durch jede
+   * Musterprüfung. Wer Marktdaten holt, muss deshalb auf dieses Feld sehen.
+   */
+  aufgeloest: boolean
+}
+
+/**
+ * Das Symbol für EINE Anfrage — Instrument zuerst, dann Ticker, dann Rohticker.
+ *
+ * Genau diese Abfolge stand wortgleich in vier Dateien (beide API-Routen und
+ * zweimal im Trainer), und alle vier hatten dieselbe blinde Stelle: Sie nahmen
+ * den Rückfall auf den Rohticker entgegen, ohne ihn von einer echten Auflösung
+ * unterscheiden zu können. Ein `RHM` ohne Instrument ging so an Yahoo, das
+ * darauf ein fremdes Ein-Dollar-Papier liefert — und der Kerzenspeicher behielt
+ * es unter diesem Schlüssel.
+ *
+ * Anders als `createSymbolResolver` liest das hier nur die eine gefragte Zeile;
+ * für einen einzelnen Aufruf ist die Liste aller Instrumente Verschwendung.
+ */
+export async function aufgeloestesSymbolFuerAnfrage(
+  userId: string,
+  ticker: string,
+  stockId?: number | null,
+): Promise<AngefragtesSymbol> {
+  const clean = ticker.trim().toUpperCase()
+
+  if (stockId != null) {
+    const [row] = await db
+      .select({ providerSymbol: stock.providerSymbol, status: stock.resolutionStatus })
+      .from(stock)
+      .where(and(eq(stock.userId, userId), eq(stock.id, stockId)))
+      .limit(1)
+    if (row?.providerSymbol && row.status === 'ok') {
+      return { symbol: row.providerSymbol, aufgeloest: true }
+    }
+  }
+
+  const viaTicker = await lookupProviderSymbol(userId, clean)
+  return { symbol: viaTicker.symbol, aufgeloest: viaTicker.resolved }
+}
+
 /**
  * Auflöser für viele Zeilen auf einmal — eine Abfrage statt einer je Trade.
  *

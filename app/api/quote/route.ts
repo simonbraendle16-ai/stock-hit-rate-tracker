@@ -1,6 +1,6 @@
 import { auth } from '@/lib/auth'
 import { Market, MarketDataError } from '@/lib/market-data'
-import { createSymbolResolver, lookupProviderSymbol } from '@/lib/market-data/lookup'
+import { aufgeloestesSymbolFuerAnfrage } from '@/lib/market-data/lookup'
 import { getCachedQuote } from '@/lib/market-data/quote'
 import {
   istGueltigerTicker,
@@ -54,14 +54,17 @@ export async function GET(req: NextRequest) {
 
   try {
     // Ticker der Watchlist → Anbieter-Symbol, zentral (siehe `lookup.ts`).
-    const providerSymbol = stockId
-      ? (await createSymbolResolver(session.user.id))(symbol, stockId)
-      : (await lookupProviderSymbol(session.user.id, symbol)).symbol
+    const { symbol: providerSymbol, aufgeloest } = await aufgeloestesSymbolFuerAnfrage(
+      session.user.id,
+      symbol,
+      stockId,
+    )
     // Hier fällt die Entscheidung, ob wirklich gefragt wird. Der Rückfall auf
     // den Rohticker ist Absicht — abgefragt werden darf er trotzdem nicht:
     // Yahoo kennt ein anderes Papier namens `BTC`, und ein stiller falscher
-    // Kurs ist genau das, wogegen diese App gebaut ist.
-    if (!istGueltigesAnbieterSymbol(providerSymbol)) {
+    // Kurs ist genau das, wogegen diese App gebaut ist. Dass es der Rückfall
+    // war, verrät nur `aufgeloest` — dem Symbol selbst sieht man es nicht an.
+    if (!aufgeloest || !istGueltigesAnbieterSymbol(providerSymbol)) {
       return NextResponse.json(
         { error: unaufgeloestMeldung(symbol), code: 'unresolved' },
         { status: 422 },

@@ -36,6 +36,22 @@ describe('passtGranularitaet', () => {
     expect(passtGranularitaet('4h', '1d')).toBe(false)
   })
 
+  /**
+   * Der gemessene Fall vom 10.08.2026: Angefragt wird `60m`, zurückgemeldet
+   * wird `1h` — dieselbe Granularität, andere Schreibweise. Verglichen wurde
+   * wörtlich, also flog JEDE Stundenreihe raus, und der Kurs-Snapshot fiel auf
+   * Twelve Data durch, das XETRA nicht kennt.
+   */
+  it('erkennt 60m und 1h als dieselbe Granularität', () => {
+    expect(passtGranularitaet('1h', '1h')).toBe(true)
+    expect(passtGranularitaet('1h', '60m')).toBe(true)
+    // Auch der 4h-Aufbau lebt von dieser Reihe.
+    expect(passtGranularitaet('4h', '1h')).toBe(true)
+    // Die Schutzwirkung bleibt: eine echte Abweichung fliegt weiter raus.
+    expect(passtGranularitaet('1h', '30m')).toBe(false)
+    expect(passtGranularitaet('1h', '1d')).toBe(false)
+  })
+
   it('lässt Groß-/Kleinschreibung und Leerraum durchgehen', () => {
     expect(passtGranularitaet('1week', ' 1WK ')).toBe(true)
   })
