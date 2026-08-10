@@ -22,6 +22,24 @@ import {
 import { farbeGueltig } from './drawing-style'
 import { CHART_COLORS } from '@/components/chart/colors'
 
+/**
+ * Eine benannte Fib-Zusammenstellung, wie TradingViews „Templates".
+ *
+ * Der Standard beantwortet nur „womit fange ich an" — eine Vorlage beantwortet
+ * „womit arbeite ich in DIESER Lage". Wer für Retracements im Trend andere
+ * Levels führt als für Korrekturen, braucht beides nebeneinander, nicht
+ * nacheinander.
+ */
+export interface FibVorlage {
+  name: string
+  stil: FibStil
+}
+
+/** Mehr als das ist keine Auswahl mehr, sondern eine zweite Suchaufgabe. */
+export const MAX_FIB_VORLAGEN = 12
+/** Längere Namen sprengen die Liste im Panel. */
+export const MAX_VORLAGEN_NAME = 32
+
 export interface DrawingDefaults {
   /** Standard-Levels für das Fib-Retracement. */
   fib: FibStil
@@ -31,6 +49,8 @@ export interface DrawingDefaults {
   farbe: string
   /** Strichstärke neuer Zeichnungen. */
   staerke: number
+  /** Benannte Fib-Zusammenstellungen, auf beide Fib-Werkzeuge anwendbar. */
+  fibVorlagen: FibVorlage[]
 }
 
 export const DEFAULT_DRAWING_DEFAULTS: DrawingDefaults = {
@@ -38,6 +58,7 @@ export const DEFAULT_DRAWING_DEFAULTS: DrawingDefaults = {
   fibext: DEFAULT_FIBEXT,
   farbe: CHART_COLORS.accent,
   staerke: 1.5,
+  fibVorlagen: [],
 }
 
 export function normalizeDrawingDefaults(raw: unknown): DrawingDefaults {
@@ -46,6 +67,7 @@ export function normalizeDrawingDefaults(raw: unknown): DrawingDefaults {
     fibext: normalizeFibStil(null, DEFAULT_FIBEXT),
     farbe: DEFAULT_DRAWING_DEFAULTS.farbe,
     staerke: DEFAULT_DRAWING_DEFAULTS.staerke,
+    fibVorlagen: [],
   }
   if (raw == null) return out
 
@@ -66,6 +88,22 @@ export function normalizeDrawingDefaults(raw: unknown): DrawingDefaults {
   if (typeof src.staerke === 'number' && Number.isFinite(src.staerke)) {
     out.staerke = Math.min(6, Math.max(0.5, src.staerke))
   }
+
+  if (Array.isArray(src.fibVorlagen)) {
+    const namen = new Set<string>()
+    for (const eintrag of src.fibVorlagen) {
+      if (!eintrag || typeof eintrag !== 'object') continue
+      const e = eintrag as Record<string, unknown>
+      const name = typeof e.name === 'string' ? e.name.trim().slice(0, MAX_VORLAGEN_NAME) : ''
+      // Namenlos wäre die Vorlage nicht wiederzufinden, doppelt nicht zu
+      // unterscheiden — beides fällt weg, statt eine Zeile ohne Nutzen zu tragen.
+      if (!name || namen.has(name.toLowerCase())) continue
+      namen.add(name.toLowerCase())
+      out.fibVorlagen.push({ name, stil: normalizeFibStil(e.stil, DEFAULT_FIB) })
+      if (out.fibVorlagen.length >= MAX_FIB_VORLAGEN) break
+    }
+  }
+
   return out
 }
 

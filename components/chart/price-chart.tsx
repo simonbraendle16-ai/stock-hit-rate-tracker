@@ -8,6 +8,7 @@ import {
   ColorType,
   createChart,
   createSeriesMarkers,
+  CrosshairMode,
   HistogramSeries,
   LineSeries,
   LineStyle,
@@ -38,7 +39,7 @@ import {
 } from '@/lib/chart-tools'
 import { DrawingLayer } from './drawing-layer'
 import { DrawingStylePanel } from './drawing-style-panel'
-import { DrawingStyleBar, type AuswahlRahmen } from './drawing-style-bar'
+import { DrawingStyleBar } from './drawing-style-bar'
 import { barStep } from '@/lib/chart-coords'
 import { AnalysisImport } from './analysis-import'
 import { IndicatorMenu } from './indicator-menu'
@@ -75,6 +76,7 @@ import {
   DEFAULT_DRAWING_DEFAULTS,
   stilFuerNeueZeichnung,
   type DrawingDefaults,
+  type FibVorlage,
 } from '@/lib/drawing-defaults'
 import { loadDrawingDefaults, saveDrawingDefaults } from '@/app/actions/drawing-defaults'
 import type { FibStil } from '@/lib/fib-levels'
@@ -1005,29 +1007,6 @@ export function PriceChart({
   )
 
   /**
-   * Wo die ausgewählte Zeichnung im Fenster liegt — Anker der schwebenden
-   * Stil-Leiste. Gemeldet von der Zeichenebene, weil nur sie Zeit/Kurs in Pixel
-   * umrechnen kann.
-   *
-   * Verglichen wird VOR dem Setzen: Die Ebene meldet bei jeder Bewegung der
-   * Zeitachse, und ein blindes `setState` je Meldung wäre im Replay ein
-   * Rendern je Kerze für eine Leiste, die sich meist gar nicht bewegt.
-   */
-  const [auswahlRahmen, setAuswahlRahmen] = useState<AuswahlRahmen | null>(null)
-  const rahmenMelden = useCallback((box: AuswahlRahmen | null) => {
-    setAuswahlRahmen((alt) => {
-      if (alt === box) return alt
-      if (!alt || !box) return box
-      const gleich =
-        Math.abs(alt.left - box.left) < 0.5 &&
-        Math.abs(alt.top - box.top) < 0.5 &&
-        Math.abs(alt.right - box.right) < 0.5 &&
-        Math.abs(alt.bottom - box.bottom) < 0.5
-      return gleich ? alt : box
-    })
-  }, [])
-
-  /**
    * Ist der volle Eigenschaften-Dialog offen?
    *
    * Er geht seit der schwebenden Leiste NUR noch auf Verlangen auf (Zahnrad
@@ -1049,9 +1028,16 @@ export function PriceChart({
    * bliebe es stehen, während der Chart wegwandert.
    */
   const [panelAnker, setPanelAnker] = useState<{ top: number; left: number } | null>(null)
+  /**
+   * Wo die Stil-Leiste sitzt: linkes oberes Eck des Charts. Aus demselben
+   * Rahmen gerechnet wie `panelAnker` und im selben Effekt, damit beide
+   * dieselbe Messung teilen statt zweier Sätze von Scroll-Zuhörern.
+   */
+  const [leisteAnker, setLeisteAnker] = useState<{ top: number; left: number } | null>(null)
   useEffect(() => {
     if (ausgewaehlteZeichnung == null) {
       setPanelAnker(null)
+      setLeisteAnker(null)
       return
     }
     const messen = () => {
@@ -1065,6 +1051,14 @@ export function PriceChart({
         // über der Chartmitte verdeckte das Panel genau das, was man ansieht.
         left: Math.max(8, Math.min(r.right - breite - 78, window.innerWidth - breite - 8)),
       })
+      // Knapp UNTER die Legende: Die Kurszeile sitzt im selben Eck
+      // (`left-2 top-1`). Die Leiste bündig obenauf zu setzen hieße, die
+      // OHLC-Anzeige zu verdecken — derselbe Ärger, nur an anderer Stelle.
+      // Gemessen statt geschätzt, weil die Legende je nach Indikatoren
+      // mehrzeilig wird.
+      const legende = legendRef.current?.getBoundingClientRect()
+      const unterkante = legende && legende.height > 0 ? legende.bottom : r.top + 4
+      setLeisteAnker({ top: unterkante + 6, left: r.left + 8 })
     }
     messen()
     window.addEventListener('scroll', messen, true)
@@ -1082,6 +1076,18 @@ export function PriceChart({
       setZeichenStandards(next)
       saveDrawingDefaults(next).catch(() =>
         setDrawError('Standard konnte nicht gesichert werden.'),
+      )
+    },
+    [zeichenStandards],
+  )
+
+  /** Vorlagen anlegen und löschen — derselbe Speicher wie die Standards. */
+  const handleVorlagenChange = useCallback(
+    (fibVorlagen: FibVorlage[]) => {
+      const next = { ...zeichenStandards, fibVorlagen }
+      setZeichenStandards(next)
+      saveDrawingDefaults(next).catch(() =>
+        setDrawError('Vorlage konnte nicht gesichert werden.'),
       )
     },
     [zeichenStandards],
@@ -1357,7 +1363,15 @@ export function PriceChart({
       },
       rightPriceScale: { borderColor: palette.border },
       timeScale: { borderColor: palette.border, timeVisible: true },
+      // Frei bewegliches Fadenkreuz. Der Standard von lightweight-charts ist
+      // `Magnet`: Die Waagerechte springt auf O/H/L/C der nächsten Kerze,
+      // statt dem Zeiger zu folgen. TradingView macht es umgekehrt — das
+      // Fadenkreuz ist frei, gerastet wird nur beim Zeichnen (Magnet-Knopf in
+      // der Toolbar, siehe `drawing-layer`). Die Senkrechte bleibt am
+      // Kerzenindex; eine freie Variante kennt die Bibliothek nicht, und
+      // TradingView verhält sich dort genauso.
       crosshair: {
+        mode: CrosshairMode.Normal,
         horzLine: { labelBackgroundColor: palette.accent },
         vertLine: { labelBackgroundColor: palette.accent },
       },
@@ -1444,6 +1458,9 @@ export function PriceChart({
       rightPriceScale: { borderColor: palette.border },
       timeScale: { borderColor: palette.border },
       crosshair: {
+        // Muss mit: Der Palettenwechsel schreibt den ganzen `crosshair`-Block
+        // neu, ohne `mode` fiele das Fadenkreuz auf Magnet zurück.
+        mode: CrosshairMode.Normal,
         horzLine: { labelBackgroundColor: palette.accent },
         vertLine: { labelBackgroundColor: palette.accent },
       },
@@ -2108,18 +2125,17 @@ export function PriceChart({
                   setSelectedId(id)
                   setStilOffen(true)
                 }}
-                onSelectionBox={rahmenMelden}
               />
             )}
 
-          {/* Die schwebende Stil-Leiste an der Zeichnung — die häufigen
-              Handgriffe dort, wo das Objekt liegt. Alles Seltenere steckt
-              hinter dem Zahnrad im Panel darunter. */}
-          {ausgewaehlteZeichnung && auswahlRahmen && drawingsVisible && (
+          {/* Die Stil-Leiste zur Zeichnung — fest im linken oberen Eck des
+              Charts, damit sie nie das verdeckt, was gerade bearbeitet wird.
+              Alles Seltenere steckt hinter dem Zahnrad im Panel darunter. */}
+          {ausgewaehlteZeichnung && leisteAnker && drawingsVisible && (
             <DrawingStyleBar
               key={`bar-${ausgewaehlteZeichnung.id}`}
               drawing={ausgewaehlteZeichnung}
-              rahmen={auswahlRahmen}
+              anker={leisteAnker}
               onChange={(style) => handleStyleChange(ausgewaehlteZeichnung.id, style)}
               onOpenSettings={() => setStilOffen(true)}
               onDelete={handleDeleteSelected}
@@ -2144,6 +2160,8 @@ export function PriceChart({
               onDelete={handleDeleteSelected}
               onClose={() => setStilOffen(false)}
               onSaveDefault={fluechtig ? undefined : handleSaveDefault}
+              vorlagen={fluechtig ? undefined : zeichenStandards.fibVorlagen}
+              onVorlagenChange={fluechtig ? undefined : handleVorlagenChange}
               times={zeichenZeiten}
               step={zeichenStep}
               onPointsChange={

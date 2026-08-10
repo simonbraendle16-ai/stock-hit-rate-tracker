@@ -24,14 +24,20 @@ import {
 import { CHART_COLORS } from './colors'
 
 /**
- * Die schwebende Stil-Leiste an einer ausgewählten Zeichnung.
+ * Die Stil-Leiste zur ausgewählten Zeichnung — fest im linken oberen Eck des
+ * Charts.
  *
  * **Warum sie das Eck-Panel ablöst.** Das Eigenschaften-Panel lag fest an der
  * Preisachse und war 248 px breit — es verdeckte genau den Teil des Charts, in
  * dem die Zeichnung meistens liegt, und stand mit voller Höhe da, auch wenn man
  * nur die Farbe wechseln wollte. Die häufigen Handgriffe (Farbe, Stärke,
- * Strichart, weg damit) gehören an das Objekt, das sie betreffen; alles
- * Seltenere bleibt im Panel, das über den Zahnrad-Knopf aufgeht.
+ * Strichart, weg damit) gehören in Reichweite; alles Seltenere bleibt im Panel,
+ * das über den Zahnrad-Knopf aufgeht.
+ *
+ * **Warum sie nicht mehr am Objekt klebt.** Zuerst hing sie mittig über der
+ * Auswahl — und verdeckte damit beim Analysieren genau die Stelle, die man
+ * gerade bearbeitet. Der feste Platz oben links ist auffindbar und liegt nie im
+ * Weg; verschieben lässt sie sich weiterhin.
  *
  * **Was TradingView dort führt** (an einer Trendlinie in SBUX aus dem DOM
  * gelesen, Klasse `floating-toolbar-react-widgets`, 410 × 38 px, zehn Knöpfe in
@@ -65,43 +71,16 @@ import { CHART_COLORS } from './colors'
  * die Utility `.fixed`. Siehe `chart-toolbar.tsx`.
  */
 
-/** Abstand zwischen Leiste und Zeichnung. */
-const LUFT = 10
 /**
  * Womit gerechnet wird, bevor gemessen ist — verhindert einen Sprung im ersten
- * Bild. Beides wird danach am echten Element abgenommen: Geschätzte Maße waren
- * hier schon um 4 px daneben, und daraus wurde aus 10 px Luft über der
- * Zeichnung 6 px.
+ * Bild. Beides wird danach am echten Element abgenommen; gebraucht werden die
+ * Maße nur noch, um die Leiste beim Ziehen im Fenster zu halten.
  */
 const BREITE_SCHAETZUNG = 240
 const HOEHE_SCHAETZUNG = 38
 
-export interface AuswahlRahmen {
-  left: number
-  top: number
-  right: number
-  bottom: number
-}
-
 function klemmen(min: number, wert: number, max: number): number {
   return Math.max(min, Math.min(wert, max))
-}
-
-/**
- * Wo die Leiste sitzt: mittig über der Zeichnung, sonst darunter.
- *
- * Über der Zeichnung, weil man beim Zeichnen von oben nach unten liest und die
- * Leiste dort nichts verdeckt, was gerade entsteht. Reicht der Platz nach oben
- * nicht (Zeichnung am oberen Chartrand), klappt sie nach unten — sie darf nie
- * aus dem Bild laufen, sonst sieht es aus wie ein defektes Werkzeug.
- */
-function lage(rahmen: AuswahlRahmen, breite: number, hoehe: number) {
-  const mitte = (rahmen.left + rahmen.right) / 2
-  const left = klemmen(8, mitte - breite / 2, window.innerWidth - breite - 8)
-  const oben = rahmen.top - hoehe - LUFT
-  const top =
-    oben >= 8 ? oben : klemmen(8, rahmen.bottom + LUFT, window.innerHeight - hoehe - 8)
-  return { top, left }
 }
 
 /** Ein Knopf der Leiste — überall gleich groß, damit die Reihe ruhig bleibt. */
@@ -144,7 +123,7 @@ type OffeneKlappe = 'farbe' | 'staerke' | 'strich' | 'mehr' | null
 
 export function DrawingStyleBar({
   drawing,
-  rahmen,
+  anker,
   onChange,
   onOpenSettings,
   onDelete,
@@ -154,8 +133,15 @@ export function DrawingStyleBar({
   onSaveDefault,
 }: {
   drawing: Drawing
-  /** Das Rechteck der Zeichnung im Fenster — daran hängt die Leiste. */
-  rahmen: AuswahlRahmen
+  /**
+   * Die linke obere Ecke des Chart-Rahmens im Fenster — dort sitzt die Leiste.
+   *
+   * Bewusst **nicht** mehr am Auswahlrahmen: Die Leiste legte sich mittig über
+   * die gerade bearbeitete Zeichnung und verdeckte damit genau den Ausschnitt,
+   * um den es beim Analysieren geht. Ein fester Platz ist auffindbar; ein Platz,
+   * der jedem Objekt hinterherspringt, ist es nicht.
+   */
+  anker: { top: number; left: number }
   onChange: (style: DrawingStyle) => void
   /** Den vollen Eigenschaften-Dialog öffnen (Zahnrad). */
   onOpenSettings: () => void
@@ -174,9 +160,9 @@ export function DrawingStyleBar({
   const [offen, setOffen] = useState<OffeneKlappe>(null)
   const [gesichert, setGesichert] = useState(false)
   /**
-   * Von Hand verschoben. Ab dann folgt die Leiste der Zeichnung NICHT mehr —
-   * wer sie beiseite zieht, will sie dort haben, auch wenn er die Linie danach
-   * verschiebt. TradingViews Leiste verhält sich genauso.
+   * Von Hand verschoben — schlägt den Anker aus der Ecke. Wer die Leiste
+   * beiseite zieht, will sie dort haben; beim Wechsel der Auswahl fällt sie
+   * aber wieder in die Ecke zurück (siehe Effekt auf `drawing.id`).
    */
   const [frei, setFrei] = useState<{ top: number; left: number } | null>(null)
 
@@ -232,7 +218,10 @@ export function DrawingStyleBar({
     [drawing.style, onChange],
   )
 
-  const pos = frei ?? lage(rahmen, breite, hoehe)
+  const pos = frei ?? {
+    top: klemmen(8, anker.top, window.innerHeight - hoehe - 8),
+    left: klemmen(8, anker.left, window.innerWidth - breite - 8),
+  }
 
   /** Ziehen am Griff. */
   const griffDown = (e: React.PointerEvent) => {

@@ -12,10 +12,12 @@ import {
   DEFAULT_FIBEXT,
   normalizeFibStil,
   removeLevel,
+  setLevel,
   toggleLevel,
   type FibBeschriftung,
   type FibStil,
 } from '@/lib/fib-levels'
+import { MAX_FIB_VORLAGEN, MAX_VORLAGEN_NAME, type FibVorlage } from '@/lib/drawing-defaults'
 import {
   normalizeDrawingStyle,
   strichMuster,
@@ -237,6 +239,28 @@ function Koordinaten({
  * Tailwind-Layer liegt und die Utility `.fixed` schlägt. Beides zusammen hat
  * schon einmal Menüs 1200 px zu tief landen lassen — siehe `chart-toolbar.tsx`.
  */
+/**
+ * Farbe in die Schreibweise bringen, die `<input type="color">` allein
+ * akzeptiert: `#rrggbb`. Gespeicherte Farben dürfen laut `FARB_MUSTER` auch
+ * `#rgb`, `rgba(…)` oder `transparent` sein — ein solcher Wert lässt das Feld
+ * sonst stumm auf Schwarz springen, und der Nutzer hielte seine Farbe für
+ * verloren.
+ */
+function farbeAlsHex(farbe: string): string {
+  const v = farbe.trim()
+  if (/^#[0-9a-fA-F]{6}$/.test(v)) return v
+  if (/^#[0-9a-fA-F]{3}$/.test(v)) {
+    return `#${v[1]}${v[1]}${v[2]}${v[2]}${v[3]}${v[3]}`
+  }
+  if (/^#[0-9a-fA-F]{8}$/.test(v)) return v.slice(0, 7)
+  const rgb = v.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/)
+  if (rgb) {
+    const hex = (n: string) => Math.min(255, Number(n)).toString(16).padStart(2, '0')
+    return `#${hex(rgb[1])}${hex(rgb[2])}${hex(rgb[3])}`
+  }
+  return '#ffffff'
+}
+
 export function DrawingStylePanel({
   drawing,
   top,
@@ -245,6 +269,8 @@ export function DrawingStylePanel({
   onDelete,
   onClose,
   onSaveDefault,
+  vorlagen,
+  onVorlagenChange,
   times,
   step,
   onPointsChange,
@@ -257,6 +283,10 @@ export function DrawingStylePanel({
   onClose: () => void
   /** Diese Fib-Einstellung als eigenen Standard für neue Zeichnungen sichern. */
   onSaveDefault?: (typ: 'fib' | 'fibext', stil: FibStil) => void
+  /** Gespeicherte Fib-Vorlagen. Fehlt sie, bleibt der Vorlagen-Abschnitt weg. */
+  vorlagen?: FibVorlage[]
+  /** Die geänderte Vorlagenliste sichern (anlegen und löschen laufen beide hier durch). */
+  onVorlagenChange?: (next: FibVorlage[]) => void
   /** Zeitraster der Kerzen — für die Balkenzahl im Koordinaten-Abschnitt. */
   times?: number[]
   step?: number
@@ -265,6 +295,7 @@ export function DrawingStylePanel({
 }) {
   const [neuesLevel, setNeuesLevel] = useState('')
   const [gesichert, setGesichert] = useState(false)
+  const [vorlagenName, setVorlagenName] = useState('')
 
   const istFib = drawing.type === 'fib' || drawing.type === 'fibext'
   const istLinie = istLinienTyp(drawing.type)
@@ -304,6 +335,23 @@ export function DrawingStylePanel({
     if (!Number.isFinite(wert)) return
     setzeFib(addLevel(fib, wert))
     setNeuesLevel('')
+  }
+
+  /**
+   * Die aktuelle Zusammenstellung unter einem Namen sichern.
+   *
+   * Ein vorhandener Name wird ersetzt statt verdoppelt — zwei Vorlagen gleichen
+   * Namens wären nicht auseinanderzuhalten, und `normalizeDrawingDefaults`
+   * würfe die zweite ohnehin weg.
+   */
+  const vorlageSichern = () => {
+    if (!fib || !vorlagen || !onVorlagenChange) return
+    const name = vorlagenName.trim().slice(0, MAX_VORLAGEN_NAME)
+    if (!name) return
+    const ohne = vorlagen.filter((v) => v.name.toLowerCase() !== name.toLowerCase())
+    if (ohne.length >= MAX_FIB_VORLAGEN) return
+    onVorlagenChange([...ohne, { name, stil: fib }])
+    setVorlagenName('')
   }
 
   return createPortal(
@@ -555,6 +603,14 @@ export function DrawingStylePanel({
             >
               nach rechts verlängern
             </Schalter>
+            {/* Links getrennt wie in TradingView: rechts beantwortet „wo trifft
+                der kommende Kurs auf", links „hat das Level früher getragen". */}
+            <Schalter
+              an={fib.verlaengernLinks}
+              onClick={() => setzeFib({ ...fib, verlaengernLinks: !fib.verlaengernLinks })}
+            >
+              nach links verlängern
+            </Schalter>
             <Schalter an={fib.flaeche} onClick={() => setzeFib({ ...fib, flaeche: !fib.flaeche })}>
               Flächen einfärben
             </Schalter>
@@ -569,32 +625,138 @@ export function DrawingStylePanel({
             </Schalter>
           </div>
 
+          {/* Deckkraft nur zeigen, wenn Flächen an sind — ein Regler ohne
+              Wirkung ist eine Behauptung, die der Chart nicht einlöst. */}
+          {fib.flaeche && (
+            <div>
+              <p className="note mb-1">
+                Deckkraft der Flächen · {Math.round(fib.flaecheDeckkraft * 100)} %
+              </p>
+              <input
+                type="range"
+                min={0}
+                max={40}
+                step={1}
+                value={Math.round(fib.flaecheDeckkraft * 100)}
+                onChange={(e) =>
+                  setzeFib({ ...fib, flaecheDeckkraft: Number(e.target.value) / 100 })
+                }
+                aria-label="Deckkraft der Flächen"
+                className="h-1.5 w-full accent-[var(--accent)]"
+              />
+            </div>
+          )}
+
+          {/* Die Level-Tabelle nach TradingViews Style-Reiter: je Level eine
+              Zeile mit Häkchen, Verhältnis, Farbe, Stärke und Strichart. Vorher
+              stand hier eine Chip-Reihe — die konnte nur an/aus, und genau
+              deshalb sahen 0,618 und 1,618 gleich wichtig aus. „auto" heißt
+              jeweils: es gilt, was die Zeichnung trägt. */}
           <div>
             <p className="note mb-1">Levels</p>
-            <div className="flex flex-wrap gap-1">
-              {fib.levels.map((l) => (
-                <span key={l.wert} className="group relative">
-                  <button
-                    type="button"
-                    onClick={() => setzeFib(toggleLevel(fib, l.wert))}
-                    className={`rounded px-1.5 py-0.5 font-mono text-[10px] transition-colors ${
-                      l.an
-                        ? 'bg-accent/25 text-foreground'
-                        : 'text-muted-foreground hover:bg-accent/10'
-                    }`}
-                  >
-                    {String(l.wert).replace('.', ',')}
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`Level ${l.wert} entfernen`}
-                    onClick={() => setzeFib(removeLevel(fib, l.wert))}
-                    className="absolute -right-1 -top-1 hidden size-3 items-center justify-center rounded-full bg-destructive text-[8px] text-white group-hover:flex"
-                  >
-                    <X className="size-2" />
-                  </button>
-                </span>
-              ))}
+            <div className="flex flex-col gap-0.5">
+              {fib.levels.map((l) => {
+                const eigen = l.farbe != null || l.staerke != null || l.art != null
+                return (
+                  <div key={l.wert} className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      role="checkbox"
+                      aria-checked={l.an}
+                      aria-label={`Level ${l.wert}`}
+                      onClick={() => setzeFib(toggleLevel(fib, l.wert))}
+                      className={`h-5 w-12 shrink-0 rounded px-1 text-left font-mono text-[10px] transition-colors ${
+                        l.an
+                          ? 'bg-accent/25 text-foreground'
+                          : 'text-muted-foreground hover:bg-accent/10'
+                      }`}
+                    >
+                      {String(l.wert).replace('.', ',')}
+                    </button>
+
+                    <input
+                      type="color"
+                      value={farbeAlsHex(l.farbe ?? stil.color)}
+                      onChange={(e) =>
+                        setzeFib(setLevel(fib, l.wert, { farbe: e.target.value }))
+                      }
+                      aria-label={`Farbe für Level ${l.wert}`}
+                      title="Farbe dieses Levels"
+                      className="h-5 w-5 shrink-0 cursor-pointer rounded border-0 bg-transparent p-0"
+                    />
+
+                    <select
+                      value={l.staerke ?? ''}
+                      onChange={(e) =>
+                        setzeFib(
+                          setLevel(fib, l.wert, {
+                            staerke: e.target.value === '' ? undefined : Number(e.target.value),
+                          }),
+                        )
+                      }
+                      aria-label={`Strichstärke für Level ${l.wert}`}
+                      title="Strichstärke"
+                      className="h-5 shrink-0 rounded bg-accent/10 px-0.5 font-mono text-[10px]"
+                    >
+                      <option value="">auto</option>
+                      {ZEICHEN_STAERKEN.map((w) => (
+                        <option key={w} value={w}>
+                          {String(w).replace('.', ',')}
+                        </option>
+                      ))}
+                    </select>
+
+                    <select
+                      value={l.art ?? ''}
+                      onChange={(e) =>
+                        setzeFib(
+                          setLevel(fib, l.wert, {
+                            art: e.target.value === '' ? undefined : (e.target.value as Strichart),
+                          }),
+                        )
+                      }
+                      aria-label={`Strichart für Level ${l.wert}`}
+                      title="Strichart"
+                      className="h-5 shrink-0 rounded bg-accent/10 px-0.5 font-mono text-[10px]"
+                    >
+                      <option value="">auto</option>
+                      <option value="solid">──</option>
+                      <option value="dashed">- -</option>
+                      <option value="dotted">···</option>
+                    </select>
+
+                    {eigen && (
+                      <button
+                        type="button"
+                        aria-label={`Level ${l.wert} auf die Zeichnung zurücksetzen`}
+                        title="Auf die Zeichnung zurücksetzen"
+                        onClick={() =>
+                          setzeFib(
+                            setLevel(fib, l.wert, {
+                              farbe: undefined,
+                              staerke: undefined,
+                              art: undefined,
+                            }),
+                          )
+                        }
+                        className="shrink-0 font-mono text-[10px] text-muted-foreground hover:text-foreground"
+                      >
+                        ↺
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      aria-label={`Level ${l.wert} entfernen`}
+                      title="Level entfernen"
+                      onClick={() => setzeFib(removeLevel(fib, l.wert))}
+                      className="ml-auto shrink-0 text-muted-foreground hover:text-destructive"
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </div>
+                )
+              })}
             </div>
             <div className="mt-1.5 flex gap-1">
               <Input
@@ -619,6 +781,73 @@ export function DrawingStylePanel({
               </Button>
             </div>
           </div>
+
+          {/* Vorlagen — TradingViews „Templates". Der Standard sagt, womit eine
+              neue Zeichnung anfängt; eine Vorlage sagt, womit man in DIESER
+              Lage arbeitet. Deshalb beides nebeneinander und nicht statt. */}
+          {vorlagen && onVorlagenChange && (
+            <div className="border-t border-border/40 pt-2">
+              <p className="note mb-1">Vorlagen</p>
+              {vorlagen.length > 0 ? (
+                <div className="flex flex-col gap-0.5">
+                  {vorlagen.map((v) => (
+                    <div key={v.name} className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        title={`„${v.name}" auf diese Zeichnung anwenden`}
+                        onClick={() =>
+                          setzeFib({ ...v.stil, farbe: stil.color, staerke: stil.width })
+                        }
+                        className="h-5 min-w-0 flex-1 truncate rounded px-1 text-left font-mono text-[10px] text-muted-foreground transition-colors hover:bg-accent/15 hover:text-foreground"
+                      >
+                        {v.name}
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Vorlage ${v.name} löschen`}
+                        title="Vorlage löschen"
+                        onClick={() =>
+                          onVorlagenChange(vorlagen.filter((x) => x.name !== v.name))
+                        }
+                        className="shrink-0 text-muted-foreground hover:text-destructive"
+                      >
+                        <X className="size-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="note text-muted-foreground">
+                  Noch keine — die aktuelle Zusammenstellung unten sichern.
+                </p>
+              )}
+              {vorlagen.length < MAX_FIB_VORLAGEN && (
+                <div className="mt-1.5 flex gap-1">
+                  <Input
+                    value={vorlagenName}
+                    onChange={(e) => setVorlagenName(e.target.value.slice(0, MAX_VORLAGEN_NAME))}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Enter') return
+                      e.preventDefault()
+                      vorlageSichern()
+                    }}
+                    placeholder="Name der Vorlage"
+                    aria-label="Name der Vorlage"
+                    className="h-6 flex-1 font-mono text-[10px]"
+                  />
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 px-2 font-mono text-[10px]"
+                    disabled={!vorlagenName.trim()}
+                    onClick={vorlageSichern}
+                  >
+                    +
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
 
           {onSaveDefault && (
             <Button

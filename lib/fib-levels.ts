@@ -17,9 +17,21 @@
  */
 
 import { CHART_COLORS } from '@/components/chart/colors'
+import { STRICHARTEN, type Strichart } from '@/lib/drawing-style'
 
 /** Farben müssen geprüft sein, bevor sie in SVG-Attribute gehen. */
 const FARB_MUSTER = /^(#[0-9a-fA-F]{3,8}|rgba?\([\d\s.,%]+\)|transparent)$/
+
+/**
+ * Strichart einer einzelnen Fib-Linie — **dieselbe** wie bei jeder anderen
+ * Zeichnung. Bewusst kein eigener Typ: Zwei Aufzählungen mit denselben drei
+ * Werten wären zwei Gelegenheiten, auseinanderzulaufen.
+ */
+export type FibStrichart = Strichart
+
+export function istFibStrichart(v: unknown): v is FibStrichart {
+  return typeof v === 'string' && (STRICHARTEN as string[]).includes(v)
+}
 
 export interface FibLevel {
   /** Verhältnis, z. B. 0.618. Negativ und > 1 sind erlaubt. */
@@ -28,6 +40,16 @@ export interface FibLevel {
   an: boolean
   /** Eigene Farbe; fehlt sie, gilt die Farbe der Zeichnung. */
   farbe?: string
+  /** Eigene Strichstärke; fehlt sie, gilt die Stärke der Zeichnung. */
+  staerke?: number
+  /**
+   * Eigene Strichart; fehlt sie, gilt `solid`.
+   *
+   * Wie in TradingView je Level einzeln: Wer 0,618 durchgezogen und die
+   * Extensions gestrichelt führt, unterscheidet damit Messung von Erwartung —
+   * und das geht nur, wenn die Art am Level hängt und nicht an der Zeichnung.
+   */
+  art?: FibStrichart
 }
 
 export type FibBeschriftung = 'preis' | 'prozent' | 'beides' | 'aus'
@@ -52,6 +74,14 @@ export interface FibStil {
    * kein Schicksal — hier gilt derselbe Satz wie bei `linienForm`.
    */
   umkehren: boolean
+  /**
+   * Linien nach links über den ersten Klickpunkt hinaus verlängern.
+   *
+   * Getrennt von `verlaengern` (rechts), weil TradingView das getrennt führt und
+   * beide Seiten verschiedene Fragen beantworten: rechts, wo der kommende Kurs
+   * auftrifft; links, ob das Level schon früher getragen hat.
+   */
+  verlaengernLinks: boolean
   beschriftung: FibBeschriftung
   /** Grundfarbe der Zeichnung. */
   farbe: string
@@ -59,6 +89,8 @@ export interface FibStil {
   staerke: number
   /** Flächen zwischen benachbarten Levels blass einfärben. */
   flaeche: boolean
+  /** Deckkraft dieser Flächen (0…1). Greift nur, wenn `flaeche` an ist. */
+  flaecheDeckkraft: number
 }
 
 const grenze = (v: number, min: number, max: number, fallback: number): number =>
@@ -85,10 +117,12 @@ export const DEFAULT_FIB: FibStil = {
   ],
   verlaengern: true,
   umkehren: false,
+  verlaengernLinks: false,
   beschriftung: 'beides',
   farbe: CHART_COLORS.warning,
   staerke: 1,
   flaeche: false,
+  flaecheDeckkraft: 0.08,
 }
 
 /** Trendbasierte Extension (3 Punkte A/B/C) — TradingView-Standard. */
@@ -106,10 +140,12 @@ export const DEFAULT_FIBEXT: FibStil = {
   ],
   verlaengern: true,
   umkehren: false,
+  verlaengernLinks: false,
   beschriftung: 'beides',
   farbe: CHART_COLORS.warning,
   staerke: 1,
   flaeche: false,
+  flaecheDeckkraft: 0.08,
 }
 
 const BESCHRIFTUNGEN: FibBeschriftung[] = ['preis', 'prozent', 'beides', 'aus']
@@ -145,6 +181,10 @@ export function normalizeFibStil(raw: unknown, standard: FibStil = DEFAULT_FIB):
         wert: rund,
         an: e.an !== false,
         ...(farbeOk(e.farbe) ? { farbe: e.farbe.trim() } : {}),
+        ...(typeof e.staerke === 'number' && Number.isFinite(e.staerke)
+          ? { staerke: grenze(e.staerke, 0.5, 4, 1) }
+          : {}),
+        ...(istFibStrichart(e.art) ? { art: e.art } : {}),
       })
       if (levels.length >= MAX_FIB_LEVELS) break
     }
@@ -154,7 +194,11 @@ export function normalizeFibStil(raw: unknown, standard: FibStil = DEFAULT_FIB):
 
   if (typeof o.verlaengern === 'boolean') d.verlaengern = o.verlaengern
   if (typeof o.umkehren === 'boolean') d.umkehren = o.umkehren
+  if (typeof o.verlaengernLinks === 'boolean') d.verlaengernLinks = o.verlaengernLinks
   if (typeof o.flaeche === 'boolean') d.flaeche = o.flaeche
+  if (typeof o.flaecheDeckkraft === 'number') {
+    d.flaecheDeckkraft = grenze(o.flaecheDeckkraft, 0, 1, standard.flaecheDeckkraft)
+  }
   if (typeof o.beschriftung === 'string' && BESCHRIFTUNGEN.includes(o.beschriftung as FibBeschriftung)) {
     d.beschriftung = o.beschriftung as FibBeschriftung
   }
@@ -171,6 +215,10 @@ export interface FibLinie {
   label: string
   /** 0 und 1 sind die Basis der Messung und werden kräftiger gezeichnet. */
   betont: boolean
+  /** Strichstärke dieser Linie — schon aufgelöst gegen die Zeichnung. */
+  staerke: number
+  /** Strichart dieser Linie — schon aufgelöst, Standard `solid`. */
+  art: FibStrichart
 }
 
 /** Kursformat nach Größenordnung — dieselbe Regel wie im Trainer-Formular. */
@@ -221,6 +269,10 @@ export function fibLinien(stil: FibStil, von: number, bis: number): FibLinie[] {
         farbe: l.farbe ?? stil.farbe,
         label,
         betont: l.wert === 0 || l.wert === 1,
+        // Hier aufgelöst und nicht in der Zeichenroutine: Wer zeichnet, soll
+        // keine zweite Stelle sein, an der über Standards entschieden wird.
+        staerke: l.staerke ?? stil.staerke,
+        art: l.art ?? 'solid',
       }
     })
     .sort((a, b) => a.wert - b.wert)
@@ -231,6 +283,39 @@ export function toggleLevel(stil: FibStil, wert: number): FibStil {
   return {
     ...stil,
     levels: stil.levels.map((l) => (l.wert === wert ? { ...l, an: !l.an } : l)),
+  }
+}
+
+/**
+ * Eigenschaften eines einzelnen Levels setzen (Farbe, Stärke, Strichart).
+ *
+ * `undefined` löscht die Eigenschaft, statt sie zu überschreiben — so kommt man
+ * zurück auf „gilt die Zeichnung", ohne den Wert der Zeichnung zu kennen.
+ */
+export function setLevel(
+  stil: FibStil,
+  wert: number,
+  teil: { farbe?: string | undefined; staerke?: number | undefined; art?: FibStrichart | undefined },
+): FibStil {
+  return {
+    ...stil,
+    levels: stil.levels.map((l) => {
+      if (l.wert !== wert) return l
+      const next: FibLevel = { ...l }
+      if ('farbe' in teil) {
+        if (teil.farbe == null) delete next.farbe
+        else if (farbeOk(teil.farbe)) next.farbe = teil.farbe.trim()
+      }
+      if ('staerke' in teil) {
+        if (teil.staerke == null) delete next.staerke
+        else next.staerke = grenze(teil.staerke, 0.5, 4, 1)
+      }
+      if ('art' in teil) {
+        if (teil.art == null) delete next.art
+        else if (istFibStrichart(teil.art)) next.art = teil.art
+      }
+      return next
+    }),
   }
 }
 

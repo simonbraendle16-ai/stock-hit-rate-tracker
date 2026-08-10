@@ -897,12 +897,20 @@ export function DrawingLayer({
       d.style?.fib,
       d.type === 'fibext' ? DEFAULT_FIBEXT : DEFAULT_FIB,
     )
-    const linien = fibLinien({ ...fib, farbe: stil.color }, opt.von, opt.bis)
+    // Farbe UND Stärke der Zeichnung sind der Rückfall für Levels ohne eigene
+    // Angabe — sonst hinkte ein über die Stil-Leiste geänderter Strich hinterher.
+    const linien = fibLinien(
+      { ...fib, farbe: stil.color, staerke: stil.width },
+      opt.von,
+      opt.bis,
+    )
     // Rechter Rand des zeichenbaren Bereichs: Die Preisachse bleibt per
     // clipPath frei, dorthin zu zeichnen wäre unsichtbar.
     const rand = Math.max(opt.linkeKante + 40, width - achsenBreite - 4)
     const x2 = fib.verlaengern ? rand : Math.max(opt.rechteKante, opt.linkeKante + 40)
-    const x1 = opt.linkeKante
+    // Nach links geht es bis an den Chartrand — dorthin, wo die Vergangenheit
+    // liegt, die das Level bestätigen oder widerlegen kann.
+    const x1 = fib.verlaengernLinks ? 0 : opt.linkeKante
 
     const mitY = linien.flatMap((l) => {
       const y = series.priceToCoordinate(l.preis)
@@ -922,7 +930,9 @@ export function DrawingLayer({
               width={Math.max(0, x2 - x1)}
               height={Math.abs(mitY[i + 1].y - e.y)}
               fill={e.l.farbe}
-              opacity={i % 2 === 0 ? 0.07 : 0.03}
+              // Abwechselnd kräftiger und blasser, damit benachbarte Zonen
+              // unterscheidbar bleiben; die Deckkraft skaliert beide.
+              opacity={fib.flaecheDeckkraft * (i % 2 === 0 ? 1 : 0.45)}
             />
           ))}
         {mitY.map(({ l, y }) => (
@@ -933,8 +943,8 @@ export function DrawingLayer({
               x2={x2}
               y2={y}
               stroke={l.farbe}
-              strokeWidth={l.betont ? stil.width + 0.5 : stil.width}
-              strokeDasharray={strichMuster(stil.strich, stil.width)}
+              strokeWidth={l.betont ? l.staerke + 0.5 : l.staerke}
+              strokeDasharray={strichMuster(l.art, l.staerke)}
               opacity={l.betont ? 0.95 : 0.75}
             />
             {l.label && (

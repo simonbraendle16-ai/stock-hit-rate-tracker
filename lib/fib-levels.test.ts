@@ -7,6 +7,7 @@ import {
   MAX_FIB_LEVELS,
   normalizeFibStil,
   removeLevel,
+  setLevel,
   toggleLevel,
 } from './fib-levels'
 
@@ -225,5 +226,85 @@ describe('Levels ändern', () => {
     expect(s.levels.map((l) => l.wert)).not.toContain(0.236)
     const einer = { ...DEFAULT_FIB, levels: [{ wert: 0.5, an: true }] }
     expect(removeLevel(einer, 0.5)).toBe(einer)
+  })
+})
+
+describe('Stil je Level (TradingView-Style-Reiter)', () => {
+  it('übernimmt Stärke und Strichart eines Levels und verwirft Unsinn', () => {
+    const s = normalizeFibStil({
+      levels: [
+        { wert: 0.618, an: true, staerke: 3, art: 'dashed' },
+        { wert: 0.5, an: true, staerke: 99, art: 'zickzack' },
+      ],
+    })
+    expect(s.levels[0]).toMatchObject({ wert: 0.618, staerke: 3, art: 'dashed' })
+    // Zu große Stärke wird geklemmt, eine unbekannte Art fällt ganz weg.
+    expect(s.levels[1].staerke).toBe(4)
+    expect(s.levels[1].art).toBeUndefined()
+  })
+
+  it('löst fehlende Angaben gegen die Zeichnung auf', () => {
+    const stil = normalizeFibStil({
+      levels: [
+        { wert: 0, an: true },
+        { wert: 1, an: true, staerke: 2, art: 'dotted' },
+      ],
+      farbe: '#ff0000',
+      staerke: 1.5,
+    })
+    const [a, b] = fibLinien(stil, 100, 200)
+    expect(a).toMatchObject({ staerke: 1.5, art: 'solid', farbe: '#ff0000' })
+    expect(b).toMatchObject({ staerke: 2, art: 'dotted' })
+  })
+
+  it('setLevel setzt und löscht einzelne Eigenschaften', () => {
+    const gesetzt = setLevel(DEFAULT_FIB, 0.618, {
+      farbe: '#00ff00',
+      staerke: 2,
+      art: 'dashed',
+    })
+    const l = gesetzt.levels.find((x) => x.wert === 0.618)
+    expect(l).toMatchObject({ farbe: '#00ff00', staerke: 2, art: 'dashed' })
+
+    // `undefined` heißt „zurück auf die Zeichnung" — nicht „auf 0 setzen".
+    const zurueck = setLevel(gesetzt, 0.618, {
+      farbe: undefined,
+      staerke: undefined,
+      art: undefined,
+    })
+    const z = zurueck.levels.find((x) => x.wert === 0.618)!
+    expect('farbe' in z).toBe(false)
+    expect('staerke' in z).toBe(false)
+    expect('art' in z).toBe(false)
+  })
+
+  it('lässt andere Levels unberührt', () => {
+    const s = setLevel(DEFAULT_FIB, 0.5, { farbe: '#123456' })
+    expect(s.levels.find((l) => l.wert === 0.618)?.farbe).toBeUndefined()
+  })
+})
+
+describe('Verlängern und Flächen', () => {
+  it('kennt beide Seiten getrennt', () => {
+    expect(DEFAULT_FIB.verlaengernLinks).toBe(false)
+    const s = normalizeFibStil({ verlaengern: false, verlaengernLinks: true })
+    expect(s.verlaengern).toBe(false)
+    expect(s.verlaengernLinks).toBe(true)
+  })
+
+  it('klemmt die Deckkraft auf 0…1 und hält Unsinn fern', () => {
+    expect(normalizeFibStil({ flaecheDeckkraft: 0.5 }).flaecheDeckkraft).toBe(0.5)
+    expect(normalizeFibStil({ flaecheDeckkraft: 5 }).flaecheDeckkraft).toBe(1)
+    expect(normalizeFibStil({ flaecheDeckkraft: -2 }).flaecheDeckkraft).toBe(0)
+    expect(normalizeFibStil({ flaecheDeckkraft: 'viel' }).flaecheDeckkraft).toBe(
+      DEFAULT_FIB.flaecheDeckkraft,
+    )
+  })
+
+  it('lässt eine alte gespeicherte Zeichnung ohne die neuen Felder gültig', () => {
+    const alt = { levels: [{ wert: 0.618, an: true }], verlaengern: true, umkehren: false }
+    const s = normalizeFibStil(alt, DEFAULT_FIBEXT)
+    expect(s.verlaengernLinks).toBe(DEFAULT_FIBEXT.verlaengernLinks)
+    expect(s.flaecheDeckkraft).toBe(DEFAULT_FIBEXT.flaecheDeckkraft)
   })
 })
