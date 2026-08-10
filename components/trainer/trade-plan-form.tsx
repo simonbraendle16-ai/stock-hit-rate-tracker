@@ -12,7 +12,7 @@ import {
   ResultRow,
 } from '@/components/form-frame'
 import { computeRiskReward } from '@/lib/trade-math'
-import { MAX_TEILZIELE } from '@/lib/trade-targets'
+import { MAX_TEILZIELE, remainderPct } from '@/lib/trade-targets'
 import { SetupTagsInput } from '@/components/setup-tags-input'
 import { commitTrainingTrade } from '@/app/actions/training-trades'
 import {
@@ -159,13 +159,17 @@ export function TradePlanForm({
           t.price != null && t.sharePct != null && t.sharePct > 0,
       )
     if (gefuellt.length === 0) return undefined
-    const vergeben = gefuellt.reduce((n, t) => n + t.sharePct, 0)
-    const rest = Math.max(0, 100 - vergeben)
+    // Der Rest kommt aus `remainderPct` — dieselbe Rechnung wie bei echten
+    // Trades. Von Hand nachgebaut lief sie hier an der Rundungsschwelle der
+    // Vorlage vorbei, die dort bewusst gesetzt ist.
+    const rest = remainderPct(gefuellt)
     return z != null ? [...gefuellt, { price: z, sharePct: rest }] : gefuellt
   })()
 
   /** Wie viel Prozent die Teilziele schon binden — die Anzeige darunter. */
   const vergebenerAnteil = teilziele.reduce((n, t) => n + (zahl(t.anteil) ?? 0), 0)
+  /** Was bis zum Kursziel durchläuft — dieselbe Quelle wie die Stufen oben. */
+  const restAnteil = remainderPct([{ sharePct: vergebenerAnteil }])
 
   async function speichern() {
     if (!bereit) return
@@ -335,7 +339,7 @@ export function TradePlanForm({
             <p className="note">
               {teilziele.length === 0
                 ? 'Ohne Stufe gilt das Kursziel für die ganze Position.'
-                : `${vergebenerAnteil} % auf Stufen, ${Math.max(0, 100 - vergebenerAnteil)} % laufen bis zum Kursziel. Nach der ersten Stufe steht der Stop auf dem Einstand.`}
+                : `${vergebenerAnteil} % auf Stufen, ${restAnteil} % laufen bis zum Kursziel. Nach der ersten Stufe steht der Stop auf dem Einstand.`}
             </p>
           </div>
 

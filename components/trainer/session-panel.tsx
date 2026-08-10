@@ -219,6 +219,30 @@ export function SessionPanel({
   )
 
   /**
+   * Die nicht gehandelten Orders als Satz — mit ihren Gründen einzeln.
+   *
+   * Bewusst hier zusammengesetzt und nicht im JSX: Dort werden Zeilenumbrüche
+   * zu Leerzeichen, und eine über zwei Zeilen verteilte Pluralendung landet
+   * als „wurde n" auf der Seite.
+   */
+  const nichtGehandeltText = (() => {
+    if (bilanz.nichtGehandelt === 0) return null
+    const gruende = [
+      bilanz.gestrichen > 0 ? `${bilanz.gestrichen}× gestrichen` : null,
+      bilanz.nichtAusgeloest > 0 ? `${bilanz.nichtAusgeloest}× nie ausgelöst` : null,
+      bilanz.invalidiert > 0 ? `${bilanz.invalidiert}× invalidiert` : null,
+    ]
+      .filter(Boolean)
+      .join(' · ')
+    const anzahl =
+      bilanz.nichtGehandelt === 1 ? '1 Order wurde' : `${bilanz.nichtGehandelt} Orders wurden`
+    return (
+      `${anzahl} nie zum Trade (${gruende}). ` +
+      'Nicht in der Quote — was nicht gehandelt wurde, ist weder Treffer noch Fehlschlag.'
+    )
+  })()
+
+  /**
    * Eine liegende Order zurückziehen. Sie verschwindet nicht, sondern steht
    * danach als „gestrichen" in der Liste — dass man eine Order gelegt und
    * wieder genommen hat, gehört zum Übungsverlauf.
@@ -329,6 +353,11 @@ export function SessionPanel({
             die Quote — sich herauszuhalten ist kein Fehlschlag.
           </p>
         )}
+
+        {/* Aufgeschlüsselt statt als eine Zahl: „ich habe zurückgezogen" und
+            „der Markt kam nicht" sind zwei verschiedene Lehren, und nur die
+            erste ist eine Entscheidung, die man sich ansehen sollte. */}
+        {nichtGehandeltText && <p className="note">{nichtGehandeltText}</p>}
         {review && review.keinSetup > 0 && (
           <p className="note">
             An {review.keinSetup} Haltepunkten hast du hingesehen und nichts gemacht.

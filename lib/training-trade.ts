@@ -599,8 +599,25 @@ export interface SessionSummary {
    * dem Einstieg invalidiert. Ausgewiesen, aber **nicht** in der Quote — sie
    * waren keine Trades. Genau hier saß der Messfehler: Vor Ausbaustufe 3 galt
    * jede geplante Order als ausgeführt.
+   *
+   * Die Summe der drei Zahlen darunter.
    */
   nichtGehandelt: number
+  /**
+   * Warum es kein Trade wurde — drei verschiedene Antworten, die nicht in eine
+   * Zahl gehören:
+   *
+   * - `gestrichen`: **du** hast zurückgezogen. Das ist eine Entscheidung und
+   *   gehört bemerkt — wer regelmäßig streicht, sobald es unbequem wird,
+   *   handelt seine Emotion, nicht seinen Plan.
+   * - `nichtAusgeloest`: der Markt kam nicht. Kein Fehler, aber ein Hinweis auf
+   *   zu weit entfernte Einstiege.
+   * - `invalidiert`: die These fiel, bevor der Einstieg dran war. Das ist der
+   *   Fall, in dem die Order genau das getan hat, wofür sie gedacht war.
+   */
+  gestrichen: number
+  nichtAusgeloest: number
+  invalidiert: number
   /** Summe in R über die entschiedenen Trades. */
   summeR: number
   /** Trefferquote in Prozent (Ziel / entschieden) — `null`, wenn nichts entschieden ist. */
@@ -690,6 +707,9 @@ export function summarizeSession(
     offen: 0,
     keinSetup: 0,
     nichtGehandelt: 0,
+    gestrichen: 0,
+    nichtAusgeloest: 0,
+    invalidiert: 0,
     summeR: 0,
     quote: null,
   }
@@ -697,12 +717,17 @@ export function summarizeSession(
   for (const t of trades) {
     // Eine Order, die nie ausgelöst hat, ist weder Treffer noch Fehlschlag —
     // und auch keine Enthaltung: Der Wille war da, der Markt kam nicht.
+    // Getrennt gezählt, weil die drei Gründe verschiedene Lehren tragen; die
+    // Summe steht daneben, damit die Quote unverändert davon frei bleibt.
     if (
       t.orderStatus === 'gestrichen' ||
       t.orderStatus === 'nicht_ausgeloest' ||
       t.orderStatus === 'invalidiert'
     ) {
       out.nichtGehandelt++
+      if (t.orderStatus === 'gestrichen') out.gestrichen++
+      else if (t.orderStatus === 'nicht_ausgeloest') out.nichtAusgeloest++
+      else out.invalidiert++
       continue
     }
     // Eine noch liegende Order ist schlicht noch nichts.

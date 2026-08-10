@@ -260,6 +260,41 @@ describe('summarizeSession', () => {
     expect(summarizeSession([]).quote).toBeNull()
     expect(summarizeSession([{ outcome: null, rMultiple: null }]).quote).toBeNull()
   })
+
+  /**
+   * Die drei Gründe tragen verschiedene Lehren: Streichen ist eine eigene
+   * Entscheidung, „nie ausgelöst" ein zu weit entfernter Einstieg, und
+   * „invalidiert" der Fall, in dem die Order genau ihren Zweck erfüllt hat.
+   * In einer Zahl wären sie nicht mehr auseinanderzuhalten.
+   */
+  it('schlüsselt die nicht gehandelten Orders nach ihrem Grund auf', () => {
+    const s = summarizeSession([
+      { outcome: 'ziel', rMultiple: 1, orderStatus: 'ausgeloest' },
+      { outcome: null, rMultiple: null, orderStatus: 'gestrichen' },
+      { outcome: null, rMultiple: null, orderStatus: 'gestrichen' },
+      { outcome: null, rMultiple: null, orderStatus: 'nicht_ausgeloest' },
+      { outcome: null, rMultiple: null, orderStatus: 'invalidiert' },
+    ])
+    expect(s.gestrichen).toBe(2)
+    expect(s.nichtAusgeloest).toBe(1)
+    expect(s.invalidiert).toBe(1)
+    // Die Summe bleibt, was sie war — und die Quote bleibt davon unberührt.
+    expect(s.nichtGehandelt).toBe(4)
+    expect(s.entschieden).toBe(1)
+    expect(s.keinSetup).toBe(0)
+    expect(s.quote).toBe(100)
+  })
+
+  it('zählt eine noch liegende Order nirgends mit', () => {
+    const s = summarizeSession([
+      { outcome: 'ziel', rMultiple: 1, orderStatus: 'ausgeloest' },
+      { outcome: null, rMultiple: null, orderStatus: 'liegt' },
+    ])
+    expect(s.nichtGehandelt).toBe(0)
+    expect(s.gestrichen + s.nichtAusgeloest + s.invalidiert).toBe(0)
+    expect(s.keinSetup).toBe(0)
+    expect(s.entschieden).toBe(1)
+  })
 })
 
 describe('fortschrittZeit', () => {
