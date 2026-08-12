@@ -11,6 +11,9 @@
 // zu verlangen.
 
 import type { trade, tradeTarget } from '@/lib/db/schema'
+// Die Lage einer Stufe auf der Leiste rechnet dieselbe Funktion, die den
+// Kurs-Marker setzt — zwei Formeln für dieselbe Skala wären zwei Skalen.
+import { pricePositionFraction } from '@/lib/trade-stats'
 
 export type TradeRow = typeof trade.$inferSelect
 export type TradeTargetRow = typeof tradeTarget.$inferSelect
@@ -351,6 +354,58 @@ export function plannedQty(basisQty: number, sharePct: number): number {
   return (basisQty * sharePct) / 100
 }
 
+/** Der Vorschlag für einen Teilverkauf: welche Stufe, und was sie vorsieht. */
+export type PlannedSale = {
+  targetId: number
+  sortOrder: number
+  sharePct: number
+  price: number
+  quantity: number
+}
+
+/**
+ * Die nächste noch offene Stufe des Staffelplans — als Vorbelegung für den
+ * Teilverkauf-Dialog. Bewusst unabhängig davon, ob der Kurs sie schon berührt
+ * hat: Vorbelegen heißt nicht auslösen, gebucht wird erst auf Klick. Wer nur die
+ * FÄLLIGE Stufe will, nimmt `nextActionableTarget`.
+ *
+ * Zwei Stufen kommen nie heraus:
+ *  - die LETZTE — sie schließt die Position, und das läuft über „Abschließen",
+ *    wo Verlust-Annahme und Check-in greifen;
+ *  - eine, die keine Restmenge übrig ließe — die nimmt `partialClose` ohnehin
+ *    nicht an, und ein Vorschlag, der beim Buchen abgelehnt wird, ist schlimmer
+ *    als gar keiner.
+ *
+ * Ohne brauchbare Stufe kommt `null` zurück und das Feld bleibt leer. Eine
+ * geratene Menge wäre genau der stille Falschwert, den dieses Journal nicht will.
+ */
+export function nextPlannedSale(
+  t: TradeRow,
+  rows: TradeTargetRow[],
+  basisQty: number,
+  openQty: number,
+): PlannedSale | null {
+  const stufen = effectiveTargets(t, rows)
+  const offen = stufen.find((s, i) => i < stufen.length - 1 && s.executedAt == null && s.id != null)
+  if (!offen || offen.id == null) return null
+  // EXAKT dieselbe Rechnung wie serverseitig in `executeTarget` — bewusst nicht
+  // auf Anzeige-Auflösung gerundet. Wer 33,333 % von 10 Stück plant, bekommt hier
+  // 3,3333333… zu sehen, und genau das wird auch gebucht. Ein gerundeter
+  // Vorschlag sähe schöner aus und wäre ein stiller Falschwert: Im Feld stünde
+  // eine Zahl, im Ereignis-Log eine andere.
+  const quantity = Math.min(plannedQty(basisQty, offen.sharePct), openQty)
+  // Dieselbe Schwelle wie der Server (`menge >= openQty - 1e-9`): Ein Vorschlag,
+  // der beim Buchen abgelehnt würde, ist schlimmer als gar keiner.
+  if (!(quantity > 0) || quantity >= openQty - 1e-9) return null
+  return {
+    targetId: offen.id,
+    sortOrder: offen.sortOrder,
+    sharePct: offen.sharePct,
+    price: offen.price,
+    quantity,
+  }
+}
+
 export type TargetProgress = {
   /** Anzahl Stufen insgesamt. */
   total: number
@@ -381,4 +436,98 @@ export function targetProgress(targets: EffectiveTarget[]): TargetProgress {
     next: open[0] ?? null,
     allExecuted: targets.length > 0 && open.length === 0,
   }
+}
+
+// ---------------------------------------------------------------------------
+// Die Stufen auf der Live-Leiste
+// ---------------------------------------------------------------------------
+
+/**
+ * Eine Stufe, wie sie auf dem Balken „Stop → Ziel" erscheint.
+ *
+ * `fraction` kommt aus derselben Funktion wie der Kurs-Marker
+ * (`pricePositionFraction`). Weil das Kursziel die LETZTE Stufe ist, liegt jede
+ * Zwischenstufe von selbst innerhalb 0..1 — die Leiste braucht keine eigene
+ * Skala und kann keine andere bekommen.
+ */
+export type TargetMarker = {
+  /** `null` = implizite Stufe aus `trade.takeProfit` (Altbestand). */
+  id: number | null
+  sortOrder: number
+  price: number
+  sharePct: number
+  /** Lage auf der Leiste, 0 = Stop, 1 = Kursziel. `null` ohne brauchbare Skala. */
+  fraction: number | null
+  executed: boolean
+  /** Berührt und noch nicht abgetragen → hier ist etwas zu tun. */
+  reached: boolean
+  /** Steht der Kurs INZWISCHEN wieder diesseits der Stufe? */
+  fellBack: boolean
+  /** Letzte Stufe: Sie schließt die Position und läuft über den Abschluss. */
+  isLast: boolean
+}
+
+/** Zählt eine Stufe als vom Kurs erfüllt? Richtungsbewusst, Berührung genügt. */
+function levelHit(direction: string, price: number, level: number): boolean {
+  return direction === 'short' ? price <= level + EPS : price >= level - EPS
+}
+
+/**
+ * Die Stufen eines Trades für die Live-Leiste — angereichert um Lage und
+ * Handlungsbedarf.
+ *
+ * „Erreicht" hat bewusst ZWEI Quellen, wie schon der Alarm-Lauf zwei Kursquellen
+ * hat (`lib/alert-run.ts`):
+ *
+ *   1. Ein ausgelöster `ziel`-Alert auf diesem Kurs (`triggeredPrices`). Der
+ *      5-Minuten-Lauf sieht das High/Low der Kerze und damit auch einen Docht,
+ *      den man selbst verpasst hat. Einmal berührt bleibt berührt.
+ *   2. Der aktuelle Kurs erfüllt die Stufe. Nötig für Trades mit
+ *      `alertsEnabled = false` und für Stufen, die `createPlanAlerts` als „schon
+ *      erfüllt" übersprungen hat — ohne diesen Weg hätten die nie einen Wecker.
+ *
+ * Fällt der Kurs danach wieder zurück, bleibt `reached` stehen (Quelle 1), aber
+ * `fellBack` sagt es dazu. Der Knopf verschwindet nicht — man soll nur nicht
+ * blind einen Fill buchen, den es gerade nicht mehr gibt.
+ */
+export function targetMarkers(
+  t: TradeRow,
+  rows: TradeTargetRow[],
+  ctx: { price: number | null; triggeredPrices?: number[] },
+): TargetMarker[] {
+  const stufen = effectiveTargets(t, rows)
+  if (stufen.length === 0) return []
+  const ausgeloest = ctx.triggeredPrices ?? []
+  const kurs = ctx.price != null && Number.isFinite(ctx.price) ? ctx.price : null
+
+  return stufen.map((s, i) => {
+    const executed = s.executedAt != null
+    // Preisgleichheit reicht als Zuordnung: Zwei Stufen auf demselben Kurs
+    // lässt `normalizeTargets` gar nicht erst zu (Dubletten-Prüfung).
+    const geweckt = ausgeloest.some((p) => Math.abs(p - s.price) <= EPS)
+    const amKurs = kurs != null && levelHit(t.direction, kurs, s.price)
+    return {
+      id: s.id,
+      sortOrder: s.sortOrder,
+      price: s.price,
+      sharePct: s.sharePct,
+      fraction: pricePositionFraction(t, s.price),
+      executed,
+      reached: !executed && (geweckt || amKurs),
+      fellBack: !executed && geweckt && kurs != null && !amKurs,
+      isLast: i === stufen.length - 1,
+    }
+  })
+}
+
+/**
+ * Die Stufe, die jetzt dran ist: die niedrigste erreichte, noch offene.
+ *
+ * Bewusst nur EINE — der Plan wird der Reihe nach abgetragen. Sind bei einem
+ * Sprung zwei Stufen auf einmal berührt, kommt die zweite dran, sobald die
+ * erste gebucht ist. Das hält die Mengen sauber: Jede Stufe rechnet gegen die
+ * verbliebene Position.
+ */
+export function nextActionableTarget(markers: TargetMarker[]): TargetMarker | null {
+  return markers.find((m) => m.reached) ?? null
 }

@@ -7,9 +7,12 @@ import {
   buildTargetPlan,
   effectiveTargets,
   isProfitSide,
+  nextActionableTarget,
+  nextPlannedSale,
   normalizeTargets,
   plannedQty,
   remainderPct,
+  targetMarkers,
   targetProgress,
   type TradeRow,
   type TradeTargetRow,
@@ -396,6 +399,69 @@ describe('plannedQty', () => {
   })
 })
 
+describe('nextPlannedSale (Vorbelegung im Teilverkauf)', () => {
+  /** Drei Stufen: 50 % / 25 % bei 110 und 115, Kursziel als letzte. */
+  const stufen = () => [
+    row({ sortOrder: 0, price: 110, sharePct: 50 }),
+    row({ sortOrder: 1, price: 115, sharePct: 25 }),
+    row({ sortOrder: 2, price: 120, sharePct: 25 }),
+  ]
+
+  it('schlägt die erste offene Stufe vor — auch ohne dass der Kurs sie berührt hat', () => {
+    const v = nextPlannedSale(makeTrade(), stufen(), 100, 100)
+    expect(v).not.toBeNull()
+    expect(v!.sortOrder).toBe(0)
+    expect(v!.sharePct).toBe(50)
+    expect(v!.price).toBe(110)
+    expect(v!.quantity).toBeCloseTo(50)
+  })
+
+  it('überspringt ausgeführte Stufen', () => {
+    const rows = stufen()
+    rows[0].executedAt = new Date('2026-07-05')
+    const v = nextPlannedSale(makeTrade(), rows, 100, 50)
+    expect(v!.sortOrder).toBe(1)
+    expect(v!.quantity).toBeCloseTo(25)
+  })
+
+  it('lässt die letzte Stufe aus — sie läuft über den Abschluss', () => {
+    const rows = stufen()
+    rows[0].executedAt = new Date('2026-07-05')
+    rows[1].executedAt = new Date('2026-07-06')
+    expect(nextPlannedSale(makeTrade(), rows, 100, 25)).toBeNull()
+  })
+
+  it('schlägt nichts vor, was die Position ganz schließen würde', () => {
+    // Geplant 50 von 100, offen sind aber nur noch 50 — bliebe kein Rest.
+    expect(nextPlannedSale(makeTrade(), stufen(), 100, 50)).toBeNull()
+  })
+
+  it('schlägt exakt die Menge vor, die der Server buchen würde — ungerundet', () => {
+    // 33,333 % von 10 sind 3,3333 mit Rest. Serverseitig bucht `executeTarget`
+    // denselben ungerundeten Wert; ein gerundetes Feld wäre ein stiller
+    // Falschwert gegenüber dem, was im Ereignis-Log landet.
+    const rows = [
+      row({ sortOrder: 0, price: 110, sharePct: 33.333 }),
+      row({ sortOrder: 1, price: 120, sharePct: 66.667 }),
+    ]
+    const v = nextPlannedSale(makeTrade(), rows, 10, 10)
+    expect(v!.quantity).toBe(plannedQty(10, 33.333))
+  })
+
+  it('deckelt auf die offene Menge', () => {
+    const rows = [
+      row({ sortOrder: 0, price: 110, sharePct: 80 }),
+      row({ sortOrder: 1, price: 120, sharePct: 20 }),
+    ]
+    // Geplant wären 80 von 100 — offen sind nur 10, also bliebe kein Rest.
+    expect(nextPlannedSale(makeTrade(), rows, 100, 10)).toBeNull()
+  })
+
+  it('gibt ohne eigene Stufen null zurück — die implizite Einzelstufe ist die letzte', () => {
+    expect(nextPlannedSale(makeTrade({ takeProfit: 120 }), [], 100, 100)).toBeNull()
+  })
+})
+
 describe('targetProgress', () => {
   it('zählt ausgeführte und offene Stufen und nennt die nächste', () => {
     const targets = effectiveTargets(makeTrade(), [
@@ -418,5 +484,81 @@ describe('targetProgress', () => {
     ])
     expect(targetProgress(targets).allExecuted).toBe(true)
     expect(targetProgress([]).allExecuted).toBe(false)
+  })
+})
+
+describe('targetMarkers (Stufen auf der Live-Leiste)', () => {
+  /** Long 100, Stop 90, Kursziel 120 — Stufen bei 105 und 120. */
+  const stufen = () => [
+    row({ sortOrder: 0, price: 105, sharePct: 50 }),
+    row({ sortOrder: 1, price: 120, sharePct: 50 }),
+  ]
+
+  it('verortet jede Stufe auf derselben Skala wie den Kurs-Marker', () => {
+    const m = targetMarkers(makeTrade(), stufen(), { price: 100 })
+    // Stop 90 = 0, Kursziel 120 = 1 → 105 liegt genau in der Mitte.
+    expect(m[0].fraction).toBeCloseTo(0.5)
+    expect(m[1].fraction).toBeCloseTo(1)
+    expect(m[1].isLast).toBe(true)
+    expect(m[0].isLast).toBe(false)
+  })
+
+  it('erkennt eine Stufe am aktuellen Kurs — long wie short', () => {
+    const long = targetMarkers(makeTrade(), stufen(), { price: 106 })
+    expect(long[0].reached).toBe(true)
+    expect(long[1].reached).toBe(false)
+
+    const kurz = targetMarkers(
+      makeTrade({ direction: 'short', entryPrice: 100, stopLoss: 110, takeProfit: 80 }),
+      [row({ sortOrder: 0, price: 95, sharePct: 50 }), row({ sortOrder: 1, price: 80, sharePct: 50 })],
+      { price: 94 },
+    )
+    expect(kurz[0].reached).toBe(true)
+    expect(kurz[1].reached).toBe(false)
+  })
+
+  it('hält eine einmal berührte Stufe fest, auch wenn der Kurs zurückfällt', () => {
+    const m = targetMarkers(makeTrade(), stufen(), { price: 101, triggeredPrices: [105] })
+    expect(m[0].reached).toBe(true)
+    expect(m[0].fellBack).toBe(true)
+    // Steht der Kurs noch drüber, ist nichts zurückgefallen.
+    const drauf = targetMarkers(makeTrade(), stufen(), { price: 106, triggeredPrices: [105] })
+    expect(drauf[0].fellBack).toBe(false)
+  })
+
+  it('erzeugt keinen Handlungsbedarf für eine bereits ausgeführte Stufe', () => {
+    const m = targetMarkers(
+      makeTrade(),
+      [
+        row({ sortOrder: 0, price: 105, sharePct: 50, executedAt: new Date('2026-07-05') }),
+        row({ sortOrder: 1, price: 120, sharePct: 50 }),
+      ],
+      { price: 130, triggeredPrices: [105, 120] },
+    )
+    expect(m[0].executed).toBe(true)
+    expect(m[0].reached).toBe(false)
+    expect(nextActionableTarget(m)?.price).toBe(120)
+  })
+
+  it('liest einen Trade ohne eigene Stufen als sein einzelnes Kursziel', () => {
+    const m = targetMarkers(makeTrade(), [], { price: 125 })
+    expect(m).toHaveLength(1)
+    expect(m[0].id).toBeNull()
+    expect(m[0].isLast).toBe(true)
+    expect(m[0].reached).toBe(true)
+  })
+
+  it('nimmt immer die niedrigste offene Stufe, auch wenn zwei zugleich berührt sind', () => {
+    const m = targetMarkers(makeTrade(), stufen(), { price: 121 })
+    expect(m[0].reached && m[1].reached).toBe(true)
+    expect(nextActionableTarget(m)?.price).toBe(105)
+  })
+
+  it('kommt ohne Kurs aus und meldet dann nur, was der Wecker gesehen hat', () => {
+    const m = targetMarkers(makeTrade(), stufen(), { price: null, triggeredPrices: [105] })
+    expect(m[0].reached).toBe(true)
+    // Ohne Kurs lässt sich kein Zurückfallen behaupten.
+    expect(m[0].fellBack).toBe(false)
+    expect(nextActionableTarget(targetMarkers(makeTrade(), stufen(), { price: null }))).toBeNull()
   })
 })

@@ -69,14 +69,28 @@ function TradeRow({
             {t.direction === 'long' ? 'Long' : 'Short'}
           </span>
           <span className="font-mono text-[11px] text-muted-foreground">
-            {fmt(t.entryPrice)} · S {fmt(t.stopLoss)} · Z {fmt(t.takeProfit)}
+            {fmt(t.entryPrice)} · S {fmt(t.stopLoss)}
+            {/* Das Kursziel steht hier nur, solange es KEINE Stufen gibt —
+                sonst stünde es gleich zweimal in der Zeile. */}
+            {t.targets.length > 1 ? null : ` · Z ${fmt(t.takeProfit)}`}
           </span>
-          {t.reachedTarget > 0 && t.targets.length > 1 && (
+          {/* Bei einem Staffelplan stehen die Stufen einzeln da, erreichte
+              durchgestrichen — dasselbe Bild wie in der Plan-Leiste unter dem
+              Chart. „TP2/3" allein ließ offen, WO die Stufen liegen; genau das
+              will man beim Nachvollziehen wissen. */}
+          {t.targets.length > 1 && (
             <span
-              className="font-mono text-[10px] text-muted-foreground"
-              title="Erreichte Zielstufe — nach der ersten steht der Stop auf dem Einstand."
+              className="flex flex-wrap items-center gap-x-2 font-mono text-[10px] text-muted-foreground"
+              title="Geplante Zielstufen — nach der ersten steht der Stop auf dem Einstand."
             >
-              TP{t.reachedTarget}/{t.targets.length}
+              {t.targets.map((z, i) => (
+                <span
+                  key={`${t.id}-z${i}`}
+                  className={i < t.reachedTarget ? 'text-positive line-through' : undefined}
+                >
+                  {i === t.targets.length - 1 ? 'Z' : `Z${i + 1}`} {fmt(z.price)}
+                </span>
+              ))}
             </span>
           )}
           <span className="grow" />

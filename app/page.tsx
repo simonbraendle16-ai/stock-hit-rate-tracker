@@ -2,7 +2,14 @@ import { auth } from '@/lib/auth'
 import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
-import { getDisciplineStats, getUnifiedHitRateTimeline, listTrades } from '@/app/actions/trades'
+import {
+  getDisciplineStats,
+  getUnifiedHitRateTimeline,
+  listEventsForTrades,
+  listTargetsForTrades,
+  listTrades,
+} from '@/app/actions/trades'
+import { triggeredTargetPricesByTrade } from '@/lib/alerts'
 import { getSettings } from '@/app/actions/settings'
 import { getScopeContext } from '@/app/actions/portfolios'
 import { PaperBadge, PaperNotice } from '@/components/paper-badge'
@@ -38,6 +45,30 @@ export default async function CockpitPage() {
   ])
   const recent = trades.slice(0, 6)
   const openPositions = trades.filter((t) => t.status === 'aktiv')
+
+  // Der Staffelplan der offenen Positionen — Stufen UND Ereignisse, je in einer
+  // Abfrage. Die Ereignisse fehlten hier bisher ganz: Nach einem Teilverkauf
+  // zeigte die Leiste im Cockpit die volle statt der Restposition.
+  const offeneIds = openPositions.map((t) => t.id)
+  const [stufen, ereignisse] = await Promise.all([
+    listTargetsForTrades(offeneIds),
+    listEventsForTrades(offeneIds),
+  ])
+  const stufenJeTrade = new Map<number, typeof stufen>()
+  for (const s of stufen) {
+    const bisher = stufenJeTrade.get(s.tradeId)
+    if (bisher) bisher.push(s)
+    else stufenJeTrade.set(s.tradeId, [s])
+  }
+  const ereignisseJeTrade = new Map<number, typeof ereignisse>()
+  for (const e of ereignisse) {
+    const bisher = ereignisseJeTrade.get(e.tradeId)
+    if (bisher) bisher.push(e)
+    else ereignisseJeTrade.set(e.tradeId, [e])
+  }
+  // Welche Zielstufe war schon einmal berührt? Steht in den ausgelösten Alerts,
+  // die oben ohnehin geladen werden.
+  const beruehrt = triggeredTargetPricesByTrade(alerts)
 
   return (
     <div className="min-h-svh">
@@ -96,11 +127,31 @@ export default async function CockpitPage() {
                 </p>
                 <div className="space-y-3">
                   {openPositions.map((t) => (
-                    <div key={t.id} className="panel-sunken p-3">
+                    <div
+                      key={t.id}
+                      className="panel-sunken relative p-3 transition-colors hover:border-primary/30"
+                    >
+                      {/* Die ganze Box führt zum Trade — dort liegen Teilverkauf,
+                          Nachkauf, Abschließen und die Zielstufen. Vorher war nur
+                          die Ticker-Zeile ein Link, ausgerechnet nicht der Teil,
+                          auf den man beim Nachsehen schaut. Als flächiger Link
+                          statt als Wrapper, weil in der Box selbst Knöpfe sitzen;
+                          die liegen mit `z-20` darüber.
+
+                          Für Tastatur und Screenreader ist die Fläche unsichtbar
+                          (`aria-hidden`, kein Tab-Stopp): Sie führt zum selben
+                          Ziel wie die Ticker-Zeile darunter, und zwei Links auf
+                          denselben Trade wären dort nur Rauschen. */}
+                      <Link
+                        href={`/trades/${t.id}`}
+                        aria-hidden
+                        tabIndex={-1}
+                        className="absolute inset-0 z-10 rounded-[inherit]"
+                      />
                       <div className="flex items-center justify-between gap-2">
                         <Link
                           href={`/trades/${t.id}`}
-                          className="flex items-center gap-2 font-mono text-sm hover:text-primary"
+                          className="relative z-20 flex items-center gap-2 font-mono text-sm hover:text-primary"
                         >
                           {t.direction === 'long' ? (
                             <ArrowUpRight className="size-4 text-positive" />
@@ -113,7 +164,13 @@ export default async function CockpitPage() {
                           </span>
                         </Link>
                       </div>
-                      <LivePosition t={t} currency={settings.currency} />
+                      <LivePosition
+                        t={t}
+                        currency={settings.currency}
+                        events={ereignisseJeTrade.get(t.id)}
+                        targets={stufenJeTrade.get(t.id)}
+                        triggeredTargetPrices={beruehrt.get(t.id)}
+                      />
                     </div>
                   ))}
                 </div>

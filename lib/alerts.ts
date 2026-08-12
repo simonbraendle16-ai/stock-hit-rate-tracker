@@ -154,3 +154,27 @@ export function alertTriggeredByCandles(
   }
   return false
 }
+
+/**
+ * Die Kurse ausgelöster Ziel-Alerts, nach Trade gruppiert.
+ *
+ * Damit weiß die Live-Leiste, welche Zielstufe schon einmal berührt war — auch
+ * wenn der Kurs inzwischen zurückgefallen ist. Der Prüflauf sieht das High/Low
+ * der Kerze und damit einen Docht, den man selbst verpasst hat; der aktuelle
+ * Kurs allein wüsste davon nichts.
+ *
+ * Nur `kind === 'ziel'`: Stop und Einstieg haben ihre eigenen Anzeigen und
+ * gehören nicht in den Staffelplan.
+ */
+export function triggeredTargetPricesByTrade(
+  alerts: readonly AlertView[],
+): Map<number, number[]> {
+  const map = new Map<number, number[]>()
+  for (const a of alerts) {
+    if (a.kind !== 'ziel' || a.triggeredAt == null || a.tradeId == null) continue
+    const bisher = map.get(a.tradeId)
+    if (bisher) bisher.push(a.price)
+    else map.set(a.tradeId, [a.price])
+  }
+  return map
+}

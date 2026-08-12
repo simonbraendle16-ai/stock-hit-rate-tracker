@@ -8,11 +8,25 @@
 // Die aktuell offene Menge wird beim Öffnen aus dem Event-Log gerechnet
 // (`settlePosition`, dieselbe reine Logik wie auf dem Server) — als Orientierung
 // und für eine frühe, freundliche Validierung. Der Server prüft nochmals hart.
+//
+// Beim Teilverkauf steht die Menge außerdem schon im Staffelplan: Vorbelegt wird
+// die nächste noch offene Stufe. Bleibt sie unverändert, wird über `executeTarget`
+// gebucht und die Stufe gilt als abgetragen; wird sie geändert, läuft es als
+// freier Teilverkauf über `partialClose` und die Stufe bleibt offen. Ein
+// abweichender Fill, der trotzdem als „Plan erfüllt" gebucht wird, wäre genau der
+// stille Falschwert, den der Soll/Ist-Vergleich später nicht mehr aufdecken kann.
 
 import { useEffect, useState } from 'react'
 import type { TradeRow } from '@/lib/trade-stats'
 import { settlePosition } from '@/lib/trade-events'
-import { addToPosition, listTradeEvents, partialClose } from '@/app/actions/trades'
+import { nextPlannedSale, type PlannedSale } from '@/lib/trade-targets'
+import {
+  addToPosition,
+  executeTarget,
+  listTradeEvents,
+  listTradeTargets,
+  partialClose,
+} from '@/app/actions/trades'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -52,6 +66,7 @@ export function PositionAdjustDialog({
   const [busy, setBusy] = useState(false)
   const [openQty, setOpenQty] = useState<number | null>(null)
   const [avgEntry, setAvgEntry] = useState<number | null>(null)
+  const [plan, setPlan] = useState<PlannedSale | null>(null)
 
   // Beim Öffnen Felder zurücksetzen und die aktuelle Restmenge laden.
   useEffect(() => {
@@ -62,17 +77,30 @@ export function PositionAdjustDialog({
     setNote('')
     setOpenQty(null)
     setAvgEntry(null)
-    listTradeEvents(trade.id)
-      .then((events) => {
+    setPlan(null)
+    // Die Stufen braucht nur der Teilverkauf — beim Nachkauf gibt es nichts
+    // abzutragen, also wird dafür auch nichts geladen.
+    Promise.all([listTradeEvents(trade.id), isSell ? listTradeTargets(trade.id) : []])
+      .then(([events, targets]) => {
         const s = settlePosition(trade, events)
         setOpenQty(s.openQty)
         setAvgEntry(s.avgEntry)
+        if (!isSell) return
+        // Bezug ist die ANFANGSposition, genau wie serverseitig — sonst ergäben
+        // 50/30/20 nach dem ersten Teilverkauf nicht mehr die ganze Position.
+        const basis = events.find((e) => e.type === 'eroeffnet')?.quantity ?? trade.positionSize ?? 0
+        const vorschlag = nextPlannedSale(trade, targets, basis, s.openQty)
+        if (vorschlag) {
+          setPlan(vorschlag)
+          setQuantity(String(vorschlag.quantity))
+          setPrice(String(vorschlag.price))
+        }
       })
       .catch(() => {
         setOpenQty(trade.positionSize ?? null)
         setAvgEntry(trade.entryPrice ?? null)
       })
-  }, [open, trade])
+  }, [open, trade, isSell])
 
   const submit = async () => {
     const q = parseFloat(quantity)
@@ -100,9 +128,24 @@ export function PositionAdjustDialog({
         fee: fee.trim() === '' ? null : parseFloat(fee),
         note: note.trim() || null,
       }
-      if (isSell) await partialClose(trade.id, payload)
-      else await addToPosition(trade.id, payload)
-      toast.success(isSell ? 'Teilverkauf gebucht.' : 'Nachkauf gebucht.')
+      // Menge unverändert übernommen → das IST die geplante Stufe, also wird sie
+      // auch als solche abgetragen. Verglichen wird der Zahlenwert, nicht der
+      // Text: „50" und „50,0" sind dieselbe Menge.
+      const alsStufe = plan != null && Math.abs(q - plan.quantity) < 1e-9
+      if (alsStufe) {
+        // Die Rückmeldung nennt die Menge, die der SERVER gebucht hat, nicht die
+        // aus dem Feld — er deckelt auf die offene Position und ist die Wahrheit.
+        const { quantity } = await executeTarget(trade.id, plan!.targetId, {
+          price: p,
+          fee: payload.fee,
+          note: payload.note,
+        })
+        toast.success(`Stufe ${plan!.sortOrder + 1} ausgeführt — ${num(quantity)} Stück verkauft.`)
+      } else {
+        if (isSell) await partialClose(trade.id, payload)
+        else await addToPosition(trade.id, payload)
+        toast.success(isSell ? 'Teilverkauf gebucht.' : 'Nachkauf gebucht.')
+      }
       onOpenChange(false)
       onDone()
     } catch (err) {
@@ -166,6 +209,19 @@ export function PositionAdjustDialog({
             />
           </div>
         </div>
+
+        {/* Der Hinweis steht NACH dem Raster, nicht darin: Als Kind des
+            `grid-cols-2` schob er den Ausführungskurs in eine eigene Zeile und
+            ließ rechts eine leere Spalte stehen. Er gehört unter beide Felder,
+            denn er erklärt, worauf gebucht wird — Menge UND Kurs. */}
+        {plan != null && (
+          <p className="-mt-1 font-mono text-[10px] leading-relaxed text-muted-foreground">
+            Vorbelegt aus Stufe {plan.sortOrder + 1} — {num(plan.sharePct)} % der
+            Anfangsposition bei {num(plan.price)}. Unverändert gebucht, gilt die Stufe als
+            ausgeführt. Änderst du die Menge, wird es ein freier Teilverkauf und die Stufe
+            bleibt offen.
+          </p>
+        )}
 
         {trade.tradedWithMoney && (
           <div className="space-y-1.5">

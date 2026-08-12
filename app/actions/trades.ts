@@ -1438,6 +1438,24 @@ export async function executeTarget(
   return { quantity: menge, price: kurs }
 }
 
+/**
+ * Die Events mehrerer Trades in EINER Abfrage — für Listen mit Live-Leiste.
+ *
+ * Ohne sie zeigte die Leiste im Cockpit und auf `/trades` nach einem Teilverkauf
+ * die volle statt der Restposition: `settlePosition` bekam schlicht keine
+ * Ereignisse. Bewusst als Sammelabruf und nicht als N × `listTradeEvents` —
+ * dasselbe Muster wie `listTargetsForTrades` direkt darüber.
+ */
+export async function listEventsForTrades(tradeIds: number[]): Promise<TradeEventRow[]> {
+  const userId = await getUserId()
+  if (tradeIds.length === 0) return []
+  return db
+    .select()
+    .from(tradeEvent)
+    .where(and(eq(tradeEvent.userId, userId), inArray(tradeEvent.tradeId, tradeIds)))
+    .orderBy(asc(tradeEvent.tradeId), asc(tradeEvent.at), asc(tradeEvent.id))
+}
+
 /** Alle Events eines Trades für die Timeline (owner-gefiltert, chronologisch). */
 export async function listTradeEvents(id: number): Promise<TradeEventRow[]> {
   const userId = await getUserId()

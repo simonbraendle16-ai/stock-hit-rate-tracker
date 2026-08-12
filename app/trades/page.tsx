@@ -2,7 +2,9 @@ import { auth } from '@/lib/auth'
 import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
-import { listTargetsForTrades, listTrades } from '@/app/actions/trades'
+import { listEventsForTrades, listTargetsForTrades, listTrades } from '@/app/actions/trades'
+import { listAlerts } from '@/app/actions/alerts'
+import { triggeredTargetPricesByTrade } from '@/lib/alerts'
 import { getSettings } from '@/app/actions/settings'
 import { getScopeContext } from '@/app/actions/portfolios'
 import { CockpitHeader } from '@/components/cockpit-header'
@@ -21,16 +23,31 @@ export default async function TradesPage() {
     getScopeContext(),
   ])
 
-  // Teilziele (Etappe 13) für die ganze Liste in EINER Abfrage — auf der Karte
-  // steht nur der Fortschritt, ausgeführt wird auf der Detailseite.
-  const stufen = await listTargetsForTrades(trades.map((t) => t.id))
-  const stufenJeTrade = new Map<number, { price: number; sharePct: number; executed: boolean }[]>()
+  // Teilziele (Etappe 13) und Ereignisse für die ganze Liste in je EINER Abfrage.
+  //
+  // Die Stufen werden bewusst UNGEKÜRZT weitergereicht: Seit die Live-Leiste die
+  // erreichte Stufe ausführen kann, braucht sie deren `id`. Die Ereignisse
+  // fehlten hier ganz — ohne sie rechnete die Leiste nach einem Teilverkauf mit
+  // der vollen statt der Restposition.
+  const ids = trades.map((t) => t.id)
+  const [stufen, ereignisse, alerts] = await Promise.all([
+    listTargetsForTrades(ids),
+    listEventsForTrades(ids),
+    listAlerts(),
+  ])
+  const stufenJeTrade = new Map<number, typeof stufen>()
   for (const s of stufen) {
-    const eintrag = { price: s.price, sharePct: s.sharePct, executed: s.executedAt != null }
     const bisher = stufenJeTrade.get(s.tradeId)
-    if (bisher) bisher.push(eintrag)
-    else stufenJeTrade.set(s.tradeId, [eintrag])
+    if (bisher) bisher.push(s)
+    else stufenJeTrade.set(s.tradeId, [s])
   }
+  const ereignisseJeTrade = new Map<number, typeof ereignisse>()
+  for (const e of ereignisse) {
+    const bisher = ereignisseJeTrade.get(e.tradeId)
+    if (bisher) bisher.push(e)
+    else ereignisseJeTrade.set(e.tradeId, [e])
+  }
+  const beruehrt = triggeredTargetPricesByTrade(alerts)
 
   return (
     <div className="min-h-svh">
@@ -84,6 +101,8 @@ export default async function TradesPage() {
                 t={t}
                 currency={settings.currency}
                 targets={stufenJeTrade.get(t.id)}
+                events={ereignisseJeTrade.get(t.id)}
+                triggeredTargetPrices={beruehrt.get(t.id)}
                 delayMs={Math.min(i, 8) * 45}
               />
             ))}

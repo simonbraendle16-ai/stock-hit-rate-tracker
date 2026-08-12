@@ -7,7 +7,6 @@ import type { TradeRow } from '@/lib/trade-stats'
 import {
   activateTrade,
   abortTrade,
-  closeTrade,
   deleteTrade,
   markNoTrade,
 } from '@/app/actions/trades'
@@ -64,9 +63,15 @@ import {
 import { tradePnl } from '@/lib/trade-stats'
 import { parseSetupTags } from '@/lib/setups'
 import type { TradeEventRow } from '@/lib/trade-events'
+import type { TradeTargetRow } from '@/lib/trade-targets'
 import { formatMoney } from '@/lib/format'
 import { LivePosition } from '@/components/live-position'
 import { PositionAdjustDialog } from '@/components/position-adjust'
+// Der Abschluss-Dialog wohnt seit der Live-Leiste in einer eigenen Datei — die
+// Leiste braucht ihn ebenfalls, und ein Rückimport hierher wäre ein Zyklus.
+// Weitergereicht, damit bestehende Importe aus `trade-card` weiter gelten.
+import { CloseDialog } from '@/components/close-dialog'
+export { CloseDialog } from '@/components/close-dialog'
 
 const num = (n: number) => n.toLocaleString('de-DE', { maximumFractionDigits: 4 })
 
@@ -93,14 +98,18 @@ export function TradeCard({
   currency = 'EUR',
   events,
   targets,
+  triggeredTargetPrices,
   delayMs = 0,
 }: {
   t: TradeRow
   currency?: string
   events?: TradeEventRow[]
-  /** Teilziele (Etappe 13) — nur zur Anzeige „x von y erreicht"; die Stufen
-   *  selbst werden auf der Detailseite ausgeführt. */
-  targets?: { price: number; sharePct: number; executed: boolean }[]
+  /** Teilziele (Etappe 13). Auf der Karte steht „x von y erreicht"; die Leiste
+   *  darunter zeigt sie auf der Skala und führt die erreichte Stufe aus —
+   *  deshalb die vollen Zeilen und nicht mehr nur Kurs/Anteil. */
+  targets?: TradeTargetRow[]
+  /** Kurse ausgelöster Ziel-Alerts — reicht die Leiste durch. */
+  triggeredTargetPrices?: number[]
   /** Versatz für den gestaffelten Aufbau in Listen. */
   delayMs?: number
 }) {
@@ -229,12 +238,13 @@ export function TradeCard({
         <Stat label="Kursziel" value={t.takeProfit} tone="pos" />
       </div>
 
-      {/* Teilziele (Etappe 13): Auf der Karte steht nur, wie weit der Staffelplan
-          abgearbeitet ist — ausgeführt wird er auf der Detailseite. */}
+      {/* Teilziele (Etappe 13): Auf der Karte steht, wie weit der Staffelplan
+          abgearbeitet ist — abgetragen wird er in der Leiste darunter. */}
       {targets && targets.length > 1 && (
         <p className="mt-2 flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
           <Target className="size-3 text-positive" />
-          {targets.filter((z) => z.executed).length} von {targets.length} Teilzielen erreicht
+          {targets.filter((z) => z.executedAt != null).length} von {targets.length} Teilzielen
+          erreicht
           <span className="opacity-70">
             (
             {targets
@@ -249,7 +259,15 @@ export function TradeCard({
 
       {/* Live-Stand nur für offene Positionen (Etappe 3); Events zeigen zusätzlich
           Restmenge und realisierten Anteil nach Teilverkäufen (Etappe 6). */}
-      {t.status === 'aktiv' && <LivePosition t={t} currency={currency} events={events} />}
+      {t.status === 'aktiv' && (
+        <LivePosition
+          t={t}
+          currency={currency}
+          events={events}
+          targets={targets}
+          triggeredTargetPrices={triggeredTargetPrices}
+        />
+      )}
 
       {(t.elliottWaveCount || t.waveDegree) && (
         <div className="mt-2 flex items-center gap-1.5 font-mono text-[11px] text-primary/80">
@@ -749,294 +767,3 @@ export function NoTradeDialog({
   )
 }
 
-/**
- * Der vollständige Ausstieg — hier hängen die Douglas-Guards dran (bewusste
- * Verlustannahme, Plan-Treue, Emotions-Check-in). Deshalb läuft auch die letzte
- * Teilziel-Stufe (Etappe 13) hier durch und nicht über `executeTarget`: Sie
- * schließt die Position, und ein vollständiger Ausstieg soll nie an den Guards
- * vorbeigehen, nur weil er geplant war. Exportiert, damit die Teilziel-Karte
- * denselben Dialog benutzt statt eines zweiten daneben.
- */
-export function CloseDialog({
-  trade,
-  open,
-  onOpenChange,
-  onDone,
-  // Vorbelegter Ausstiegskurs und die Stufe, die damit abgetragen wird.
-  prefillExit = null,
-  targetId = null,
-}: {
-  trade: TradeRow
-  open: boolean
-  onOpenChange: (v: boolean) => void
-  onDone: () => void
-  prefillExit?: number | null
-  targetId?: number | null
-}) {
-  const [result, setResult] = useState<'gewinn' | 'verlust' | 'breakeven'>('gewinn')
-  const [exit, setExit] = useState('')
-  const [followed, setFollowed] = useState(true)
-  const [accepted, setAccepted] = useState(false)
-  // Nur noch zum Anzeigen und zum Ein-/Ausblenden der Gebührenfelder — die
-  // Handelsart ist seit Etappe 12 nicht mehr im Abschluss-Dialog änderbar.
-  const money = trade.tradedWithMoney
-  const [feeEntry, setFeeEntry] = useState(String(trade.feeEntry ?? DEFAULT_ORDER_FEE))
-  const [feeExit, setFeeExit] = useState(String(trade.feeExit ?? DEFAULT_ORDER_FEE))
-  const [mood, setMood] = useState<MoodDraft>(emptyMoodDraft)
-  const [busy, setBusy] = useState(false)
-
-  // Der Check-in gehört in den Moment des Abschließens, nicht in einen alten
-  // Entwurf aus einem vorher geöffneten und wieder geschlossenen Dialog.
-  useEffect(() => {
-    if (open) {
-      setMood(emptyMoodDraft())
-      // Kommt der Abschluss aus einer geplanten Stufe, steht deren Kurs schon
-      // im Feld — überschreibbar, denn der tatsächliche Fill zählt.
-      if (prefillExit != null) setExit(String(prefillExit))
-    }
-  }, [open, prefillExit])
-
-  const submit = async () => {
-    if (result === 'verlust' && !accepted) {
-      toast.error('Bitte den Verlust bewusst akzeptieren.')
-      return
-    }
-    // Ohne Ausstiegskurs kein berechenbares Ergebnis — der Server lehnt es
-    // ebenfalls ab, hier nur früher und freundlicher.
-    if (result !== 'breakeven' && !exit.trim()) {
-      toast.error('Bitte den tatsächlichen Ausstiegskurs eintragen.')
-      return
-    }
-    // Freiwillig beim schnellen Trade — Ausstiegskurs und Verlustannahme oben
-    // gelten dagegen in beiden Wegen.
-    if (requiresMoodCheck(trade.tradeKind) && !isMoodDraftComplete(mood)) {
-      toast.error('Bitte auf der Skala eintragen, wie du aus dem Trade gehst.')
-      return
-    }
-    setBusy(true)
-    try {
-      await closeTrade(trade.id, {
-        result,
-        actualExitPrice: exit ? parseFloat(exit) : null,
-        followedPlan: followed,
-        lossAccepted: accepted,
-        // Die Handelsart wird beim Abschließen NICHT mehr mitgeschickt (Etappe 12):
-        // Sie gehört zum Depot. Ein Umschalter hier hätte den Trade nach dem
-        // Abrechnen in die andere Bilanz springen lassen, ohne dass es irgendwo
-        // sichtbar war. Umbuchen geht über das Depot (`moveTrade`).
-        feeEntry: feeEntry.trim() === '' ? null : parseFloat(feeEntry),
-        feeExit: feeExit.trim() === '' ? null : parseFloat(feeExit),
-        mood,
-        // Trägt die Stufe ab, aus der der Abschluss ausgelöst wurde (Etappe 13).
-        targetId,
-      })
-      toast.success('Trade abgeschlossen.')
-      onOpenChange(false)
-      onDone()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Fehler')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85svh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="font-heading tracking-wide">
-            {trade.ticker} abschließen
-          </DialogTitle>
-          <DialogDescription className="font-mono text-xs">
-            Erfasse Ergebnis und ob du deinen Plan befolgt hast.
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="flex flex-col gap-4">
-          <div className="space-y-2">
-            <Label className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-              Ergebnis
-            </Label>
-            <div className="grid grid-cols-3 gap-2">
-              {(['gewinn', 'verlust', 'breakeven'] as const).map((r) => (
-                <button
-                  key={r}
-                  type="button"
-                  onClick={() => setResult(r)}
-                  className={cn(
-                    'rounded-lg border py-2 font-mono text-xs uppercase transition-all',
-                    result === r
-                      ? r === 'gewinn'
-                        ? 'border-positive/40 bg-positive/15 text-positive'
-                        : r === 'verlust'
-                          ? 'border-destructive/40 bg-destructive/15 text-destructive'
-                          : 'border-primary/40 bg-primary/10 text-primary'
-                      : 'border-border text-muted-foreground',
-                  )}
-                >
-                  {r}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <Label className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-              Ausstiegskurs {result !== 'breakeven' && <span className="text-destructive">*</span>}
-            </Label>
-            <Input
-              type="number"
-              step="any"
-              value={exit}
-              onChange={(e) => setExit(e.target.value)}
-              placeholder="0.00"
-              className="input-ocean font-mono"
-              required={result !== 'breakeven'}
-            />
-            <p className="font-mono text-[10px] text-muted-foreground">
-              {result === 'breakeven'
-                ? 'Bei Breakeven optional — das Ergebnis ist ohnehin null.'
-                : 'Zu welchem Kurs bist du tatsächlich ausgestiegen? Ohne ihn lässt sich dein Ergebnis nicht berechnen.'}
-            </p>
-          </div>
-
-          {/* Gebühren letztmalig korrigierbar — danach sind sie eingefroren und
-              keine spätere Einstellungsänderung verschiebt diesen Trade mehr. */}
-          {money && (
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-                  Gebühr Kauf
-                </Label>
-                <Input
-                  type="number"
-                  step="any"
-                  min="0"
-                  value={feeEntry}
-                  onChange={(e) => setFeeEntry(e.target.value)}
-                  className="input-ocean font-mono"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-                  Gebühr Verkauf
-                </Label>
-                <Input
-                  type="number"
-                  step="any"
-                  min="0"
-                  value={feeExit}
-                  onChange={(e) => setFeeExit(e.target.value)}
-                  className="input-ocean font-mono"
-                />
-              </div>
-            </div>
-          )}
-
-          <div className="space-y-2">
-            <Label className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-              Plan befolgt?
-            </Label>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => setFollowed(true)}
-                className={cn(
-                  'rounded-lg border py-2 font-mono text-xs uppercase',
-                  followed
-                    ? 'border-positive/40 bg-positive/15 text-positive'
-                    : 'border-border text-muted-foreground',
-                )}
-              >
-                Ja, diszipliniert
-              </button>
-              <button
-                type="button"
-                onClick={() => setFollowed(false)}
-                className={cn(
-                  'rounded-lg border py-2 font-mono text-xs uppercase',
-                  !followed
-                    ? 'border-destructive/40 bg-destructive/15 text-destructive'
-                    : 'border-border text-muted-foreground',
-                )}
-              >
-                Nein, abgewichen
-              </button>
-            </div>
-          </div>
-
-          {/* Die Handelsart ist hier eine ANZEIGE, keine Wahl (Etappe 12).
-              Vorher standen an dieser Stelle zwei Knöpfe — damit ließ sich ein
-              Trade beim Abrechnen von echt auf Demo umstellen und verschwand
-              stillschweigend aus der Bilanz. Sie gehört zum Depot; ändern geht
-              nur durch Umbuchen, und das zeigt seine Folgen an. */}
-          <div className="space-y-2">
-            <Label className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-              Handelsart
-            </Label>
-            <div
-              className={cn(
-                'flex items-center gap-1.5 rounded-lg border px-3 py-2 font-mono text-xs uppercase',
-                money
-                  ? 'border-positive/40 bg-positive/10 text-positive'
-                  : 'border-[color-mix(in_oklab,var(--warning)_40%,transparent)] bg-[color-mix(in_oklab,var(--warning)_10%,transparent)] text-[var(--warning)]',
-              )}
-            >
-              {money ? (
-                <>
-                  <Banknote className="size-3" /> Echtgeld
-                </>
-              ) : (
-                <>
-                  <FlaskConical className="size-3" /> Papiergeld
-                </>
-              )}
-            </div>
-            <p className="note">
-              Ergibt sich aus dem Depot des Trades. Zum Ändern den Trade umbuchen.
-            </p>
-          </div>
-
-          {result === 'verlust' && (
-            <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3">
-              <input
-                type="checkbox"
-                checked={accepted}
-                onChange={(e) => setAccepted(e.target.checked)}
-                className="mt-0.5 accent-[var(--primary)]"
-              />
-              <span className="font-mono text-[11px] text-foreground">
-                „Meine Zählung war für diesen Trade falsch. Der nächste Trade zählt." — Ich
-                akzeptiere den Verlust vollständig.
-              </span>
-            </label>
-          )}
-
-          {/* Zweite Momentaufnahme. Der Zustand beim Einstieg steht daneben —
-              erst der Vergleich zeigt, was der Trade mit dir gemacht hat. */}
-          <div className="space-y-2">
-            {trade.moodEntry != null && (
-              <div className="flex flex-wrap items-center gap-1.5 font-mono text-[10px] text-muted-foreground">
-                <span className="uppercase tracking-widest">Beim Einstieg:</span>
-                <MoodBadge score={trade.moodEntry} tags={trade.moodEntryTags} phase="entry" />
-              </div>
-            )}
-            <MoodCheck value={mood} onChange={setMood} phase="exit" disabled={busy} />
-          </div>
-        </div>
-
-        <DialogFooter>
-          <Button
-            onClick={submit}
-            disabled={
-              busy || (requiresMoodCheck(trade.tradeKind) && !isMoodDraftComplete(mood))
-            }
-            className="btn-teal-glow w-full font-mono text-sm font-bold tracking-wider sm:w-auto"
-          >
-            {busy ? 'WIRD GESPEICHERT…' : 'ABSCHLIESSEN'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}

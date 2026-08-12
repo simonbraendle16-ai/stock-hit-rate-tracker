@@ -333,8 +333,26 @@ export function TrainingWorkspace({
       out.push({ price: t.entryPrice, color: PLAN_COLORS.entry, title: 'Einstieg' })
     if (t.stopLoss != null)
       out.push({ price: t.stopLoss, color: PLAN_COLORS.stop, title: 'Stop' })
-    if (t.takeProfit != null)
+    // Jede geplante Stufe bekommt ihre eigene Linie. Vorher stand hier nur das
+    // Kursziel — gemessen wurden die Stufen längst (`measureStagedOutcome`), zu
+    // sehen war davon im Replay nichts. Genau die Stelle, an der man den Kurs
+    // auf sein Teilziel zulaufen sehen soll, zeigte sie nicht.
+    //
+    // Bereits erreichte Stufen laufen gestrichelt weiter: abgetragen, aber nicht
+    // verschwunden — sonst fehlte hinterher die Grundlage für die Einordnung.
+    if (t.targets.length > 1) {
+      t.targets.forEach((z, i) => {
+        const letzte = i === t.targets.length - 1
+        out.push({
+          price: z.price,
+          color: PLAN_COLORS.target,
+          title: letzte ? 'Ziel' : `Z${i + 1}`,
+          dashed: i < t.reachedTarget,
+        })
+      })
+    } else if (t.takeProfit != null) {
       out.push({ price: t.takeProfit, color: PLAN_COLORS.target, title: 'Ziel' })
+    }
     if (t.invalidation != null)
       out.push({
         price: t.invalidation,

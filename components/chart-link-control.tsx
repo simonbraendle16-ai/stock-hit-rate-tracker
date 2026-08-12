@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { EditChartUrlDialog } from '@/components/edit-chart-url-dialog'
+import { setStockReviewed } from '@/app/actions/stocks'
 import { ExternalLink, LineChart, Pencil } from 'lucide-react'
 
 export function ChartLinkControl({
@@ -24,6 +25,10 @@ export function ChartLinkControl({
             href={chartUrl}
             target="_blank"
             rel="noopener noreferrer"
+            // Wochenrunde: Wer den Chart hier aufmacht, hat hingeschaut. Sonst
+            // stünde das Instrument gleich danach wieder als offen da.
+            // Fehlschläge bleiben still — der Chart-Aufruf darf daran nicht scheitern.
+            onClick={() => void setStockReviewed(stockId, true).catch(() => {})}
             className={buttonVariants({ size: 'sm', variant: 'outline' })}
           >
             <LineChart className="size-3.5" />

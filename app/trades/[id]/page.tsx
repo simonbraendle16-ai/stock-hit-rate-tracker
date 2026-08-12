@@ -16,6 +16,8 @@ import { TradePortfolioCard } from '@/components/trade-portfolio-card'
 import { TradeTargetsCard } from '@/components/trade-targets-card'
 import { TradeAlertsToggle } from '@/components/trade-alerts-toggle'
 import { getScopeContext } from '@/app/actions/portfolios'
+import { listAlerts } from '@/app/actions/alerts'
+import { triggeredTargetPricesByTrade } from '@/lib/alerts'
 import { ArrowLeft, LineChart, Lock } from 'lucide-react'
 
 export default async function TradeDetailPage({
@@ -30,7 +32,7 @@ export default async function TradeDetailPage({
   const t = await getTrade(Number(id))
   if (!t) notFound()
 
-  const [chartUrl, settings, events, targets, excursion, kontext] = await Promise.all([
+  const [chartUrl, settings, events, targets, excursion, kontext, alerts] = await Promise.all([
     t.stockId != null ? getStockChartUrl(t.stockId) : Promise.resolve(null),
     getSettings(),
     listTradeEvents(t.id),
@@ -44,7 +46,11 @@ export default async function TradeDetailPage({
     // Depot im Blick ist. Sonst käme man an einen falsch einsortierten Trade
     // nicht heran, um ihn umzubuchen.
     getScopeContext(),
+    // Ausgelöste Ziel-Alerts: Woher die Leiste weiß, dass eine Stufe schon
+    // einmal berührt war — auch wenn der Kurs inzwischen zurückgefallen ist.
+    listAlerts(),
   ])
+  const beruehrt = triggeredTargetPricesByTrade(alerts).get(t.id)
   const locked = t.status === 'aktiv' || t.status === 'abgeschlossen'
   const violations: string[] = t.ruleViolations ? JSON.parse(t.ruleViolations) : []
 
@@ -75,7 +81,13 @@ export default async function TradeDetailPage({
         </div>
 
         <div className="grid grid-cols-1 gap-4">
-          <TradeCard t={t} currency={settings.currency} events={events} />
+          <TradeCard
+            t={t}
+            currency={settings.currency}
+            events={events}
+            targets={targets}
+            triggeredTargetPrices={beruehrt}
+          />
 
           {/* Wo liegt dieser Trade — und wie kommt er woandershin? */}
           <TradePortfolioCard
