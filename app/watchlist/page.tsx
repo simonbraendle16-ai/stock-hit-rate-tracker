@@ -41,6 +41,9 @@ export default async function WatchlistPage() {
           cardQuotes={instruments.quotes}
           entries={instruments.entries}
           currency={settings.currency}
+          // Serverzeit für die Wochenrunde — sonst rechnet der Browser beim
+          // Hydrieren mit einer anderen Uhr als der Server beim Rendern.
+          jetzt={new Date().toISOString()}
         />
       </main>
     </div>

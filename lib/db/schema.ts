@@ -197,6 +197,10 @@ export const stock = pgTable('stock', {
   // Näherung statt Entsprechung (z. B. Gold-Future statt Spot).
   resolutionApproximate: boolean('resolutionApproximate').notNull().default(false),
   resolvedAt: timestamp('resolvedAt'),
+  // Wochenrunde: wann wurde dieses Instrument zuletzt angesehen? NULL heißt
+  // „noch nie" und ist damit sofort fällig. Fälligkeit rechnet
+  // `lib/watchlist-review.ts` — rollierend über sieben Tage, ohne Stichtag.
+  lastReviewedAt: timestamp('lastReviewedAt'),
   createdAt: timestamp('createdAt').notNull().defaultNow(),
 })
 

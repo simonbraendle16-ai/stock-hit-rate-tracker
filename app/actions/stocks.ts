@@ -65,6 +65,9 @@ async function selectStocksTolerant(where: SQL | undefined): Promise<StockRow[]>
       resolutionPinned: false,
       resolutionApproximate: false,
       resolvedAt: null,
+      // Ohne die Spalte gilt nichts als angesehen — die Wochenrunde zeigt dann
+      // alles als offen, statt die Watchlist scheitern zu lassen.
+      lastReviewedAt: null,
     }))
   }
 }
@@ -110,6 +113,10 @@ export type StockWithStats = {
   resolutionPinned: boolean
   /** Geprüfte Alternativen für den Reparatur-Dialog (JSON aus der DB). */
   resolutionCandidates: string | null
+  // Wochenrunde: der Stand je Instrument plus die Börse, die der
+  // TradingView-Link braucht, wenn kein Chart-Link hinterlegt ist.
+  lastReviewedAt: Date | null
+  resolvedExchange: string | null
 }
 
 export type OverallStats = {
@@ -171,6 +178,8 @@ export async function getStocksWithStats(): Promise<StockWithStats[]> {
       resolutionApproximate: !!s.resolutionApproximate,
       resolutionPinned: !!s.resolutionPinned,
       resolutionCandidates: s.resolutionCandidates,
+      lastReviewedAt: s.lastReviewedAt ?? null,
+      resolvedExchange: s.resolvedExchange ?? null,
     }
   })
 
@@ -346,6 +355,41 @@ export async function setWatchlistSection(
     if (isMissingColumn(err)) {
       throw new Error(
         'Watchlist-Sektionen benötigen die DB-Migration 0009 — bitte einmal `pnpm db:push` ausführen.',
+      )
+    }
+    throw err
+  }
+
+  if (result.length === 0) throw new Error('Instrument nicht gefunden.')
+
+  revalidatePath('/watchlist')
+}
+
+/**
+ * Wochenrunde: ein Instrument als angesehen markieren oder wieder öffnen.
+ *
+ * `gesehen: false` schreibt NULL statt eines alten Datums — „wieder offen" heißt
+ * offen, nicht „zuletzt vor langer Zeit". Ein zurückdatierter Zeitstempel wäre
+ * eine erfundene Beobachtung.
+ *
+ * Der Zeitpunkt kommt vom Server, nicht vom Browser: Eine falsch gestellte Uhr im
+ * Endgerät soll die Runde nicht verschieben.
+ */
+export async function setStockReviewed(stockId: number, gesehen: boolean): Promise<void> {
+  const userId = await getUserId()
+
+  let result: { id: number }[]
+  try {
+    result = await db
+      .update(stock)
+      .set({ lastReviewedAt: gesehen ? new Date() : null })
+      .where(and(eq(stock.id, stockId), eq(stock.userId, userId)))
+      .returning({ id: stock.id })
+  } catch (err) {
+    if (isMissingColumn(err)) {
+      throw new Error(
+        'Die Wochenrunde benötigt die DB-Migration 0035 — bitte einmal ' +
+          '`node scripts/apply-migration.mjs` ausführen.',
       )
     }
     throw err

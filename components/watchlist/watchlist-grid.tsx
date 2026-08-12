@@ -4,7 +4,14 @@ import { useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import type { StockWithStats } from '@/app/actions/stocks'
-import { setWatchlistSection } from '@/app/actions/stocks'
+import { setStockReviewed, setWatchlistSection } from '@/app/actions/stocks'
+import {
+  istFaellig,
+  reviewStand,
+  reviewStandJeSektion,
+  tageSeither,
+  tradingViewUrl,
+} from '@/lib/watchlist-review'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -25,10 +32,12 @@ import {
 import { addStockFromSearch, searchSymbols, syncAllSymbols } from '@/app/actions/symbols'
 import {
   AlertTriangle,
+  Check,
   ChevronDown,
   ChevronRight,
   ChevronsUpDown,
   FolderInput,
+  LineChart,
   Loader2,
   Plus,
   RefreshCw,
@@ -60,6 +69,16 @@ const MARKET_LABELS: Record<string, string> = {
 
 const NO_SECTION = 'Ohne Sektion'
 const COLLAPSE_KEY = 'watchlist-collapsed-sections'
+
+/**
+ * Beschriftung des Wochenrunden-Punkts. Sagt den Stand IN TAGEN, nicht als
+ * Datum: „vor 9 Tagen" beantwortet die Frage, „am 02.08." lässt einen rechnen.
+ */
+function reviewTitel(faellig: boolean, tage: number | null): string {
+  if (tage == null) return 'Noch nie angeschaut — steht aus'
+  const wann = tage === 0 ? 'heute' : tage === 1 ? 'gestern' : `vor ${tage} Tagen`
+  return faellig ? `Zuletzt ${wann} angeschaut — steht wieder an` : `Angeschaut ${wann}`
+}
 
 type SparkEntry =
   | {
@@ -292,6 +311,9 @@ function WatchlistRow({
   currency,
   expanded,
   onToggleCard,
+  faellig,
+  tage,
+  onReview,
 }: {
   s: StockWithStats
   spark: SparkEntry | undefined
@@ -305,6 +327,11 @@ function WatchlistRow({
   currency: string
   expanded: boolean
   onToggleCard: (id: number) => void
+  /** Wochenrunde: steht dieses Instrument noch aus? */
+  faellig: boolean
+  /** Wie viele Tage der letzte Blick her ist; `null` = noch nie. */
+  tage: number | null
+  onReview: (id: number, gesehen: boolean) => void
 }) {
   const ok = spark?.status === 'ok' ? spark : null
   const positive = ok ? ok.changePct >= 0 : true
@@ -320,6 +347,17 @@ function WatchlistRow({
   return (
     <div className="border-b border-border/50">
     <div className="group relative flex items-center gap-3 px-3 py-2 transition-colors hover:bg-primary/5">
+      {/* Wochenrunde, linke Kante: Ein Punkt je Zeile, damit man die Spalte
+          senkrecht abscannen kann. Bewusst ohne Glow — der bleibt laut
+          Gestaltungsregel dem Disziplin-Ring vorbehalten, und 140 leuchtende
+          Punkte wären eine Leuchtwand statt einer Auskunft. */}
+      <span
+        aria-hidden
+        title={reviewTitel(faellig, tage)}
+        className={`size-1.5 shrink-0 rounded-full ${
+          faellig ? 'bg-muted-foreground/50' : 'bg-positive'
+        }`}
+      />
       <Link href={`/stock/${s.id}`} className="flex min-w-0 flex-1 items-center gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
@@ -422,6 +460,36 @@ function WatchlistRow({
         </div>
       </Link>
 
+      {/* Der Weg, den Simon ohnehin geht: Wert in TradingView aufmachen. Weil
+          die App den Klick auslöst, hakt sie ihn gleich mit ab — genau die
+          Verbindung, um die es bei der Wochenrunde geht.
+
+          Ein echtes <a>, kein Knopf mit `window.open`: Mittelklick, „in neuem
+          Tab öffnen" und „Adresse kopieren" müssen weiter funktionieren. */}
+      <a
+        href={tradingViewUrl(s)}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={() => onReview(s.id, true)}
+        title={`${s.ticker} in TradingView öffnen — markiert es zugleich als angeschaut`}
+        aria-label={`${s.ticker} in TradingView öffnen`}
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
+      >
+        <LineChart className="size-3.5" />
+      </a>
+
+      <Button
+        size="sm"
+        variant="ghost"
+        className="h-7 w-7 shrink-0 p-0"
+        title={reviewTitel(faellig, tage)}
+        aria-label={faellig ? 'Als angeschaut markieren' : 'Wieder als offen markieren'}
+        aria-pressed={!faellig}
+        onClick={() => onReview(s.id, faellig)}
+      >
+        <Check className={`size-3.5 ${faellig ? 'text-muted-foreground' : 'text-positive'}`} />
+      </Button>
+
       {/* Aufklappen nur, wo es auch etwas zu zeigen gibt: Ein Instrument ohne
           Prognosen und ohne Trades hätte eine leere Karte. */}
       {card && (
@@ -491,6 +559,7 @@ export function WatchlistGrid({
   cardQuotes = {},
   entries = {},
   currency = 'EUR',
+  jetzt,
 }: {
   stocks: StockWithStats[]
   /** Kennzahlen je Instrument (Etappe 10) — die aufklappbare Karte unter der Zeile. */
@@ -499,6 +568,12 @@ export function WatchlistGrid({
   /** Abstand zum nächsten geplanten Einstieg (Etappe 14) — die Rangfolge der Liste. */
   entries?: Record<number, EntryDistance>
   currency?: string
+  /**
+   * Serverzeit beim Seitenaufbau, als ISO-Zeichenkette. Bewusst von aussen
+   * hereingereicht: Ein `new Date()` mitten im Rendern liefert auf Server und
+   * Browser verschiedene Werte und lässt die Hydration auseinanderlaufen.
+   */
+  jetzt?: string
 }) {
   const router = useRouter()
   const [expandedCard, setExpandedCard] = useState<number | null>(null)
@@ -511,6 +586,46 @@ export function WatchlistGrid({
   const [isPending, startTransition] = useTransition()
   const [syncing, setSyncing] = useState(false)
   const { sparks, reload: reloadQuotes } = useSparklines()
+
+  // --- Wochenrunde -------------------------------------------------------
+  // Der Haken soll sofort umspringen, auch wenn der Server noch schreibt. Diese
+  // Karte überlagert deshalb den Stand aus den Serverdaten, bis der Refresh sie
+  // eingeholt hat.
+  const [reviewLokal, setReviewLokal] = useState<Record<number, string | null>>({})
+  const stichtag = useMemo(() => (jetzt ? new Date(jetzt) : new Date()), [jetzt])
+
+  const reviewStandVon = (s: StockWithStats): string | null | undefined =>
+    s.id in reviewLokal ? reviewLokal[s.id] : (s.lastReviewedAt as unknown as string | null)
+
+  const mitReview = useMemo(
+    () => stocks.map((s) => ({ ...s, lastReviewedAt: reviewStandVon(s) ?? null })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [stocks, reviewLokal],
+  )
+  const runde = useMemo(() => reviewStand(mitReview, stichtag), [mitReview, stichtag])
+  const rundeJeSektion = useMemo(
+    () => reviewStandJeSektion(mitReview, stichtag),
+    [mitReview, stichtag],
+  )
+
+  const onReview = (id: number, gesehen: boolean) => {
+    setReviewLokal((s) => ({ ...s, [id]: gesehen ? new Date().toISOString() : null }))
+    startTransition(async () => {
+      try {
+        await setStockReviewed(id, gesehen)
+        router.refresh()
+      } catch (err) {
+        // Zurücknehmen statt stehen lassen: Ein Haken, der nur im Browser steht,
+        // wäre genau die stille Falschauskunft, die diese Runde verhindern soll.
+        setReviewLokal((s) => {
+          const kopie = { ...s }
+          delete kopie[id]
+          return kopie
+        })
+        toast.error(err instanceof Error ? err.message : 'Konnte nicht gespeichert werden.')
+      }
+    })
+  }
 
   // --- Symbolsuche -------------------------------------------------------
   // Dasselbe Feld filtert die eigene Liste UND findet neue Instrumente. Zwei
@@ -855,6 +970,28 @@ export function WatchlistGrid({
         </div>
       </div>
 
+      {/* Die Wochenrunde. Eine Zeile, kein Panel: Sie ist eine Auskunft, keine
+          Aufforderung — der Punkt neben jedem Symbol ist die eigentliche Arbeit. */}
+      {runde.gesamt > 0 && (
+        <div className="mb-4 flex flex-wrap items-baseline gap-x-2 gap-y-1 rounded-lg border border-border bg-card/40 px-3 py-2">
+          <span className="font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+            Wochenrunde
+          </span>
+          {runde.offen > 0 ? (
+            <span className="font-mono text-[11px] text-foreground">
+              <span className="font-bold">{runde.offen}</span> von {runde.gesamt} offen
+            </span>
+          ) : (
+            <span className="font-mono text-[11px] text-positive">
+              alle {runde.gesamt} angeschaut
+            </span>
+          )}
+          <span className="font-mono text-[10px] text-muted-foreground">
+            · fällig, was länger als sieben Tage her ist
+          </span>
+        </div>
+      )}
+
       {unresolved.length > 0 && (
         <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2">
           <AlertTriangle className="size-3.5 shrink-0 text-destructive" />
@@ -907,28 +1044,50 @@ export function WatchlistGrid({
                   <span className="font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
                     {name}
                   </span>
-                  <Badge variant="secondary" className="ml-auto font-mono text-[9px]">
+                  {/* Der Stand der Sektion, direkt am Kopf: Bei 140 Symbolen ist
+                      die Sektion die Einheit, in der man arbeitet — der
+                      Gesamtzähler allein sagt nicht, wo man weitermacht. */}
+                  {(() => {
+                    const stand = rundeJeSektion.get(name === NO_SECTION ? null : name)
+                    return stand && stand.offen > 0 ? (
+                      <span className="ml-auto font-mono text-[9px] tracking-wider text-muted-foreground">
+                        {stand.offen} offen
+                      </span>
+                    ) : null
+                  })()}
+                  <Badge
+                    variant="secondary"
+                    className={`font-mono text-[9px] ${
+                      rundeJeSektion.get(name === NO_SECTION ? null : name)?.offen ? '' : 'ml-auto'
+                    }`}
+                  >
                     {list.length}
                   </Badge>
                 </button>
                 {!isCollapsed &&
-                  list.map((s) => (
-                    <WatchlistRow
-                      key={s.id}
-                      s={s}
-                      spark={sparks[s.id]}
-                      onMove={setMoveTarget}
-                      onRepair={openRepair}
-                      card={cardById.get(s.id)}
-                      cardQuote={cardQuotes[s.id]}
-                      entry={entries[s.id]}
-                      currency={currency}
-                      expanded={expandedCard === s.id}
-                      onToggleCard={(id) =>
-                        setExpandedCard((cur) => (cur === id ? null : id))
-                      }
-                    />
-                  ))}
+                  list.map((s) => {
+                    const stand = reviewStandVon(s) ?? null
+                    return (
+                      <WatchlistRow
+                        key={s.id}
+                        s={s}
+                        spark={sparks[s.id]}
+                        onMove={setMoveTarget}
+                        onRepair={openRepair}
+                        card={cardById.get(s.id)}
+                        cardQuote={cardQuotes[s.id]}
+                        entry={entries[s.id]}
+                        currency={currency}
+                        expanded={expandedCard === s.id}
+                        onToggleCard={(id) =>
+                          setExpandedCard((cur) => (cur === id ? null : id))
+                        }
+                        faellig={istFaellig(stand, stichtag)}
+                        tage={tageSeither(stand, stichtag)}
+                        onReview={onReview}
+                      />
+                    )
+                  })}
               </div>
             )
           })}
