@@ -71,11 +71,15 @@ export const DEFAULT_OUTPUT_SIZE: Record<Interval, number> = {
  * höheren `limit` an.
  */
 export const DELIVERY_LIMIT: Record<Interval, number> = {
-  '15min': 900,
-  '30min': 900,
-  '1h': 900,
-  '4h': 900,
-  '1day': 900,
+  '15min': 300,
+  '30min': 300,
+  '1h': 300,
+  '4h': 300,
+  '1day': 300,
+  // W und M bleiben, wo sie sind: Ihre Zeitebenen haben in
+  // `lib/chart-timeframes.ts` `days: null` und zeigen die VOLLE Historie statt
+  // eines Fensters (1week reicht bis 1996 zurück). 300 würde dort sichtbar
+  // Historie abschneiden — und beide sind am Übertragungsvolumen kaum beteiligt.
   '1week': 600,
   '1month': 300,
 }

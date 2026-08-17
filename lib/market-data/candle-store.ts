@@ -38,8 +38,15 @@ const CHUNK = 2000
 
 /** Womit ein Lesevorgang eingegrenzt wird — siehe `readStoredCandles`. */
 interface StoredReadOptions {
-  /** Nur die jüngsten `limit` Kerzen. Ohne Angabe: die ganze Reihe. */
-  limit?: number
+  /**
+   * Nur die jüngsten `limit` Kerzen — **Pflichtangabe**.
+   *
+   * Absichtlich nicht optional: Ein weggelassenes Limit hat diese Datenbank
+   * schon zweimal abgeschaltet. Wer hier nichts angibt, soll beim Typecheck
+   * scheitern und nicht am Monatsende auf der Rechnung. Nach oben wird auf
+   * `MAX_DELIVERY_LIMIT` geklemmt.
+   */
+  limit: number
   /** Nur Kerzen VOR diesem Zeitpunkt (Unix-Sekunden). */
   before?: number
   /** Nur Kerzen AB diesem Zeitpunkt (Unix-Sekunden, einschließlich). */
@@ -61,11 +68,18 @@ interface StoredReadOptions {
  *
  * `ORDER BY time DESC LIMIT n` liest die jüngsten Kerzen, das Umdrehen danach
  * stellt die aufsteigende Reihenfolge her, auf die sich alle Aufrufer verlassen.
+ *
+ * Es gibt hier **keinen unbegrenzten Pfad mehr**. Den gab es bis zum 17.08.2026
+ * noch für Aufrufe ohne `limit` — und genau den traf das Vergleichsfenster
+ * weiter unten, mit zuletzt 3.518 Zeilen je Aufruf und 31,8 Mio Zeilen in
+ * einem Abrechnungszyklus. Ein Deckel, den ein Aufrufer umgehen kann, ist
+ * keiner: `limit` ist deshalb Pflicht und wird auf `MAX_DELIVERY_LIMIT`
+ * geklemmt.
  */
 export async function readStoredCandles(
   symbol: string,
   interval: Interval,
-  options: StoredReadOptions = {},
+  options: StoredReadOptions,
 ): Promise<Candle[]> {
   const bedingungen = [eq(candleCache.symbol, symbol), eq(candleCache.interval, interval)]
   if (options.before != null && Number.isFinite(options.before)) {
@@ -83,18 +97,21 @@ export async function readStoredCandles(
     close: candleCache.close,
     volume: candleCache.volume,
   }
-  const begrenzt = Number.isFinite(options.limit) && (options.limit ?? 0) > 0
-
-  if (!begrenzt) {
-    return db.select(spalten).from(candleCache).where(and(...bedingungen)).orderBy(asc(candleCache.time))
-  }
+  // Der Typecheck verlangt ein `limit`; diese Klemme fängt ab, was ihn umgeht
+  // (JS-Aufrufer, `any`, ein durchgereichter `NaN`). Der Rückfall ist der harte
+  // Deckel, nicht „unbegrenzt" — ein fehlender Wert darf nie mehr die ganze
+  // Reihe bedeuten.
+  const gueltig = Number.isFinite(options.limit) && options.limit > 0
+  const limit = gueltig
+    ? Math.min(MAX_DELIVERY_LIMIT, Math.floor(options.limit))
+    : MAX_DELIVERY_LIMIT
 
   const rows = await db
     .select(spalten)
     .from(candleCache)
     .where(and(...bedingungen))
     .orderBy(desc(candleCache.time))
-    .limit(options.limit as number)
+    .limit(limit)
   return rows.reverse()
 }
 
@@ -291,9 +308,16 @@ export async function getStoredCandles(
     // überhaupt liefert. Ältere gespeicherte Kerzen können mit keiner frischen
     // Kerze kollidieren — sie zu laden wäre genau die Verschwendung, die diese
     // Datenbank abgeschaltet hat. Ohne frische Kerzen entfällt der Abgleich ganz.
+    //
+    // Der `since`-Zeitpunkt allein genügte dafür nicht: Er begrenzt den Zeitraum,
+    // aber nicht die Menge. Lieferte der Anbieter eine lange Reihe, zog ein
+    // einzelner Aufruf mehrere tausend Kerzen — gemessen ⌀ 3.518. Mehr Zeilen,
+    // als der Anbieter überhaupt geschickt hat, können mit nichts kollidieren;
+    // der Puffer deckt Zeitzonen- und Randfälle ab.
     const vergleichsfenster = frisch.length
       ? await readStoredCandles(symbol, interval, {
           since: Math.min(...frisch.map((c) => c.time)),
+          limit: frisch.length + 50,
         })
       : []
 
