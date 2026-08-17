@@ -335,3 +335,57 @@ gemessen ⌀ 1.653 statt ⌀ 3.518 Zeilen je Aufruf. Grund: Das Fenster ist jetz
 Liefermenge des Anbieters gekoppelt — und bei `1week`/`1month` liefert Yahoo 1.500+ Kerzen.
 Diese Menge ist inhärent (weniger zu lesen hieße, Kollisionen zu übersehen), nicht verschwendet.
 Die Egress-Erwartung von ~1,7 GB ist damit die optimistische Kante; der 24-h-Messwert entscheidet.
+
+---
+
+## 8. Für die Messung am 18.08.2026 — hier weitermachen
+
+### Referenzwerte, gezogen NACH dem Deploy
+
+`pg_stat_statements` ist **kumulativ**. Ohne diese Baseline ist die Messung morgen wertlos —
+die Differenz zählt, nicht der Absolutwert.
+
+**Stand 17.08.2026, 12:10:58 (Europe/Zurich)**, Deployment `7759a8d` bereits live:
+
+| Signatur (`select time,…from candle_cache`) | calls | rows | ⌀/Aufruf |
+|---|---|---|---|
+| Chart-Abruf, `limit $3` | 64.981 | 47.643.621 | 733 |
+| **Vergleichsfenster ALT**, `>= $3` ohne limit | 9.056 | 31.892.452 | 3.522 |
+| **Vergleichsfenster NEU**, `>= $3 … limit $4` | 129 | 381.144 | **2.955** |
+| Nachladen nach links, `< $3 … limit $4` | 51 | 43.675 | 856 |
+
+### Was morgen zu tun ist
+
+1. **Dieselbe Abfrage erneut** (Supabase-MCP, Projekt `jkflmriwaveicnippkkk`):
+   ```sql
+   select now() at time zone 'Europe/Zurich' as stand, calls, rows,
+          round(rows::numeric/greatest(calls,1),0) as rpc,
+          (query ilike '%limit%') as hat_limit, (query ilike '%>=%') as hat_since
+   from pg_stat_statements where query ilike 'select "time"%from "candle_cache"%'
+   order by rows desc limit 4;
+   ```
+   Differenz zur Tabelle oben bilden, auf 24 h normieren, × ~90 Byte je Zeile = Tages-Egress.
+2. **Usage-Dashboard** der Org `xlxsdcrcrbwiswqwgwrj`, Ansicht „Ausgang", Filter `trading-app`
+   — Tageswert für den 18.08. ablesen. **Erwartung: ~0,19 GB statt ~0,3.**
+
+### Entscheidungsbaum
+
+- **Tageswert ~0,19 GB oder darunter** → A+B+C haben gewirkt. Schritt D umsetzen
+  (`QUOTE_STALE_MS` in `lib/market-data/sync.ts:56` von `1000 * 60 * 2` auf `1000 * 60 * 10`),
+  vom Nutzer am 17.08. bereits inhaltlich freigegeben. Danach erneut 24 h messen, Ziel <0,1 GB.
+- **Tageswert bleibt bei ~0,3 GB** → die Plan-Annahme („der `onload`-Sync verursacht die
+  Chart-Aufrufe", §5) ist widerlegt. Dann **nicht** blind D nachschieben, sondern die
+  Aufrufquelle nachmessen, bevor weiter geraten wird.
+
+### Konkreter Verdacht, falls es nicht fällt
+
+Das **neue** Vergleichsfenster liegt bei ⌀ 2.955 Zeilen — nur ~16 % unter dem alten Wert, nicht
+die Hälfte, die sieben lokale Testabrufe (⌀ 1.653) nahegelegt hatten. Grund: Das Fenster ist an
+`frisch.length` gekoppelt, und der Sammellauf lässt Yahoo mit `range=30y` die volle Historie
+liefern (`1day`: 2.518 Kerzen je Symbol) — siehe `types.ts:106-108` und `yahoo.ts`.
+
+Der Hebel läge dann **nicht** in einem noch kleineren Fenster (weniger zu lesen hieße,
+Kollisionen zu übersehen), sondern darin, dass der **Sammellauf** nicht bei jedem Durchgang die
+volle Historie anfordert, sondern nur den aktuellen Rand. Achtung: `range=30y` steht dort aus
+einem Grund — Yahoo stuft bei `range=max` still die Granularität herab (CLAUDE.md, Fallstricke).
+Ein Eingriff dort braucht einen eigenen Drill, nicht einen schnellen Patch.
