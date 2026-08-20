@@ -23,6 +23,8 @@ import type { Candle, Interval } from './types'
 
 /** Länge eines Intervalls in Sekunden — für Lücken- und Frischeprüfungen. */
 export const INTERVAL_SECONDS: Record<Interval, number> = {
+  '1min': 60,
+  '5min': 5 * 60,
   '15min': 15 * 60,
   '30min': 30 * 60,
   '1h': 60 * 60,
@@ -102,7 +104,7 @@ export function coverageOf(candles: Candle[]): SeriesCoverage {
  * Kurse mit Zeitstempel zeigt, braucht sie nicht minütlich.
  */
 export function freshnessMs(interval: Interval): number {
-  const intraday: Interval[] = ['15min', '30min', '1h', '4h']
+  const intraday: Interval[] = ['1min', '5min', '15min', '30min', '1h', '4h']
   return intraday.includes(interval) ? 15 * 60 * 1000 : 12 * 60 * 60 * 1000
 }
 
@@ -138,14 +140,19 @@ export function orderByStaleness<T extends { fetchedAt: Date | null }>(rows: T[]
 /**
  * Ist diese Reihe für den Sammellauf fällig?
  *
- * Gestaffelt nach Zeitebene: Bei 15-/30-Minuten- und Stundenkerzen läuft die
- * Historie beim Anbieter davon (60 Tage bzw. 2 Jahre), die holen wir täglich.
- * Tages-, Wochen- und Monatskerzen liefert Yahoo jahrzehntelang — die einmal
- * pro Woche anzufassen genügt, und jede zusätzliche Anfrage ginge vom Budget
- * der knappen Reihen ab.
+ * Gestaffelt nach Zeitebene: Bei Minuten- und Stundenkerzen läuft die Historie
+ * beim Anbieter davon (7 bis 60 Tage, bei 1h zwei Jahre), die holen wir
+ * täglich. Tages-, Wochen- und Monatskerzen liefert Yahoo jahrzehntelang — die
+ * einmal pro Woche anzufassen genügt, und jede zusätzliche Anfrage ginge vom
+ * Budget der knappen Reihen ab.
+ *
+ * `1min` MUSS in der täglichen Staffel stehen: Yahoo gibt Minutenkerzen nur
+ * sieben Tage weit heraus. Bei einem wöchentlichen Takt (6,5 Tage) läge
+ * zwischen zwei Läufen fast das gesamte Fenster — ein einziger ausgefallener
+ * Lauf risse dann ein Loch, das sich nie wieder füllen lässt.
  */
 export function collectIntervalMs(interval: Interval): number {
-  const taeglich: Interval[] = ['15min', '30min', '1h']
+  const taeglich: Interval[] = ['1min', '5min', '15min', '30min', '1h']
   return taeglich.includes(interval) ? 20 * 60 * 60 * 1000 : 6.5 * 24 * 60 * 60 * 1000
 }
 

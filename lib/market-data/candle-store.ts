@@ -21,7 +21,13 @@ import { db } from '@/lib/db'
 import { candleCache, candleSeries } from '@/lib/db/schema'
 import { resolveProvider } from './index'
 import type { Candle, Interval, Market } from './types'
-import { DELIVERY_LIMIT, MAX_DELIVERY_LIMIT, MarketDataError, RETENTION_LIMIT } from './types'
+import {
+  DELIVERY_LIMIT,
+  MAX_DELIVERY_LIMIT,
+  MarketDataError,
+  retentionLimit,
+  type SammelStufe,
+} from './types'
 import type { SeriesCoverage } from './candle-merge'
 import { candlesToWrite, isFresh, mergeCandles, takeLast } from './candle-merge'
 
@@ -354,8 +360,19 @@ export async function getStoredCandles(
 }
 
 /**
- * Eine Reihe auf `RETENTION_LIMIT` zurückschneiden — die Grenze gegen das
- * 500-MB-Speicherlimit des Gratistarifs.
+ * Eine Reihe auf ihre Aufbewahrungsgrenze zurückschneiden — die Grenze gegen
+ * das 500-MB-Speicherlimit des Gratistarifs.
+ *
+ * Die Grenze hängt an der **Sammelstufe** des Instruments (`retentionLimit`):
+ * Wo gehandelt wird, liegt mehr Historie; ein ungenutztes Instrument bekommt
+ * nur den Rumpf. Ohne bekannte Stufe gilt die großzügigste — wer die Stufe
+ * nicht kennt, darf nicht löschen.
+ *
+ * Liefert `retentionLimit` `null`, gehört die Ebene dieser Stufe gar nicht.
+ * Dann wird hier trotzdem **nichts** gelöscht: Das Abräumen ganzer Ebenen ist
+ * Sache von `scripts/apply-retention.mjs`, wo es angesagt und zählbar
+ * geschieht. Ein Sammellauf, der nebenbei ganze Reihen tilgt, wäre eine
+ * Überraschung an der falschen Stelle.
  *
  * Behalten werden immer die JÜNGSTEN Kerzen; der Schnitt liegt am alten Ende.
  * Der Grenzwert wird dafür in einer Unterabfrage bestimmt (`OFFSET n-1 LIMIT 1`)
@@ -374,9 +391,13 @@ export async function getStoredCandles(
  * kann. Ein Aufräumen, das niemand sieht, ist von einem ausgefallenen nicht zu
  * unterscheiden.
  */
-export async function pruneStoredCandles(symbol: string, interval: Interval): Promise<number> {
-  const grenze = RETENTION_LIMIT[interval]
-  if (!grenze || grenze <= 0) return 0
+export async function pruneStoredCandles(
+  symbol: string,
+  interval: Interval,
+  stufe: SammelStufe = 'A',
+): Promise<number> {
+  const grenze = retentionLimit(interval, stufe)
+  if (grenze == null || grenze <= 0) return 0
 
   const ergebnis = await db.execute(sql`
     DELETE FROM ${candleCache}

@@ -5,7 +5,7 @@ import { istGueltigesAnbieterSymbol } from './symbol-syntax'
 // Intraday 15 min, Daily und größer 12 h. Die Staffel selbst steht seit dem
 // Kerzenspeicher in `candle-merge.ts` (`freshnessMs`) — hier bleibt sie nur als
 // Auskunft für Aufrufer, die ein Revalidierungsfenster in Sekunden brauchen.
-const INTRADAY: Interval[] = ['15min', '30min', '1h', '4h']
+const INTRADAY: Interval[] = ['1min', '5min', '15min', '30min', '1h', '4h']
 
 export function revalidateFor(interval: Interval): number {
   return INTRADAY.includes(interval) ? 60 * 15 : 60 * 60 * 12

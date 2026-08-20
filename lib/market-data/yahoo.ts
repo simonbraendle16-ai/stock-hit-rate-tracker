@@ -25,6 +25,8 @@ const UA =
  * Rest bildet 1:1 ab.
  */
 export const YAHOO_INTERVAL: Record<Interval, string> = {
+  '1min': '1m',
+  '5min': '5m',
   '15min': '15m',
   '30min': '30m',
   '1h': '60m',
@@ -64,6 +66,11 @@ export const YAHOO_INTERVAL: Record<Interval, string> = {
  * Auslöser, die Prüfung fängt den nächsten Fall.
  */
 const YAHOO_RANGE: Record<Interval, string> = {
+  // Yahoos harte Kanten für die feinen Ebenen: Minutenkerzen gibt es nur sieben
+  // Tage weit, Fünf-Minuten-Kerzen sechzig. Was hier einmal gesammelt ist,
+  // existiert danach ausschließlich im Kerzenspeicher.
+  '1min': '7d',
+  '5min': '60d',
   '15min': '60d',
   '30min': '60d',
   '1h': '2y',

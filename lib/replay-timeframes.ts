@@ -31,6 +31,8 @@ import type { Interval } from './market-data/types'
 
 /** Länge eines Intervalls in Sekunden. */
 export const INTERVAL_SEKUNDEN: Record<Interval, number> = {
+  '1min': 60,
+  '5min': 5 * 60,
   '15min': 15 * 60,
   '30min': 30 * 60,
   '1h': 60 * 60,

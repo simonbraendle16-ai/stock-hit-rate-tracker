@@ -26,8 +26,15 @@
 
 import { and, desc, eq, inArray } from 'drizzle-orm'
 import { db } from '@/lib/db'
-import { candleCollectRun, candleSeries, stock } from '@/lib/db/schema'
-import type { Interval, Market } from './types'
+import {
+  assessment,
+  candleCollectRun,
+  candleSeries,
+  stock,
+  trade,
+  trainingSession,
+} from '@/lib/db/schema'
+import { intervalsForStufe, type Interval, type Market, type SammelStufe } from './types'
 import { getStoredCandles, pruneStoredCandles } from './candle-store'
 import { isDueForCollection, orderByStaleness } from './candle-merge'
 
@@ -60,8 +67,16 @@ export const TIME_BUDGET_MS = 45 * 1000
  */
 export const RUN_INTERVAL_MS = 60 * 60 * 1000
 
-/** Alle Zeitebenen, in der Reihenfolge ihrer Dringlichkeit. */
+/**
+ * Alle Zeitebenen, in der Reihenfolge ihrer Dringlichkeit.
+ *
+ * WELCHE davon ein einzelnes Instrument bekommt, entscheidet seine Sammelstufe
+ * (`intervalsForStufe`) — nicht diese Liste. Sie bleibt die vollständige
+ * Aufzählung für alles, was über alle Ebenen laufen muss.
+ */
 export const COLLECTED_INTERVALS: Interval[] = [
+  '1min',
+  '5min',
   '15min',
   '30min',
   '1h',
@@ -70,6 +85,57 @@ export const COLLECTED_INTERVALS: Interval[] = [
   '1week',
   '1month',
 ]
+
+/**
+ * Die Sammelstufe je Anbieter-Symbol.
+ *
+ * Der teure Teil wäre, das je Instrument einzeln zu fragen; deshalb ein paar
+ * Mengenabfragen und danach eine Zuordnung im Speicher. Ein Symbol kann in
+ * mehreren Instrumenten stecken — es gewinnt die **höchste** Stufe, sonst
+ * verlöre ein gehandeltes Papier seine Historie, weil dasselbe Symbol
+ * woanders ungenutzt herumsteht.
+ *
+ * **Eine Trainer-Sitzung zählt wie eine Prognose (Stufe B).** Gemessen am
+ * 20.08.2026: Auf `G24.DE` war trainiert worden, ohne Trade und ohne Prognose
+ * — das Instrument fiele in Stufe C mit 1.500 Stundenkerzen, während der
+ * Trainer 3.000 anfordert. Der Sammellauf holte sie, das Aufräumen schnitte
+ * sie sofort wieder weg: ein Schreib-Karussell ohne Nutzen.
+ *
+ * Verknüpft wird über `stockId`, **nie über `trainingSession.symbol`**. Dort
+ * steht der Rohticker, wie ihn der Nutzer eingegeben hat: Sitzung 1 heißt
+ * `CL1!`, im Kerzenspeicher liegt sie unter `CL=F`. Über den Namen zu
+ * verknüpfen hiesse, dem Anbieter-Symbol einen Rohticker unterzuschieben.
+ */
+async function stufenJeSymbol(): Promise<Map<string, SammelStufe>> {
+  const [mitOffenemTrade, mitTrade, mitPrognose, mitTraining] = await Promise.all([
+    db
+      .selectDistinct({ symbol: stock.providerSymbol })
+      .from(stock)
+      .innerJoin(trade, eq(trade.stockId, stock.id))
+      .where(inArray(trade.status, ['aktiv', 'geplant'])),
+    db
+      .selectDistinct({ symbol: stock.providerSymbol })
+      .from(stock)
+      .innerJoin(trade, eq(trade.stockId, stock.id)),
+    db
+      .selectDistinct({ symbol: stock.providerSymbol })
+      .from(stock)
+      .innerJoin(assessment, eq(assessment.stockId, stock.id)),
+    db
+      .selectDistinct({ symbol: stock.providerSymbol })
+      .from(stock)
+      .innerJoin(trainingSession, eq(trainingSession.stockId, stock.id)),
+  ])
+
+  // Reihenfolge ist Absicht: B zuerst, A überschreibt. Ein Symbol mit offenem
+  // Trade behält so seine volle Tiefe, auch wenn es anderswo nur eine Prognose
+  // trägt.
+  const stufen = new Map<string, SammelStufe>()
+  for (const r of [...mitTrade, ...mitPrognose, ...mitTraining])
+    if (r.symbol) stufen.set(r.symbol, 'B')
+  for (const r of mitOffenemTrade) if (r.symbol) stufen.set(r.symbol, 'A')
+  return stufen
+}
 
 export interface CollectReport {
   ran: boolean
@@ -192,14 +258,24 @@ export async function runCandleCollect(options: {
       })
     }
 
-    // Jede Kombination aus Symbol und Zeitebene ist eine Reihe.
-    const faellig: { symbol: string; market: Market; interval: Interval; fetchedAt: Date | null }[] =
-      []
+    // Jede Kombination aus Symbol und Zeitebene ist eine Reihe — aber nur die
+    // Ebenen, die der Stufe des Instruments zustehen. Ohne Eintrag gilt 'C':
+    // Ein Symbol, das weder Trade noch Prognose trägt, bekommt keine
+    // Minutenkerzen.
+    const stufen = await stufenJeSymbol()
+    const faellig: {
+      symbol: string
+      market: Market
+      interval: Interval
+      stufe: SammelStufe
+      fetchedAt: Date | null
+    }[] = []
     for (const [symbol, market] of jeSymbol) {
-      for (const interval of COLLECTED_INTERVALS) {
+      const stufe = stufen.get(symbol) ?? 'C'
+      for (const interval of intervalsForStufe(stufe)) {
         const s = stand.get(`${symbol}|${interval}`) ?? { fetchedAt: null, candleCount: 0 }
         if (isDueForCollection(interval, s.fetchedAt)) {
-          faellig.push({ symbol, market, interval, fetchedAt: s.fetchedAt })
+          faellig.push({ symbol, market, interval, stufe, fetchedAt: s.fetchedAt })
         }
       }
     }
@@ -237,7 +313,7 @@ export async function runCandleCollect(options: {
         // Kerzen zu klein, die dieser Lauf gerade geholt hat. Das Aufräumen
         // hält den Speicher unter dem 500-MB-Limit des Gratistarifs; ohne es
         // wächst der Kerzenspeicher unbegrenzt weiter (siehe `RETENTION_LIMIT`).
-        pruned += await pruneStoredCandles(reihe.symbol, reihe.interval)
+        pruned += await pruneStoredCandles(reihe.symbol, reihe.interval, reihe.stufe)
       } catch {
         // Der Fehlschlag steht bereits an der Reihe (`lastError`, `failCount`);
         // ein einzelnes unbekanntes Symbol darf den Lauf nicht beenden.

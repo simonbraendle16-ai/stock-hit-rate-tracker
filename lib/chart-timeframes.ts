@@ -12,6 +12,10 @@
 import type { Interval } from './market-data/types'
 
 export const CHART_TIMEFRAMES: Record<string, { interval: Interval; days: number | null }> = {
+  // Die beiden feinsten Ebenen stehen vorn, damit `kontextEbene` weiterhin
+  // relativ zählt: von 15m aus bleibt 1h der Kontext, wie bisher.
+  '1m': { interval: '1min', days: 1 },
+  '5m': { interval: '5min', days: 2 },
   '15m': { interval: '15min', days: 3 },
   '30m': { interval: '30min', days: 6 },
   '1h': { interval: '1h', days: 14 },

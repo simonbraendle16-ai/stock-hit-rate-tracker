@@ -10,7 +10,16 @@ export interface Candle {
   volume: number
 }
 
-export type Interval = '15min' | '30min' | '1h' | '4h' | '1day' | '1week' | '1month'
+export type Interval =
+  | '1min'
+  | '5min'
+  | '15min'
+  | '30min'
+  | '1h'
+  | '4h'
+  | '1day'
+  | '1week'
+  | '1month'
 
 export type Market =
   | 'aktien'
@@ -52,6 +61,8 @@ export const QUOTE_TYPE_MARKET: Record<string, Market> = {
  * Kerzenspeicher, auch wenn der Chart es gerade nicht zeigt.
  */
 export const DEFAULT_OUTPUT_SIZE: Record<Interval, number> = {
+  '1min': 1500,
+  '5min': 2000,
   '15min': 5000,
   '30min': 3000,
   '1h': 5000,
@@ -71,6 +82,8 @@ export const DEFAULT_OUTPUT_SIZE: Record<Interval, number> = {
  * höheren `limit` an.
  */
 export const DELIVERY_LIMIT: Record<Interval, number> = {
+  '1min': 300,
+  '5min': 300,
   '15min': 300,
   '30min': 300,
   '1h': 300,
@@ -88,49 +101,97 @@ export const DELIVERY_LIMIT: Record<Interval, number> = {
 export const MAX_DELIVERY_LIMIT = 8000
 
 /**
- * Wie viele Kerzen je Reihe AUFBEWAHRT werden — die Grenze gegen das
- * Speicherlimit der Datenbank.
+ * Wie stark ein Instrument benutzt wird — und damit, wie viel Historie es
+ * verdient.
  *
- * Warum es das überhaupt gibt: Der Kerzenspeicher wächst sonst unbegrenzt. Der
- * stündliche Sammellauf pflegt rund 637 Reihen (etwa 90 Instrumente mal sieben
- * Zeitebenen) für immer weiter, und ein einzelner Lauf schrieb schon 299.133
- * Kerzen. Sowohl Supabase als auch Neon geben im Gratistarif 500 MB
- * Datenbankgröße — ohne Grenze läuft das absehbar voll, und zwar bei jedem
- * Anbieter. Das ist ein anderes Problem als der Netzwerk-Transfer und braucht
- * deshalb eine eigene Antwort.
+ * Gemessen am 20.08.2026: Bei einer einheitlichen Staffel für alle fasst der
+ * Kerzenspeicher voll ausgereizt 586 MB, der Gratistarif gibt 500 MB für die
+ * GESAMTE Datenbank her. Eine Grenze für alle löst das nicht — sie kostet
+ * entweder den Speicher oder die Trainingstiefe dort, wo tatsächlich geübt wird.
  *
- * Gerechnet: eine Zeile in `candle_cache` kostet mit Tupel-Kopf, Ausrichtung
- * und Primärschlüssel-Index rund 140 Byte. Die Staffel unten ergibt bei 90
- * Instrumenten etwa 1,64 Mio. Zeilen, also grob 230 MB — knapp die Hälfte des
- * Budgets, der Rest bleibt für Trades, Training und Auth.
- *
- * **Die Staffel ist nicht gleichmäßig, und das ist der Kern.** Sie richtet sich
- * danach, was der Anbieter NACHLIEFERN kann:
- *
- * - `15min`/`1h` sind am großzügigsten. Yahoo gibt 15-Minuten-Kerzen nur 60 Tage
- *   weit heraus (rund 1.560 Stück) — alles davor existiert ausschließlich hier.
- *   Was hier gelöscht wird, ist unwiederbringlich weg.
- * - `1day` bleibt knapper. Die liefert Yahoo jahrzehntelang auf Zuruf; sie hier
- *   zu horten kostet Speicher, den die knappen Reihen brauchen.
- * - `1week`/`1month` binden praktisch nie: 1.500 Wochenkerzen sind 29 Jahre,
- *   600 Monatskerzen sind 50 Jahre. Die Werte stehen als Deckel da, nicht als
- *   Schnitt.
- *
- * **Untergrenze für jeden Wert ist `TRAINING_CANDLE_LIMIT` (3.000) aus
- * `app/api/candles/route.ts`** — außer dort, wo so viele Kerzen zeitlich gar
- * nicht existieren können (Woche, Monat). Läge eine Grenze darunter, würde der
- * Replay-Trainer bei jeder Aktualisierung mehr Kerzen anfordern, als aufbewahrt
- * werden: Der Anbieter liefert sie, sie werden geschrieben, das Aufräumen
- * schneidet sie sofort wieder weg — ein Schreib-Karussell ohne jeden Nutzen.
+ * Deshalb entscheidet die Nutzung. Von 149 Instrumenten hatten 25 einen offenen
+ * Trade, 75 eine Prognose oder einen alten Trade, und **49 gar nichts** — diese
+ * 49 hielten allein 576.074 Kerzen, rund 107 MB. Für ein Instrument, das
+ * niemand ansieht, sind Minutenkerzen kein Wert, sondern Ballast.
  */
-export const RETENTION_LIMIT: Record<Interval, number> = {
-  '15min': 5000,
-  '30min': 3500,
-  '1h': 5000,
-  '4h': 3000,
-  '1day': 3000,
-  '1week': 1500,
-  '1month': 600,
+export type SammelStufe = 'A' | 'B' | 'C'
+
+/**
+ * Wie viele Kerzen je Reihe AUFBEWAHRT werden — die Grenze gegen das
+ * 500-MB-Speicherlimit des Gratistarifs.
+ *
+ * **Untergrenze bleibt `TRAINING_CANDLE_LIMIT` (3.000) aus
+ * `app/api/candles/route.ts`** für jede Ebene, auf der tatsächlich geübt wird.
+ * Genau daran hängt die 5.000 bei `1h` in den Stufen A und B: Die bisherigen
+ * Trainer-Sitzungen laufen alle auf dieser Ebene und fordern 3.000 Kerzen plus
+ * 800 Vorlauf an. Läge die Grenze darunter, holte der Sammellauf Kerzen, die
+ * das Aufräumen sofort wieder wegschnitte — ein Schreib-Karussell ohne Nutzen.
+ *
+ * Die Staffel richtet sich weiter danach, was der Anbieter NACHLIEFERN kann:
+ * Was bei `1min` (Yahoo: 7 Tage) oder `15min` (60 Tage) gelöscht wird, ist
+ * unwiederbringlich weg; `1day` liefert Yahoo jahrzehntelang auf Zuruf.
+ * `1week`/`1month` stehen als Deckel da, nicht als Schnitt — 1.500 Wochenkerzen
+ * sind 29 Jahre. Sie bleiben deshalb in ALLEN Stufen ungekürzt.
+ *
+ * `null` heißt: Diese Ebene wird für diese Stufe gar nicht erst gesammelt.
+ */
+const RETENTION: Record<SammelStufe, Record<Interval, number | null>> = {
+  // Offener Trade — hier wird gehandelt und geübt, hier liegt die volle Tiefe.
+  A: {
+    '1min': 1500,
+    '5min': 2000,
+    '15min': 2500,
+    '30min': 1200,
+    '1h': 5000,
+    '4h': 1500,
+    '1day': 2000,
+    '1week': 1500,
+    '1month': 600,
+  },
+  // Prognose oder abgeschlossener Trade — Kontext ja, Minutenkerzen nein.
+  B: {
+    '1min': null,
+    '5min': null,
+    '15min': 2500,
+    '30min': 1200,
+    '1h': 5000,
+    '4h': 1500,
+    '1day': 2000,
+    '1week': 1500,
+    '1month': 600,
+  },
+  // Ungenutzt — nur so viel, dass das Instrument beim Aufschlagen sofort
+  // einen brauchbaren Chart zeigt. Steigt es auf, füllt der Sammellauf nach.
+  C: {
+    '1min': null,
+    '5min': null,
+    '15min': null,
+    '30min': null,
+    '1h': 1500,
+    '4h': 1500,
+    '1day': 2000,
+    '1week': 1500,
+    '1month': 600,
+  },
+}
+
+/**
+ * Die Aufbewahrungsgrenze für eine Reihe. `null` heißt „diese Ebene gehört
+ * dieser Stufe nicht".
+ *
+ * Ohne bekannte Stufe gilt **A**, also die großzügigste: Wer die Stufe nicht
+ * kennt, darf nicht löschen. Ein zu voller Speicher ist ein Ärgernis, gelöschte
+ * Minutenkerzen sind unwiederbringlich.
+ */
+export function retentionLimit(interval: Interval, stufe: SammelStufe = 'A'): number | null {
+  return RETENTION[stufe][interval]
+}
+
+/** Die Zeitebenen, die für eine Stufe überhaupt gesammelt werden. */
+export function intervalsForStufe(stufe: SammelStufe): Interval[] {
+  return (Object.keys(RETENTION[stufe]) as Interval[]).filter(
+    (i) => RETENTION[stufe][i] !== null,
+  )
 }
 
 export class MarketDataError extends Error {

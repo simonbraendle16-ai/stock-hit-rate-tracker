@@ -592,6 +592,10 @@ export function preferredInterval(spanHours: number): Interval {
 /** Anzeigename der Auflösung für die Ehrlichkeitszeile unter der Auswertung. */
 export function intervalLabel(interval: Interval): string {
   switch (interval) {
+    case '1min':
+      return 'Minutenkerzen'
+    case '5min':
+      return '5-Minuten-Kerzen'
     case '15min':
       return '15-Minuten-Kerzen'
     case '30min':
