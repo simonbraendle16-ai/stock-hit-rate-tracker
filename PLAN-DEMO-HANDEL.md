@@ -4,6 +4,32 @@
 > Kein Teil beginnt, bevor der vorherige abgenommen ist. Nach jedem Teil:
 > `pnpm test` + `pnpm exec tsc --noEmit`.
 
+## Wo wir stehen (20.08.2026, 18:30)
+
+| Teil | Stand | Commit |
+|---|---|---|
+| 1 — Speicher staffeln | **fertig, abgenommen, deployt** | `f3b3dfd` |
+| 2 — Auto-Ausführung Demo | **fertig, abgenommen, deployt** | `73c4b97` |
+| 3 — Kontrakte, Margin | offen — **hier weitermachen** | — |
+| 4 — Zwei übergeordnete Chart-Ebenen | offen | — |
+
+**Für den Einstieg in Teil 3 genügt dieses Dokument.** Die Begründungen der
+getroffenen Entscheidungen stehen als „Nachträge" bei den jeweiligen Teilen; im
+Code tragen `lib/demo-fill.ts`, `lib/demo-run.ts`, `lib/market-data/types.ts` und
+`scripts/apply-retention.mjs` ihre Warum-Kommentare selbst.
+
+### Zwei offene Punkte aus Teil 2 (nicht Teil 3, aber nicht vergessen)
+
+1. **Der nachgeforderte Check-in ist nirgends sichtbar.** Ein automatisch
+   geschlossener Trade hat `moodExit = null` und `lossAccepted = false`; erkennbar
+   ist er an `trade_event.payload.auto = true`. Betroffen sind aktuell **#4 ETHUSD**
+   und **#15 ILMN**. Es fehlt die Stelle in der Oberfläche (Cockpit oder
+   Trade-Seite), die das einfordert — sonst bleibt der Douglas-Teil stumm liegen.
+2. **Sechs Demo-Trades hatten beim ersten Lauf keine `5min`-Kerzen** (TDOC, MBG,
+   CBK, BKNG, MTX, JNJ). Der Sammellauf arbeitet sich durch die Stufe-A-Symbole;
+   ab dem nächsten Durchgang werden sie geprüft. Zu kontrollieren über das Feld
+   `demo.ohneKerzen` in der Antwort von `/api/cron/collect-candles`.
+
 ## Ziel
 Trades im **Demo-Depot** führen sich selbst aus, sobald der Kurs ihr Level berührt —
 gehandelt wird in **Kontrakten** mit echter Spezifikation, Margin und Kontodeckung.
