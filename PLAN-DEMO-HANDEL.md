@@ -87,7 +87,9 @@ Aufräumen gibt sofort etwa **100 MB** frei.
 - [x] `pnpm test` grün (885/885), `pnpm exec tsc --noEmit` ohne Fehler
 - [x] `node scripts/apply-retention.mjs --dry` nennt die Löschmenge, ohne zu löschen:
       354.456 Kerzen ≈ 66 MB (90 Reihen ganz, 230 gekürzt)
-- [ ] Nach dem echten Lauf: **verbleibende Kerzenmenge** ≈ 1.379.570 ≈ **257 MB**
+- [x] Nach dem echten Lauf (20.08.2026, nach Deployment `f3b3dfd`): 354.462 Kerzen
+      gelöscht, 90 Reihen ganz entfernt. 994 → **904 Reihen**, 1.734.056 →
+      **1.379.594 Kerzen ≈ 257 MB**. Zweiter Trockenlauf: „nichts zu loeschen".
 - [x] Kein Instrument der Stufe A verliert eine Ebene — 175 A-Reihen geprüft, alle
       innerhalb der A-Staffel
 - [x] Ein Trainer-Durchlauf auf `1h` lädt weiterhin 3.000 Kerzen — alle vier
@@ -119,10 +121,46 @@ Aufräumen gibt sofort etwa **100 MB** frei.
 3. Echtgeld-Trades bleiben unverändert bei der Hand-Buchung.
 
 ### Abnahme
-- [ ] Tests für `demo-fill` decken ab: Lücken-Eröffnung, Stop-und-Ziel-in-einer-Kerze,
-      Teilziel vor Ziel, bereits geschlossener Trade
-- [ ] Ein bestehender Demo-Trade wird im Sammellauf korrekt gebucht
-- [ ] Kein Echtgeld-Trade verändert sich
+- [x] Tests für `demo-fill` decken ab: Lücken-Eröffnung, Stop-und-Ziel-in-einer-Kerze,
+      Teilziel vor Ziel, bereits geschlossener Trade — 25 Tests, dazu 6 für die
+      Egress-Grenze in `demo-run.test.ts`
+- [x] Ein bestehender Demo-Trade wird korrekt gebucht — echter Lauf am 20.08.2026:
+      #4 ETHUSD (Stop 2005, Kerzenzeit 19.08. 13:05) und #15 ILMN (Stop 209,
+      20.08. 11:35), beide `result: verlust`, `moodExit` leer (Check-in offen),
+      Ereignis trägt `{"auto":true,"quelle":"demo-fill"}`
+- [x] Kein Echtgeld-Trade verändert sich — 14 offene vorher, 14 nachher
+
+### Nachträge 20.08.2026
+
+**Der Check-in wird nachgefordert, nicht übersprungen.** `closeTrade` verlangt von
+Hand Emotions-Check-in, bewusste Verlustannahme und `followedPlan`. Eine Maschine
+kann die ersten beiden nicht liefern. Der automatische Abschluss bucht deshalb die
+Zahlen, setzt `followedPlan: true` (die Ausführung IST der Plan) und lässt
+`moodExit`/`lossAccepted` leer — der Mensch nimmt den Verlust weiterhin bewusst an,
+nur nach der mechanischen Ausführung.
+
+**Trockenlauf.** `runDemoFills({ trocken: true })` schreibt nichts und meldet, was
+gebucht würde — derselbe Schutz wie `--dry` in Teil 1. Er hat sich sofort bezahlt
+gemacht (siehe nächster Punkt).
+
+**`vorFenster`: gemeldet statt gebucht.** Der erste Trockenlauf hätte AAPL mit einem
+Ziel bei 100 zu **307,22** abgerechnet — der Kurs stand längst darüber, und die
+Lücken-Regel las das als Übernacht-Sprung. Ein Level, das beim Prüfbeginn schon
+jenseits lag, wurde vor dem Fenster erreicht, zu einem Kurs, den niemand mehr kennt.
+Solche Fälle werden gemeldet und von Hand abgerechnet.
+
+**Der Takt hängt am Sammellauf, nicht an den Alarmen.** Am 5-Minuten-Takt hätte der
+Lauf bei 13 Trades bis zu 2.000 Kerzen je Trade gelesen: 2,1 MB je Lauf, **17,5 GB
+im Monat** — derselbe Fehler, der schon einmal die Datenbank abgeschaltet hat. Jetzt
+läuft er stündlich in `/api/cron/collect-candles` (die ihre Fälligkeit selbst prüft,
+also keinen eigenen Merker braucht) und schaut nie weiter als `PRUEF_FENSTER_MS`
+(2 Stunden) zurück: rund **18 MB im Monat**. Das kostet keine Genauigkeit, weil die
+gebuchte Ausführungszeit die KERZENZEIT ist, nicht die Laufzeit.
+
+**Prüfebene `5min`.** Feiner als 1h, also seltener der mehrdeutige Fall „Stop und
+Ziel in derselben Kerze". Nur Stufe A hat die Ebene — ein offener Demo-Trade ist
+immer Stufe A. Fehlt sie noch (der Sammellauf arbeitet sich durch), meldet der
+Bericht `ohneKerzen` statt stillschweigend zu überspringen.
 
 ---
 
