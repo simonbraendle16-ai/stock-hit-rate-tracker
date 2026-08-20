@@ -32,6 +32,8 @@ import {
   CHART_TIMEFRAME_IDS,
   intervalForTimeframe,
   isChartTimeframe,
+  normalizeKontextEbenen,
+  serializeKontextEbenen,
 } from '@/lib/chart-timeframes'
 import { getSeriesCoverage } from '@/lib/market-data/candle-store'
 import { summarizeCoverage } from '@/lib/market-data/candle-merge'
@@ -104,6 +106,12 @@ export async function getTrainingSession(id: number): Promise<{
     leadIn: number | null
     /** Übergeordneter Kontext (Migration 0033); NULL = ohne Angabe. */
     higherContext: string | null
+    /**
+     * Die übergeordneten Chart-Ebenen dieser Übung (Migration 0037), bereits
+     * gesäubert. Kommt AUFGELÖST heraus, nicht als Roh-JSON: Zwei Stellen, die
+     * dieselbe Spalte selbst auslegen, legen sie irgendwann verschieden aus.
+     */
+    contextTimeframes: string[]
   }
   annotations: Drawing[]
   result: {
@@ -166,6 +174,7 @@ export async function getTrainingSession(id: number): Promise<{
       endedAt: row.endedAt,
       leadIn: row.leadIn,
       higherContext: row.higherContext,
+      contextTimeframes: normalizeKontextEbenen(row.contextTimeframes, row.timeframe),
     },
     annotations: annotationRows.map((a) => ({
       id: a.id,
@@ -699,6 +708,50 @@ export async function commitHigherContext(input: {
 
   revalidatePath(`/trainer/${input.sessionId}`)
   return { ok: true }
+}
+
+/**
+ * Welche übergeordneten Zeitebenen diese Übung zeigt (Teil 4).
+ *
+ * Änderbar, **solange die Übung offen ist** — danach nicht mehr. Die Ebenen
+ * sind die Grundlage, auf der die These entstanden ist; wer sie nach dem
+ * Festschreiben umstellen könnte, könnte im Nachhinein behaupten, mit anderem
+ * Kontext gearbeitet zu haben. Dieselbe Haltung wie beim Kontext-Freitext.
+ *
+ * Die Wahl wird hier gesäubert (`serializeKontextEbenen`): höchstens zwei
+ * Ebenen, nur bekannte, keine Duplikate, jede echt über der Arbeitsebene. Eine
+ * Liste aus dem Browser ist eine Behauptung, keine Tatsache.
+ */
+export async function setContextTimeframes(
+  sessionId: number,
+  ebenen: string[],
+): Promise<{ ok: true; ebenen: string[] } | { error: string }> {
+  const userId = await getUserId()
+  const [row] = await db
+    .select({
+      id: trainingSession.id,
+      timeframe: trainingSession.timeframe,
+      status: trainingSession.status,
+    })
+    .from(trainingSession)
+    .where(and(eq(trainingSession.id, sessionId), eq(trainingSession.userId, userId)))
+  if (!row) return { error: 'Diese Übung gibt es nicht.' }
+
+  if (row.status !== 'offen') {
+    return {
+      error:
+        'Die Zeitebenen stehen fest, sobald die These festgeschrieben ist — sie sind die Grundlage, auf der sie entstanden ist.',
+    }
+  }
+
+  const json = serializeKontextEbenen(Array.isArray(ebenen) ? ebenen : [], row.timeframe)
+  await db
+    .update(trainingSession)
+    .set({ contextTimeframes: json })
+    .where(and(eq(trainingSession.id, sessionId), eq(trainingSession.userId, userId)))
+
+  revalidatePath(`/trainer/${sessionId}`)
+  return { ok: true, ebenen: normalizeKontextEbenen(json, row.timeframe) }
 }
 
 // ---------------------------------------------------------------------------

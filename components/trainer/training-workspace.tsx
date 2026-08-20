@@ -74,6 +74,12 @@ export interface TrainingSessionView {
   endedAt: Date | null
   /** Übergeordneter Kontext (Migration 0033); NULL = ohne Angabe. */
   higherContext: string | null
+  /**
+   * Die übergeordneten Chart-Ebenen dieser Übung (Migration 0037), bereits
+   * gesäubert. Leer heißt „bewusst keine" — der Unterschied zu „nie gefragt"
+   * ist beim Laden schon aufgelöst (`normalizeKontextEbenen`).
+   */
+  contextTimeframes: string[]
 }
 
 const SCHRITTE = [

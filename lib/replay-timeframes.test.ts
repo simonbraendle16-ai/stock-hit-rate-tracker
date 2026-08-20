@@ -125,3 +125,81 @@ describe('kerzenBisZeitpunkt', () => {
     expect(kerzenBisZeitpunkt(vierStunden, stunden, T0, zielS, basisS)).toEqual([])
   })
 })
+
+// --- Teil 4: die Regel gilt für ZWEI übergeordnete Ebenen ------------------
+//
+// Der Abnahmepunkt des Plans: „Die angebrochene Kerze der höheren Ebene verrät
+// weiterhin nichts über die Zukunft — und zwar auf beiden Ebenen."
+//
+// Warum das überhaupt zu prüfen ist: Teil 4 zeigt zwei Kontext-Charts statt
+// einem. Beide bekommen dieselbe Basis-Ebene und denselben Moment; die Frage
+// ist, ob der Zuschnitt auch für die GRÖBERE der beiden noch trägt. Genau dort
+// wäre der Fehler teuer: Eine Tageskerze, die ihr fertiges Hoch zeigt, verrät
+// mehr als eine 4h-Kerze, die dasselbe tut.
+
+describe('zwei übergeordnete Ebenen gleichzeitig', () => {
+  const TAG = 24 * H
+
+  /** Zwölf Stundenkerzen; das Extrem (140) liegt in der ZEHNTEN. */
+  const basis: Candle[] = Array.from({ length: 12 }, (_, i) =>
+    i === 9
+      ? k(T0 + 9 * H, 100, 140, 60, 100)
+      : k(T0 + i * H, 100, 101, 99, 100),
+  )
+
+  /** Die 4h-Kerzen dazu — die dritte enthält das Extrem. */
+  const vierer: Candle[] = [
+    k(T0 + 0 * H, 100, 101, 99, 100, 4),
+    k(T0 + 4 * H, 100, 101, 99, 100, 4),
+    k(T0 + 8 * H, 100, 140, 60, 100, 4),
+  ]
+
+  /** Die Tageskerze, die alles umspannt — mit dem fertigen Extrem. */
+  const tage: Candle[] = [k(T0, 100, 140, 60, 100, 12)]
+
+  // Der Replay steht nach acht Stunden: Stunde 10 (Index 9) ist noch nicht
+  // gelaufen, das Extrem also unbekannt.
+  const ende = replayEnde(basis, 8, H)!
+
+  it('haelt das Extrem auf der ersten Ebene zurueck', () => {
+    const geschnitten = kerzenBisZeitpunkt(vierer, basis, ende, 4 * H, H)
+    const letzte = geschnitten[geschnitten.length - 1]
+    expect(letzte.high).toBeLessThan(140)
+    expect(letzte.low).toBeGreaterThan(60)
+  })
+
+  it('haelt das Extrem auch auf der ZWEITEN, groeberen Ebene zurueck', () => {
+    const geschnitten = kerzenBisZeitpunkt(tage, basis, ende, TAG, H)
+    expect(geschnitten).toHaveLength(1)
+    expect(geschnitten[0].high).toBeLessThan(140)
+    expect(geschnitten[0].low).toBeGreaterThan(60)
+  })
+
+  it('stellt beide Ebenen auf denselben Moment — kein Ausreisser nach rechts', () => {
+    for (const [ziel, sek] of [
+      [vierer, 4 * H],
+      [tage, TAG],
+    ] as const) {
+      for (const c of kerzenBisZeitpunkt(ziel, basis, ende, sek, H)) {
+        // Keine Kerze darf jenseits des Replay-Moments beginnen.
+        expect(c.time).toBeLessThan(ende)
+      }
+    }
+  })
+
+  it('verraet auf keiner Ebene mehr als die Basis selbst', () => {
+    const bisher = basis.filter((c) => c.time + H <= ende)
+    const hoechstesBekannt = Math.max(...bisher.map((c) => c.high))
+    const tiefstesBekannt = Math.min(...bisher.map((c) => c.low))
+
+    for (const [ziel, sek] of [
+      [vierer, 4 * H],
+      [tage, TAG],
+    ] as const) {
+      for (const c of kerzenBisZeitpunkt(ziel, basis, ende, sek, H)) {
+        expect(c.high).toBeLessThanOrEqual(hoechstesBekannt)
+        expect(c.low).toBeGreaterThanOrEqual(tiefstesBekannt)
+      }
+    }
+  })
+})

@@ -68,3 +68,95 @@ export function kontextEbene(basis: string): ChartTimeframe {
   const i = CHART_TIMEFRAME_IDS.indexOf(basis)
   return CHART_TIMEFRAME_IDS[Math.min(CHART_TIMEFRAME_IDS.length - 1, i + KONTEXT_STUFEN)]
 }
+
+/** Höchstens so viele übergeordnete Ebenen. Siehe `kontextEbenen`. */
+export const MAX_KONTEXT_EBENEN = 2
+
+/** Die Zeitebenen, die als Kontext über einer Arbeitsebene überhaupt in Frage kommen. */
+export function ebenenUeber(basis: string): ChartTimeframe[] {
+  if (!isChartTimeframe(basis)) return []
+  return CHART_TIMEFRAME_IDS.slice(CHART_TIMEFRAME_IDS.indexOf(basis) + 1)
+}
+
+/**
+ * Die vorbelegten Kontext-Ebenen: `anzahl` Stufen à `KONTEXT_STUFEN` über der Basis.
+ *
+ * Eine Ebene ist die bisherige Vorgabe (+2) — deshalb verhält sich eine Übung ohne
+ * eigene Wahl exakt wie bisher. Zwei Ebenen setzen +2 und +4 an: die erste zeigt den
+ * übergeordneten Zyklus, die zweite, in welchem Abschnitt dieser Zyklus selbst steht.
+ *
+ * **Am oberen Ende wird gekürzt, nicht gedoppelt.** Von „W" aus liegt über +2 nur noch
+ * „M", und +4 träfe denselben Wert. Zweimal dieselbe Ebene nebeneinander wäre eine
+ * Behauptung von Tiefe, die es nicht gibt — dann lieber eine Ebene weniger.
+ */
+export function kontextEbenen(basis: string, anzahl: number): ChartTimeframe[] {
+  const n = Math.max(0, Math.min(MAX_KONTEXT_EBENEN, Math.trunc(anzahl)))
+  if (n === 0 || !isChartTimeframe(basis)) return []
+
+  const i = CHART_TIMEFRAME_IDS.indexOf(basis)
+  const letzte = CHART_TIMEFRAME_IDS.length - 1
+  const out: ChartTimeframe[] = []
+  for (let stufe = 1; stufe <= n; stufe++) {
+    const kandidat = CHART_TIMEFRAME_IDS[Math.min(letzte, i + stufe * KONTEXT_STUFEN)]
+    // Nur echt über der Basis und nur einmal — sonst entstünde am oberen Ende
+    // eine Dopplung.
+    if (kandidat === basis || out.includes(kandidat)) continue
+    out.push(kandidat)
+  }
+  return out
+}
+
+/**
+ * Die gespeicherte Ebenenwahl einer Übung lesen — oder die Vorbelegung.
+ *
+ * `roh` ist die JSON-Spalte `training_session.contextTimeframes`. NULL heißt
+ * „nie entschieden" und ergibt die Vorbelegung; ein leeres Array heißt dagegen
+ * ausdrücklich „keine Kontext-Ebene" und bleibt leer. Der Unterschied ist der
+ * zwischen „nicht gefragt" und „mit Nein beantwortet", und den verwischt diese
+ * Funktion nicht.
+ *
+ * Gesäubert wird streng: höchstens zwei Ebenen, nur bekannte Zeitebenen, keine
+ * Duplikate, und jede muss **echt über der Arbeitsebene** liegen. Eine
+ * „übergeordnete" Ebene unterhalb der Arbeitsebene wäre ein Widerspruch, und
+ * eine gleich der Arbeitsebene zeigte denselben Chart zweimal.
+ */
+export function normalizeKontextEbenen(
+  roh: string | null | undefined,
+  basis: string,
+): ChartTimeframe[] {
+  if (roh == null) return kontextEbenen(basis, 1)
+
+  let werte: unknown
+  try {
+    werte = JSON.parse(roh)
+  } catch {
+    // Kaputter Eintrag ist kein Nein — es ist ein Defekt. Vorbelegung.
+    return kontextEbenen(basis, 1)
+  }
+  if (!Array.isArray(werte)) return kontextEbenen(basis, 1)
+
+  const erlaubt = new Set<string>(ebenenUeber(basis))
+  const out: ChartTimeframe[] = []
+  for (const v of werte) {
+    if (typeof v !== 'string') continue
+    if (!erlaubt.has(v) || out.includes(v as ChartTimeframe)) continue
+    out.push(v as ChartTimeframe)
+    if (out.length === MAX_KONTEXT_EBENEN) break
+  }
+  // Aufsteigend: „Kontext 1" ist immer die feinere der beiden Ebenen.
+  out.sort((a, b) => CHART_TIMEFRAME_IDS.indexOf(a) - CHART_TIMEFRAME_IDS.indexOf(b))
+  return out
+}
+
+/** Die Ebenenwahl für die Spalte serialisieren. Leeres Array bleibt leeres Array. */
+export function serializeKontextEbenen(ebenen: readonly string[], basis: string): string {
+  const erlaubt = new Set<string>(ebenenUeber(basis))
+  const sauber: ChartTimeframe[] = []
+  for (const v of ebenen) {
+    if (!erlaubt.has(v) || sauber.includes(v as ChartTimeframe)) continue
+    sauber.push(v as ChartTimeframe)
+    if (sauber.length === MAX_KONTEXT_EBENEN) break
+  }
+  sauber.sort((a, b) => CHART_TIMEFRAME_IDS.indexOf(a) - CHART_TIMEFRAME_IDS.indexOf(b))
+  return JSON.stringify(sauber)
+}

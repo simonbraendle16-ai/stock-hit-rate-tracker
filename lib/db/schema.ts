@@ -660,6 +660,17 @@ export const trainingSession = pgTable('training_session', {
   // als eine ehrliche Lücke. Festgeschrieben wird er wie die These VOR dem
   // Aufdecken; danach änderbar wäre er wertlos.
   higherContext: text('higherContext'),
+  // Welche übergeordneten Zeitebenen diese Übung neben der Arbeitsebene zeigt
+  // (Migration 0037) — JSON-Array, höchstens zwei, z. B. `["1h","T"]`.
+  //
+  // An der ÜBUNG und nicht in den Einstellungen, weil die Ebenen Teil dessen
+  // sind, worauf die These gestützt wurde. Wer später auswertet, warum eine
+  // Zählung danebenlag, muss sehen, was der Übende vor sich hatte.
+  //
+  // NULL = „nie entschieden" → Vorbelegung (eine Ebene, wie bisher).
+  // `[]` = ausdrücklich „keine Kontext-Ebene". Gelesen und auseinandergehalten
+  // ausschließlich von `normalizeKontextEbenen` (`lib/chart-timeframes.ts`).
+  contextTimeframes: text('contextTimeframes'),
   // JSON-Array der Anzeigeformen, wie `trade.setupTags`.
   setupTags: text('setupTags'),
   committedAt: timestamp('committedAt', { withTimezone: true }),

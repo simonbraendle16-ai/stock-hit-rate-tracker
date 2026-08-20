@@ -10,10 +10,10 @@
 |---|---|---|
 | 1 — Speicher staffeln | **fertig, abgenommen, deployt** | `f3b3dfd` |
 | 2 — Auto-Ausführung Demo | **fertig, abgenommen, deployt** | `73c4b97` |
-| 3 — Kontrakte, Margin | offen — **hier weitermachen** | — |
-| 4 — Zwei übergeordnete Chart-Ebenen | offen | — |
+| 3 — Kontrakte, Margin | **fertig, abgenommen** (Migration 0036 angewendet) | — |
+| 4 — Zwei übergeordnete Chart-Ebenen | **fertig, abgenommen** (Migration 0037 angewendet) | — |
 
-**Für den Einstieg in Teil 3 genügt dieses Dokument.** Die Begründungen der
+**Alle vier Teile sind abgearbeitet.** Die Begründungen der
 getroffenen Entscheidungen stehen als „Nachträge" bei den jeweiligen Teilen; im
 Code tragen `lib/demo-fill.ts`, `lib/demo-run.ts`, `lib/market-data/types.ts` und
 `scripts/apply-retention.mjs` ihre Warum-Kommentare selbst.
@@ -203,9 +203,81 @@ Bericht `ohneKerzen` statt stillschweigend zu überspringen.
    statt stiller Überziehung.
 
 ### Abnahme
-- [ ] Ein ES-Trade über 2 Kontrakte mit 10 Ticks Risiko zeigt 2 × 10 × 12,50 $ = 250 $
-- [ ] Ein Trade jenseits der Deckung wird abgelehnt, mit lesbarer Begründung
-- [ ] Instrumente ohne Spezifikation rechnen wie bisher weiter (kein Bruch im Altbestand)
+- [x] Ein ES-Trade über 2 Kontrakte mit 10 Ticks Risiko zeigt 2 × 10 × 12,50 $ = 250 $ —
+      im Formular sichtbar (`Ticks bis Stop 10 · Risiko 250 USD · Einschuss 27.000 USD ·
+      Positionsgröße 100`), dazu 14 Tests in `contract-math.test.ts`, die beide Rechenwege
+      gegeneinander halten
+- [x] Ein Trade jenseits der Deckung wird abgelehnt, mit lesbarer Begründung — echter Lauf
+      am 20.08.2026: „ES1! · 2 Kontrakte: Der Einschuss von 24.840,00 EUR übersteigt den
+      freien Einschuss von 6.632,36 EUR (Kontostand 9.632,36 EUR, bereits gebunden
+      3.000,00 EUR). Im Depot „Demo" geht derzeit kein einziger Kontrakt."
+- [x] Instrumente ohne Spezifikation rechnen wie bisher weiter — 33 Trades in der DB,
+      **0** mit Kontraktfeldern; die Trade-Liste zeigt Papier-Einsatz, Hebel, Positionswert
+      und Stückzahl unverändert. Nachweis: `node scripts/check-kontrakte.mjs`
+
+### Nachträge 20.08.2026
+
+**Der Hebel ist `positionSize`.** Ein Kontrakt-Trade legt dort `Kontrakte × Multiplikator`
+ab (Multiplikator = Tick-Wert ÷ Tick-Größe, bei ES also 50). Dadurch bleibt der bestehende
+Weg `(Ausstieg − Einstieg) × positionSize` in `trade-stats`, `trade-events`, `excursion` und
+`bot-twin` unverändert richtig — **keine einzige P&L-Formel wurde angefasst**, und genau
+deshalb bricht der Altbestand nicht. Ein Test hält beide Wege für jede Vorgabe aneinander;
+zwei Rechenwege wären zwei Wahrheiten.
+
+**Die Spezifikation wird eingefroren.** Wie `feeEntry`/`feeExit` seit Migration 0010: Tick-
+Größe, Tick-Wert, Multiplikator, Währung und Einschuss stehen am Trade. Die Börsen ändern
+Einschüsse mehrmals im Jahr — ohne das Einfrieren schriebe jede Änderung die Historie um.
+
+**Erkennung nur mit Kontraktkennung.** `ES1!`, `ES=F`, `ESZ5` werden erkannt; eine blanke
+Wurzel (`SI`, `GC`) nur bei `market = 'rohstoffe'`, weil es sie alle auch als Aktie gibt.
+Blankes `ETHUSD` bleibt Spot — ein bestehendes Instrument darf nicht dadurch zum Kontrakt
+werden, dass eine Vorgabenliste erscheint. Der Abschalter `contractsDisabled` am Instrument
+ist der Ausweg, wenn die Erkennung trotzdem danebenliegt.
+
+**Fremdwährung: fester Kurs am Depot, sonst keine Prüfung.** ES notiert in USD, das Konto
+in EUR, und die App rechnet Währungen sonst nirgends um. Am Depot steht deshalb ein
+gepflegter Kurs mit Zeitstempel (`fxRates`: `{"USD":0.92}` = 1 USD sind 0,92 Kontowährung;
+die Richtung steht ausgeschrieben im Formular, weil „EUR/USD 1,09" in beide Richtungen
+lesbar ist und ein umgedrehter Kurs jede Zahl um 18 % verschiebt). **Fehlt der Kurs, wird
+NICHT geprüft** — der Trade läuft durch, `investedAmount` bleibt leer, und die Oberfläche
+sagt es: `createTrade` und `activateTrade` geben `deckungsHinweis` zurück, das Formular
+zeigt ihn als stehende Warnung. Ohne diese Rückgabe verschwand der Satz spurlos, und ein
+ungeprüfter Trade sah aus wie ein geprüfter. Ein 1:1-Vergleich wäre um knapp zehn Prozent
+falsch gewesen.
+
+**`investedAmount` ist bei Kontrakten der Einschuss**, umgerechnet in Kontowährung — das
+Kapital, das der Broker tatsächlich blockiert. Der volle Kontraktwert (bei 1 ES rund
+250.000 $) hätte jede Rendite-Prozentzahl unbrauchbar gemacht.
+
+**Deckung = Kontostand − gebundener Einschuss.** Kontostand ist Startkapital + Ein-/Aus-
+zahlungen + realisierte P&L. Gebunden sind die geplanten und aktiven **Kontrakt-Trades** —
+nicht jede offene Position. `investedAmount` trägt bei einem Kontrakt-Trade den Einschuss,
+bei allen anderen den Kapitaleinsatz, und das sind zwei verschiedene Dinge: Ein Depot mit
+zehn Aktienpositionen à 300 € hätte sonst 3.000 € „gebundenen Einschuss", obwohl kein
+einziger Einschuss existiert. Genau das war zwischenzeitlich gebaut und ist bei der
+Validierung am 20.08.2026 aufgefallen — der freie Einschuss war um 3.000 € zu klein.
+Verluste zählen weiterhin mit; nach zehn Verlusten ist eben nicht mehr alles frei.
+Geprüft wird beim
+**Anlegen und beim Aktivieren** — drei Pläne, die einzeln passten, passen zusammen nicht.
+Beim Aktivieren wird der eigene Trade ausgeklammert, sonst zählte sein Einschuss doppelt.
+
+**Die Ablehnung sagt auch, was gegangen wäre.** „Im Depot „Demo" gehen derzeit 2 Kontrakte"
+— eine Absage ohne diese Zahl ist nur halb hilfreich.
+
+**Der Demo-Auto-Fill verwirft ungedeckte Einstiege.** Reicht die Deckung beim Füllen nicht,
+wird der Trade `abgebrochen` statt gebucht, mit dem Grund im Ereignis und im Bericht
+(`ungedeckt`). Ein Broker hätte die Order genauso abgelehnt; ein Demo-Konto, das ins Minus
+laufen darf, übt das Falsche. **Nur beim Einstieg** wird geprüft — einen Stop wegen
+Unterdeckung nicht auszuführen wäre der gefährlichste Fehler von allen. `ungedeckt` steht
+auch in der Antwort von `/api/cron/collect-candles`: Die Route führt eine feste Feldliste,
+und ein verworfener Trade, der dort fehlt, sähe von aussen aus wie einer, bei dem nichts
+passiert ist.
+
+**Neu im Code:** `lib/contract-specs.ts` (Vorgaben ES/MES/NQ/MNQ/YM/MYM/RTY/GC/MGC/SI/CL/MCL
++ BTC/ETH/SOL-Perpetuals, Wurzel-Erkennung, feldweiser Merge) · `lib/margin.ts` (Deckung,
+Umrechnung, Ablehnungstext) · `lib/contract-trade.ts` (Brücke zur Trade-Zeile) ·
+Erweiterung von `lib/trade-math.ts` · `scripts/check-kontrakte.mjs` (Nachweis gegen die
+echte DB). 986 Tests grün, `tsc --noEmit` sauber.
 
 ---
 
@@ -217,10 +289,56 @@ Bericht `ohneKerzen` statt stillschweigend zu überspringen.
 2. Auswahl in der Chart-Oberfläche, Bausteine `chart-frame` und `section-label` nutzen.
 
 ### Abnahme
-- [ ] Ohne Auswahl verhält sich der Chart wie heute
-- [ ] Die angebrochene Kerze der höheren Ebene verrät weiterhin **nichts** über die
-      Zukunft (Regel aus `replay-timeframes.ts` gilt für beide Ebenen)
-- [ ] Sichtprüfung im Browser über den `claude-in-chrome`-MCP
+- [x] Ohne Auswahl verhält sich der Chart wie heute — `contextTimeframes` ist bei allen
+      bestehenden Übungen NULL, und NULL ergibt die Vorbelegung: eine Ebene, +2 Stufen.
+      Im Browser bestätigt (Übung 4, 1h → „T"), dazu ein Test, der `kontextEbenen(basis, 1)`
+      für JEDE Zeitebene gegen das alte `kontextEbene(basis)` hält.
+- [x] Die angebrochene Kerze der höheren Ebene verrät weiterhin **nichts** über die
+      Zukunft — vier Tests in `replay-timeframes.test.ts` prüfen es für BEIDE Ebenen
+      gleichzeitig, inklusive der gröberen: Keine Kerze zeigt ein Hoch oder Tief, das die
+      Basis zu diesem Moment noch nicht kennt.
+- [x] Sichtprüfung im Browser über den `claude-in-chrome`-MCP — alle drei Stufen geprüft:
+      0 Ebenen („keine Ebene" + Hinweis), 1 Ebene (T), 2 Ebenen (T · M, beide auf demselben
+      Kurs 107,30 wie der Arbeitschart). Die Wahl landete als `["T","M"]` in der Datenbank.
+
+### Nachträge 20.08.2026
+
+**Anzahl UND Ebene sind frei.** 0, 1 oder 2 Kontext-Charts, jeder auf einer frei gewählten
+Zeitebene oberhalb der Arbeitsebene. Vorbelegt bleibt der bisherige Stufenabstand (+2, +4),
+damit sich ohne Zutun nichts ändert. Null Ebenen sind ausdrücklich erlaubt — mit einem
+Hinweis, dass eine Zählung ohne Blick auf den Zyklus darüber eine Behauptung ist.
+
+**Am oberen Ende wird gekürzt, nicht gedoppelt.** Von „W" aus liegt über +2 nur noch „M",
+und +4 träfe denselben Wert. Zweimal dieselbe Ebene nebeneinander wäre eine Behauptung von
+Tiefe, die es nicht gibt.
+
+**Die Wahl gehört an die ÜBUNG, nicht in die Einstellungen.** Sie ist Teil dessen, worauf
+die These gestützt wurde; wer später auswertet, warum eine Zählung danebenlag, muss sehen,
+was der Übende vor sich hatte. Deshalb `training_session.contextTimeframes` (Migration
+0037) und deshalb **nur änderbar, solange die Übung offen ist** — nach dem Festschreiben
+ließe sich sonst im Nachhinein behaupten, mit anderem Kontext gearbeitet zu haben.
+
+**NULL ≠ `[]`.** NULL heißt „nie entschieden" und ergibt die Vorbelegung; ein leeres Array
+heißt „mit Nein beantwortet" und bleibt leer. `normalizeKontextEbenen` hält den Unterschied
+auseinander — kein Backfill, dieselbe Haltung wie bei `higherContext`.
+
+**Die Sicherheit gegen Zukunftswissen wurde nicht angefasst.** Beide Kontext-Charts
+bekommen dieselbe `replayBasisTimeframe` und denselben Stand wie der Arbeitschart;
+`kerzenBisZeitpunkt` schneidet jede Ebene einzeln am selben Moment zu. Die Regel hängt an
+der Basis, nicht an der Anzahl der Ansichten.
+
+**Beim Bauen aufgefallen: eine Endlosschleife, die kein Protokoll schreibt.** Der erste
+Entwurf baute die Rückmeldefunktion je Ebene als `(tf) => (c) => …` bei jedem Render neu.
+`PriceChart` hat `onViewCandlesLoaded` in der Abhängigkeitsliste seines Melde-Effekts — eine
+neue Funktionsidentität ließ ihn erneut feuern, das setzte Zustand, das rendert neu. Die
+Seite drehte sich fest, und im Browser sah das aus wie ein hängender Tab. Gefunden hat es
+**nur die Sichtprüfung**; Tests und `tsc` waren grün. Jetzt liegt je Ebene EINE stabile
+Funktion in einem `useMemo`, und `setGesehen` vergleicht vorher.
+
+**Neu im Code:** `kontextEbenen` / `ebenenUeber` / `normalizeKontextEbenen` /
+`serializeKontextEbenen` in `lib/chart-timeframes.ts` · `setContextTimeframes` in
+`app/actions/training.ts` · Umbau von `components/trainer/context-chart.tsx` auf bis zu zwei
+Charts mit Auswahl. 1012 Tests grün, `tsc --noEmit` sauber, `pnpm build` läuft durch.
 
 ---
 

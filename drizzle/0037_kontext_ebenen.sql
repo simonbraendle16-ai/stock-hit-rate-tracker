@@ -1,0 +1,31 @@
+-- Bis zu zwei übergeordnete Chart-Ebenen je Übung (Plan Demo-Handel, Teil 4)
+--
+-- AUSGANGSLAGE
+-- Der Trainer zeigt neben der Arbeitsebene genau EINE übergeordnete Ebene, und
+-- welche das ist, war nicht wählbar: `kontextEbene()` rechnet fest zwei Stufen
+-- nach oben. Für eine Übung auf 15-Minuten-Kerzen ist das die Stunde — gut, um
+-- den übergeordneten Zyklus zu sehen, aber nicht, um zu erkennen, in welchem
+-- Abschnitt dieser Zyklus selbst steht. Genau diese Frage entscheidet aber, ob
+-- eine Wellenzählung begründet ist oder behauptet.
+--
+-- WAS DIESE MIGRATION TUT
+-- Eine Spalte: die Ebenenwahl der Übung als JSON-Array, z. B. `["1h","T"]`.
+--
+-- Warum an der ÜBUNG und nicht in den Einstellungen: Die Ebenen sind Teil
+-- dessen, worauf die These gestützt wurde. Wer später auswertet, warum eine
+-- Zählung danebenlag, muss sehen können, was der Übende überhaupt vor sich
+-- hatte. Eine kontoweite Vorliebe wäre bis dahin längst wieder umgestellt.
+--
+-- NULL heißt „nie entschieden" und ergibt die Vorbelegung — also exakt das
+-- heutige Verhalten mit einer Ebene. Ein leeres Array `[]` heißt dagegen
+-- ausdrücklich „keine Kontext-Ebene". Der Unterschied ist der zwischen „nicht
+-- gefragt" und „mit Nein beantwortet", und `normalizeKontextEbenen`
+-- (`lib/chart-timeframes.ts`) hält ihn auseinander.
+--
+-- KEIN BACKFILL. Eine nachgetragene Ebenenwahl behauptete etwas über eine
+-- Übung, das dort nie entschieden wurde — dieselbe Haltung wie bei
+-- `higherContext` in Migration 0033.
+--
+-- Additiv und idempotent, mehrfach ausführbar.
+
+ALTER TABLE training_session ADD COLUMN IF NOT EXISTS "contextTimeframes" text;
