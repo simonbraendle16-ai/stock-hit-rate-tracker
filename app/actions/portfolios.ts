@@ -16,6 +16,7 @@ import { portfolio, trade } from '@/lib/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
 import { headers } from 'next/headers'
 import { revalidatePath } from 'next/cache'
+import { parseFxRates } from '@/lib/margin'
 import {
   checkArchivable,
   checkDeletable,
@@ -328,4 +329,54 @@ function revalidateAll(): void {
   revalidatePath('/trades')
   revalidatePath('/trades/new')
   revalidatePath('/analysis')
+}
+
+// ---------------------------------------------------------------------------
+// Umrechnungskurse (Plan Demo-Handel, Teil 3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Die Umrechnungskurse eines Depots lesen — samt Zeitstempel.
+ *
+ * Bedeutung eines Eintrags: **1 Einheit der Fremdwährung entspricht so vielen
+ * Einheiten der Kontowährung.** Die App rechnet sonst nirgends um; gebraucht
+ * werden die Kurse nur, um einen Einschuss in USD gegen ein Konto in EUR zu
+ * prüfen. Ohne gepflegten Kurs wird nicht geprüft, und das wird gesagt.
+ */
+export async function getPortfolioFxRates(portfolioId: number): Promise<{
+  rates: Record<string, number>
+  stand: Date | null
+}> {
+  const userId = await getUserId()
+  const p = await loadOwnedPortfolio(userId, portfolioId)
+  return { rates: parseFxRates(p.fxRates), stand: p.fxRatesAt ?? null }
+}
+
+/**
+ * Umrechnungskurse setzen. Der Zeitstempel wird MITgeschrieben — ein Kurs ohne
+ * Datum ist ein Gerücht, und ein halbes Jahr alter Wechselkurs verschiebt die
+ * Deckungsprüfung um mehr, als die Prüfung wert wäre.
+ *
+ * Unsinnige Einträge (Null, negativ, kein Zahlwert) fallen weg, statt gespeichert
+ * zu werden: Ein Kurs von 0 machte jeden Einschuss kostenlos.
+ */
+export async function updatePortfolioFxRates(
+  portfolioId: number,
+  rates: Record<string, number>,
+): Promise<void> {
+  const userId = await getUserId()
+  await loadOwnedPortfolio(userId, portfolioId)
+
+  const sauber = parseFxRates(JSON.stringify(rates ?? {}))
+  const leer = Object.keys(sauber).length === 0
+
+  await db
+    .update(portfolio)
+    .set({
+      fxRates: leer ? null : JSON.stringify(sauber),
+      fxRatesAt: leer ? null : new Date(),
+    })
+    .where(and(eq(portfolio.id, portfolioId), eq(portfolio.userId, userId)))
+
+  revalidateAll()
 }

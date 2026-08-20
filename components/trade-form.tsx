@@ -1,7 +1,7 @@
 'use client'
 
 import type React from 'react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -51,7 +51,11 @@ import {
   computeShares,
   projectStopLoss,
   projectTakeProfit,
+  ticksBetween,
 } from '@/lib/trade-math'
+import { getContractSpecFor } from '@/app/actions/stocks'
+import { contractTradeFelder } from '@/lib/contract-trade'
+import type { ContractSpec } from '@/lib/contract-specs'
 import { currencySymbol, formatMoney } from '@/lib/format'
 import {
   DEFAULT_TRADE_KIND,
@@ -144,6 +148,7 @@ export function TradeForm({
     market: 'aktien',
     positionSize: '',
     investedAmount: '',
+    contracts: '',
     leverage: '1',
     feeEntry: String(defaultFeeEntry),
     feeExit: String(defaultFeeExit),
@@ -242,6 +247,59 @@ export function TradeForm({
     zielCheck,
   ])
 
+  // --- Kontrakt-Spezifikation (Teil 3) --------------------------------------
+  //
+  // Hat das Instrument eine gültige Spezifikation, wird in KONTRAKTEN bemessen
+  // statt über einen Kapitaleinsatz: Ein Terminkontrakt wird gezählt, nicht für
+  // einen Betrag gekauft. Gefragt wird der Server, weil dort auch die
+  // Handeingabe am Instrument liegt — die Vorgabenliste allein kennt sie nicht.
+  //
+  // Der Abruf ist entprellt: Wer „ES1!" tippt, soll nicht bei jedem Buchstaben
+  // eine Anfrage auslösen.
+  const [spec, setSpec] = useState<ContractSpec | null>(null)
+  useEffect(() => {
+    const ticker = form.ticker.trim()
+    if (!ticker) {
+      setSpec(null)
+      return
+    }
+    let abgebrochen = false
+    const timer = setTimeout(() => {
+      void getContractSpecFor({ ticker, market: form.market })
+        .then((s) => {
+          if (!abgebrochen) setSpec(s)
+        })
+        // Fehlschlag heisst „keine Spezifikation" — dann bemisst das Formular
+        // wie bisher über den Kapitaleinsatz. Nie eine geraten.
+        .catch(() => {
+          if (!abgebrochen) setSpec(null)
+        })
+    }, 400)
+    return () => {
+      abgebrochen = true
+      clearTimeout(timer)
+    }
+  }, [form.ticker, form.market])
+
+  /** Live-Werte des Kontrakt-Trades: Risiko, Einschuss, Positionsgröße. */
+  const kontrakt = useMemo(() => {
+    if (!spec) return null
+    const n = parseFloat(form.contracts)
+    const entry = parseFloat(form.entryPrice)
+    const sl = parseFloat(form.stopLoss)
+    if (!n || n <= 0 || !entry) return null
+    const felder = contractTradeFelder({
+      spec,
+      contracts: n,
+      entryPrice: entry,
+      stopLoss: sl || entry,
+      leverage: parseFloat(form.leverage) || 1,
+    })
+    if (!felder) return null
+    const ticks = sl ? ticksBetween(entry, sl, spec.tickSize) : 0
+    return { ...felder, ticks }
+  }, [spec, form.contracts, form.entryPrice, form.stopLoss, form.leverage])
+
   // --- Risiko-Guard: wie viel % des Depotkapitals riskiert der Stop? ---
   //
   // Greift seit Etappe 12 in BEIDEN Depotarten. Vorher war er auf Papier
@@ -317,6 +375,11 @@ export function TradeForm({
         // Auch auf Papier: Einsatz und Hebel ergeben die Positionsgröße, sonst
         // wäre der Hebel im Demo-Trade eine Zahl ohne Wirkung.
         investedAmount: form.investedAmount ? parseFloat(form.investedAmount) : null,
+        // Kontrakte (Teil 3): Sind sie gesetzt UND hat das Instrument eine
+        // Spezifikation, bestimmen SIE die Positionsgröße, und `investedAmount`
+        // wird auf dem Server zum Einschuss. Der Server entscheidet das noch
+        // einmal selbst — eine Zahl aus dem Browser ist eine Behauptung.
+        contracts: form.contracts ? parseFloat(form.contracts) : null,
         leverage: form.leverage ? parseFloat(form.leverage) : 1,
         // Beim schnellen Trade bleiben Gebühren, Setup, Begründung und Elliott
         // ungefragt: die Gebühren zieht der Server aus den Einstellungen, der
@@ -343,8 +406,16 @@ export function TradeForm({
         tradeKind,
       }
       const allYes = answers.every((a) => a.answer === 'ja')
-      const { id } = await createTrade(payload)
+      const { id, deckungsHinweis } = await createTrade(payload)
       setQuestionsOpen(false)
+      // Der Trade ist angelegt, aber die Deckung konnte NICHT geprüft werden
+      // (Fremdwährung ohne hinterlegten Umrechnungskurs). Das gehört gesagt:
+      // Sonst sieht ein ungeprüfter Trade aus wie einer, der die Prüfung
+      // bestanden hat. Als Warnung und ohne Zeitablauf, damit sie nicht
+      // wegrutscht, bevor man sie gelesen hat.
+      if (deckungsHinweis) {
+        toast.warning(deckungsHinweis, { duration: Infinity, closeButton: true })
+      }
       toast.success(
         quick
           ? 'Schneller Trade angelegt — sofort aktivierbar.'
@@ -616,12 +687,70 @@ export function TradeForm({
           }
           delay="rise-in-2"
         >
+          {/* Kontrakte statt Kapitaleinsatz (Teil 3). Ein Terminkontrakt wird
+              gezählt, nicht für einen Betrag gekauft — und das Risiko ist dann
+              Ticks × Tick-Wert × Kontrakte, unabhängig davon, wie viel Kapital
+              jemand einsetzt. Erscheint nur, wenn das Instrument eine gültige
+              Spezifikation hat; sonst bleibt alles beim bisherigen Weg. */}
+          {spec && (
+            <div className="space-y-3">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <Field label="Kontrakte">
+                  <Input
+                    type="number"
+                    step="1"
+                    min="0"
+                    value={form.contracts}
+                    onChange={(e) => set('contracts', e.target.value)}
+                    placeholder="z. B. 2"
+                    className={inputCls}
+                  />
+                </Field>
+                <div className="flex flex-col justify-end">
+                  <p className="eyebrow">{spec.name}</p>
+                  <p className="note">
+                    Tick {num(spec.tickSize, 6)} = {num(spec.tickValue, 2)} {spec.currency} ·
+                    Kontraktgröße {num(spec.contractSize, 4)}
+                  </p>
+                </div>
+              </div>
+
+              {kontrakt && (
+                <ResultBlock tone="warning">
+                  <dl className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-4">
+                    <ResultRow label="Ticks bis Stop" value={num(kontrakt.ticks, 1)} />
+                    <ResultRow
+                      label={`Risiko (${spec.currency})`}
+                      value={num(kontrakt.risiko, 2)}
+                      strong
+                    />
+                    <ResultRow
+                      label={`Einschuss (${spec.currency})`}
+                      value={num(kontrakt.contractInitialMargin, 2)}
+                    />
+                    <ResultRow label="Positionsgröße" value={num(kontrakt.positionSize, 4)} />
+                  </dl>
+                  <p className="note mt-2">
+                    {kontrakt.contracts} × {num(kontrakt.ticks, 1)} Ticks ×{' '}
+                    {num(spec.tickValue, 2)} {spec.currency}. Reicht die Depotdeckung nicht,
+                    lehnt der Server den Trade beim Anlegen ab — mit Begründung, nicht
+                    stillschweigend.
+                    {spec.currency !== currency &&
+                      ` Geprüft wird gegen dein Konto in ${currency}; dafür muss am Depot ein Umrechnungskurs für ${spec.currency} hinterlegt sein.`}
+                  </p>
+                </ResultBlock>
+              )}
+            </div>
+          )}
+
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <Field
               label={
-                tradedWithMoney
-                  ? `Kapitaleinsatz (${currencySymbol(currency)})`
-                  : `Papier-Einsatz (${currencySymbol(currency)})`
+                spec
+                  ? `Kapitaleinsatz (${currencySymbol(currency)}) — bei Kontrakten ungenutzt`
+                  : tradedWithMoney
+                    ? `Kapitaleinsatz (${currencySymbol(currency)})`
+                    : `Papier-Einsatz (${currencySymbol(currency)})`
               }
             >
               <Input

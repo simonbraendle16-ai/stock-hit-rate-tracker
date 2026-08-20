@@ -6,6 +6,8 @@ import { getStockDetail } from '@/app/actions/stocks'
 import { getInstrumentTrades, listTargetsForTrades } from '@/app/actions/trades'
 import { getDrawings } from '@/app/actions/drawings'
 import { getInstrumentCard } from '@/app/actions/instruments'
+import { getContractSpec } from '@/app/actions/stocks'
+import { ContractSpecCard } from '@/components/contract-spec-card'
 import { getSettings } from '@/app/actions/settings'
 import { InstrumentCard } from '@/components/instrument-card'
 import { QuoteAutoRefresh } from '@/components/quote-auto-refresh'
@@ -41,6 +43,10 @@ export default async function StockDetailPage({
     getInstrumentCard(stockId),
     getSettings(),
   ])
+  // Kontrakt-Spezifikation (Teil 3): Sie gehoert ans Instrument, weil dort auch
+  // die Handeingabe liegt — und weil jede Risikozahl eines Kontrakt-Trades an
+  // Tick-Groesse und Tick-Wert haengt. Was man nicht sieht, kann man nicht pruefen.
+  const kontrakt = await getContractSpec(stockId)
   if (!detail) notFound()
 
   const hasData = detail.total > 0
@@ -234,6 +240,18 @@ export default async function StockDetailPage({
             </div>
           )}
         </div>
+
+        {kontrakt && (
+          <div className="mt-6">
+            <ContractSpecCard
+              stockId={detail.id}
+              ticker={kontrakt.ticker}
+              spec={kontrakt.spec}
+              vorgabe={kontrakt.vorgabe}
+              hand={kontrakt.hand}
+            />
+          </div>
+        )}
 
         <div className="mt-6">
           <AssessmentList

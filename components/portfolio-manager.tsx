@@ -28,6 +28,7 @@ import {
   renamePortfolio,
   unarchivePortfolio,
   updatePortfolioMoney,
+  updatePortfolioFxRates,
 } from '@/app/actions/portfolios'
 import {
   MAX_PORTFOLIO_NAME,
@@ -35,6 +36,7 @@ import {
   type PortfolioKind,
   type PortfolioRow,
 } from '@/lib/portfolio-scope'
+import { parseFxRates } from '@/lib/margin'
 import { cn } from '@/lib/utils'
 
 const inputCls = 'input-ocean h-11 font-mono'
@@ -321,6 +323,8 @@ function DepotZeile({
         )}
       </div>
 
+      <FxKurse depot={p} sym={sym} busy={busy} lauf={lauf} />
+
       {geaendert && (
         <Button
           type="button"
@@ -477,6 +481,145 @@ function NeuesDepot({ sym, onFertig }: { sym: string; onFertig: () => void }) {
           ABBRECHEN
         </Button>
       </div>
+    </div>
+  )
+}
+
+/**
+ * Umrechnungskurse eines Depots (Plan Demo-Handel, Teil 3).
+ *
+ * Warum das überhaupt hier steht: Die App rechnet Währungen NIRGENDS um, und
+ * das bleibt so. Genau eine Prüfung braucht sie trotzdem — ein ES-Einschuss
+ * notiert in USD, das Konto in EUR. Ohne hinterlegten Kurs wird nicht geprüft,
+ * und die App sagt das, statt 27.000 USD gegen 27.000 EUR zu halten und dabei
+ * um knapp zehn Prozent danebenzuliegen.
+ *
+ * Die Richtung ist bewusst ausgeschrieben („1 USD = … EUR"): „EUR/USD 1,09"
+ * lässt sich in beide Richtungen lesen, und ein umgedrehter Kurs verschiebt
+ * jede Deckungszahl um 18 Prozent.
+ *
+ * Der Zeitstempel steht daneben, weil er die Aussage begrenzt. Ein halbes Jahr
+ * alter Wechselkurs ist kein Kurs, sondern eine Erinnerung.
+ */
+function FxKurse({
+  depot,
+  sym,
+  busy,
+  lauf,
+}: {
+  depot: PortfolioRow
+  sym: string
+  busy: boolean
+  lauf: (fn: () => Promise<unknown>, erfolg: string) => Promise<void>
+}) {
+  const bestand = parseFxRates(depot.fxRates)
+  const [zeilen, setZeilen] = useState<{ code: string; kurs: string }[]>(() => {
+    const eintraege = Object.entries(bestand).map(([code, kurs]) => ({
+      code,
+      kurs: String(kurs),
+    }))
+    return eintraege.length > 0 ? eintraege : [{ code: '', kurs: '' }]
+  })
+  const [offen, setOffen] = useState(false)
+
+  const setZeile = (i: number, patch: Partial<{ code: string; kurs: string }>) =>
+    setZeilen((p) => p.map((z, k) => (k === i ? { ...z, ...patch } : z)))
+
+  const speichern = () => {
+    const rates: Record<string, number> = {}
+    for (const z of zeilen) {
+      const code = z.code.trim().toUpperCase()
+      const kurs = parseFloat(z.kurs)
+      // Unsinniges fällt weg statt gespeichert zu werden — ein Kurs von 0
+      // machte jeden Einschuss kostenlos. Der Server prüft das noch einmal.
+      if (!code || !Number.isFinite(kurs) || kurs <= 0) continue
+      rates[code] = kurs
+    }
+    return lauf(() => updatePortfolioFxRates(depot.id, rates), 'Umrechnungskurse gespeichert.')
+  }
+
+  const codes = Object.keys(bestand)
+
+  return (
+    <div className="border-t border-border pt-3">
+      <button
+        type="button"
+        onClick={() => setOffen((o) => !o)}
+        className="flex w-full items-center justify-between gap-2 text-left"
+      >
+        <span className="eyebrow">Umrechnungskurse für die Deckungsprüfung</span>
+        <span className="note">
+          {codes.length === 0
+            ? 'keine hinterlegt'
+            : `${codes.join(', ')} · Stand ${
+                depot.fxRatesAt
+                  ? new Date(depot.fxRatesAt).toLocaleDateString('de-DE')
+                  : 'unbekannt'
+              }`}
+        </span>
+      </button>
+
+      {offen && (
+        <div className="mt-3 space-y-3">
+          <p className="note">
+            Nur nötig, wenn du Kontrakte handelst, die in einer anderen Währung notieren als
+            dein Konto ({sym}). Ohne Kurs wird der Einschuss <strong>nicht</strong> gegen die
+            Deckung geprüft — geraten wird nicht.
+          </p>
+
+          {zeilen.map((z, i) => (
+            <div key={i} className="grid grid-cols-1 items-end gap-3 sm:grid-cols-3">
+              <Field label="Währung">
+                <Input
+                  value={z.code}
+                  onChange={(e) => setZeile(i, { code: e.target.value.toUpperCase() })}
+                  placeholder="USD"
+                  maxLength={5}
+                  className={inputCls}
+                />
+              </Field>
+              <Field label={`1 ${z.code.trim().toUpperCase() || 'USD'} = … ${sym}`}>
+                <Input
+                  type="number"
+                  step="any"
+                  min="0"
+                  value={z.kurs}
+                  onChange={(e) => setZeile(i, { kurs: e.target.value })}
+                  placeholder="0.92"
+                  className={inputCls}
+                />
+              </Field>
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-10 self-end font-mono text-xs"
+                onClick={() => setZeilen((p) => p.filter((_, k) => k !== i))}
+              >
+                Entfernen
+              </Button>
+            </div>
+          ))}
+
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10 font-mono text-xs"
+              onClick={() => setZeilen((p) => [...p, { code: '', kurs: '' }])}
+            >
+              Währung hinzufügen
+            </Button>
+            <Button
+              type="button"
+              disabled={busy}
+              className="h-10 font-mono text-xs font-bold tracking-wider"
+              onClick={() => void speichern()}
+            >
+              {busy ? 'WIRD GESPEICHERT…' : 'KURSE SPEICHERN'}
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

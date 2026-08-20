@@ -53,7 +53,7 @@
 
 import { and, asc, eq, inArray } from 'drizzle-orm'
 import { db } from '@/lib/db'
-import { portfolio, trade, tradeEvent, tradeTarget } from '@/lib/db/schema'
+import { portfolio, trade, tradeEvent, tradeTarget, userSettings } from '@/lib/db/schema'
 import { getCachedCandles } from '@/lib/market-data/cached'
 import { createSymbolResolver } from '@/lib/market-data/lookup'
 import type { Candle, Interval, Market } from '@/lib/market-data/types'
@@ -61,6 +61,10 @@ import { demoFills, type DemoFill } from '@/lib/demo-fill'
 import { effectiveTargets, type TradeTargetRow } from '@/lib/trade-targets'
 import { settlePosition, type TradeEventRow } from '@/lib/trade-events'
 import { normalizePortfolioKind } from '@/lib/portfolio-scope'
+import { gebundeneMargin } from '@/lib/contract-trade'
+import { berechneDeckung, parseFxRates, pruefeDeckung } from '@/lib/margin'
+import { netCashflow, tradeNetPnl } from '@/lib/trade-stats'
+import { loadScopedCashflows } from '@/lib/portfolio-context'
 
 /** Die Zeitebene, auf der ausgeführt wird. Begründung im Kopfkommentar. */
 export const FILL_INTERVAL: Interval = '5min'
@@ -121,6 +125,13 @@ export type DemoRunReport = {
    * wären, weiss niemand mehr. Das entscheidet der Mensch von Hand.
    */
   vorFenster: number[]
+  /**
+   * Kontrakt-Trades, deren Einschuss beim Füllen nicht mehr gedeckt war. Sie
+   * werden VERWORFEN (`status: 'abgebrochen'`) statt gebucht — ein Broker
+   * hätte die Order genauso abgelehnt, und ein Demo-Konto, das ins Minus
+   * laufen darf, übt das Falsche.
+   */
+  ungedeckt: number[]
   /** Die einzelnen Ausführungen — im Trockenlauf die einzige Ausgabe. */
   zeilen: DemoFillZeile[]
   error: string | null
@@ -138,6 +149,7 @@ export function leererDemoBericht(): DemoRunReport {
     unvollstaendig: [],
     ohneKerzen: [],
     vorFenster: [],
+    ungedeckt: [],
     zeilen: [],
     error: null,
   }
@@ -248,6 +260,7 @@ export async function runDemoFills(
         report.abschluesse += gebucht.abschluesse
         report.zeilen.push(...gebucht.zeilen)
         if (gebucht.vorFenster) report.vorFenster.push(t.id)
+        if (gebucht.ungedeckt) report.ungedeckt.push(t.id)
       } catch (err) {
         // Ein einzelnes unbekanntes Symbol darf den Lauf nicht beenden — der
         // Trade taucht als „ohne Kerzen" auf und wird beim nächsten Mal erneut
@@ -290,6 +303,122 @@ async function ladeKerzen(symbol: string, market: Market, beginnSek: number): Pr
   return getCachedCandles(symbol, market, FILL_INTERVAL, { limit, storedOnly: true })
 }
 
+/**
+ * Reicht die Depotdeckung, um diesen Kontrakt-Trade zu eröffnen? (Teil 3)
+ *
+ * Frisch aus der Datenbank gelesen, nicht einmal am Laufanfang: Innerhalb eines
+ * Laufs kann ein Stop zuschlagen und das Konto verkleinern, und dann wäre eine
+ * am Anfang gemerkte Zahl bereits falsch. Einstiege sind selten (eine Handvoll
+ * je Lauf), die Abfrage kostet also nichts, was ins Gewicht fiele.
+ *
+ * Der geprüfte Trade zählt bei den GEBUNDENEN Mitteln mit — sein Einschuss war
+ * seit dem Planen reserviert. Die Frage lautet deshalb nicht „passt er noch
+ * obendrauf", sondern „trägt das Konto weiterhin alles, was darauf liegt".
+ * Genau das ist der Fall, der eintritt: drei Pläne, die einzeln passten, und
+ * zwischenzeitlich realisierte Verluste.
+ */
+async function deckungReicht(
+  t: typeof trade.$inferSelect,
+): Promise<{ ok: true } | { ok: false; grund: string }> {
+  // Kein Kontrakt-Trade oder kein Einschuss in Kontowährung bekannt (Fremd-
+  // währung ohne hinterlegten Kurs) → nichts zu prüfen, und geraten wird nicht.
+  if (t.contracts == null || t.investedAmount == null || !t.contractCurrency) return { ok: true }
+
+  const [depot] = await db
+    .select()
+    .from(portfolio)
+    .where(eq(portfolio.id, t.portfolioId))
+  if (!depot) return { ok: true }
+
+  const zeilen = await db
+    // `contracts` muss mit: `gebundeneMargin` zählt nur Kontrakt-Trades.
+    .select({
+      status: trade.status,
+      investedAmount: trade.investedAmount,
+      contracts: trade.contracts,
+    })
+    .from(trade)
+    .where(and(eq(trade.userId, t.userId), eq(trade.portfolioId, t.portfolioId)))
+
+  const abgeschlossen = await db
+    .select()
+    .from(trade)
+    .where(
+      and(
+        eq(trade.userId, t.userId),
+        eq(trade.portfolioId, t.portfolioId),
+        eq(trade.status, 'abgeschlossen'),
+      ),
+    )
+  let realisiertePnl = 0
+  for (const alt of abgeschlossen) {
+    const evs = await ladeEreignisse(alt.userId, alt.id)
+    realisiertePnl += tradeNetPnl(alt, evs) ?? 0
+  }
+
+  const flows = await loadScopedCashflows(t.userId, [t.portfolioId])
+
+  // Der eigene Einschuss wird aus der Bindung herausgerechnet und als das
+  // geprüft, was er ist — sonst zählte er doppelt.
+  const deckung = berechneDeckung({
+    startCapital: depot.startCapital,
+    netCashflow: netCashflow(flows),
+    realisiertePnl,
+    gebundeneMargin: gebundeneMargin(zeilen) - t.investedAmount,
+  })
+
+  const [einst] = await db
+    .select({ currency: userSettings.currency })
+    .from(userSettings)
+    .where(eq(userSettings.userId, t.userId))
+  const kontowaehrung = einst?.currency ?? 'EUR'
+
+  // `investedAmount` steht bereits in Kontowährung (so schreibt es `createTrade`),
+  // deshalb wird hier nicht noch einmal umgerechnet.
+  const pruefung = pruefeDeckung({
+    einschuss: t.investedAmount,
+    waehrung: kontowaehrung,
+    kontowaehrung,
+    rates: parseFxRates(depot.fxRates),
+    deckung,
+    label: `${t.ticker} · ${t.contracts} Kontrakte`,
+  })
+  return pruefung.ok ? { ok: true } : { ok: false, grund: pruefung.grund }
+}
+
+/**
+ * Einen ungedeckten Trade verwerfen: Status `abgebrochen`, mit einem Ereignis,
+ * das den Grund trägt. Kein Einstiegs-Ereignis — die Position hat es nie
+ * gegeben, und eine erfundene Eröffnung wäre schlimmer als ein Abbruch.
+ */
+async function verwerfeUngedeckt(
+  t: typeof trade.$inferSelect,
+  at: Date,
+  grund: string,
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx
+      .update(trade)
+      .set({ status: 'abgebrochen', closedAt: at, noTradeNote: grund })
+      .where(and(eq(trade.id, t.id), eq(trade.userId, t.userId)))
+    await tx.insert(tradeEvent).values({
+      tradeId: t.id,
+      userId: t.userId,
+      type: 'geschlossen',
+      at,
+      quantity: 0,
+      price: null,
+      payload: JSON.stringify({
+        auto: true,
+        quelle: 'demo-fill',
+        interval: FILL_INTERVAL,
+        grund: 'ungedeckt',
+      }),
+      note: grund,
+    })
+  })
+}
+
 async function ladeEreignisse(userId: string, tradeId: number): Promise<TradeEventRow[]> {
   return db
     .select()
@@ -327,6 +456,7 @@ async function verarbeiteTrade(args: {
   abschluesse: number
   zeilen: DemoFillZeile[]
   vorFenster: boolean
+  ungedeckt: boolean
 }> {
   const { t } = args
   let status = t.status
@@ -338,6 +468,7 @@ async function verarbeiteTrade(args: {
     abschluesse: 0,
     zeilen: [] as DemoFillZeile[],
     vorFenster: false,
+    ungedeckt: false,
   }
 
   for (const kerze of args.kerzen) {
@@ -374,6 +505,33 @@ async function verarbeiteTrade(args: {
         })
         return zaehler
       }
+
+      // Deckung (Teil 3): Ein Einstieg, den das Konto nicht mehr trägt, wird
+      // nicht gebucht — der Trade wird VERWORFEN. Ein Broker hätte die Order
+      // genauso abgelehnt; ein Demo-Konto, das ins Minus laufen darf, übt das
+      // Falsche. Geprüft wird nur beim Einstieg: Wer drin ist, kommt auch wieder
+      // raus, und ein Stop, den man wegen Unterdeckung nicht ausführt, wäre der
+      // gefährlichste Fehler von allen.
+      if (fill.art === 'einstieg') {
+        const deckung = await deckungReicht(t)
+        if (!deckung.ok) {
+          zaehler.ungedeckt = true
+          zaehler.zeilen.push({
+            tradeId: t.id,
+            ticker: t.ticker,
+            art: 'verworfen (ungedeckt)',
+            preis: fill.preis,
+            menge: fill.menge,
+            zeit: new Date(fill.zeit * 1000).toISOString(),
+            grund: deckung.grund,
+          })
+          if (!args.trocken) {
+            await verwerfeUngedeckt(t, new Date(fill.zeit * 1000), deckung.grund)
+          }
+          return zaehler
+        }
+      }
+
       zaehler.zeilen.push({
         tradeId: t.id,
         ticker: t.ticker,

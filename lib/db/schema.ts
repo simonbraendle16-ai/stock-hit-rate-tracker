@@ -91,6 +91,15 @@ export const portfolio = pgTable('portfolio', {
   defaultFeeEntry: doublePrecision('defaultFeeEntry').notNull().default(9),
   defaultFeeExit: doublePrecision('defaultFeeExit').notNull().default(9),
   sortOrder: integer('sortOrder').notNull().default(0),
+  // Umrechnungskurse für die Deckungsprüfung (Migration 0036), JSON:
+  // `{"USD": 0.92}` = 1 USD sind 0,92 Kontowährung. Die App rechnet sonst
+  // NIRGENDS um — nur die Margin-Prüfung braucht es, weil ein ES-Einschuss in
+  // USD notiert und das Konto in EUR. Fehlt der Kurs, wird nicht geprüft und
+  // die Oberfläche sagt das; ein 1:1-Vergleich wäre knapp zehn Prozent falsch.
+  // Gelesen ausschließlich über `parseFxRates` (`lib/margin.ts`).
+  fxRates: text('fxRates'),
+  // Von wann die Kurse sind. Ein Kurs ohne Datum ist ein Gerücht.
+  fxRatesAt: timestamp('fxRatesAt'),
   // Stillgelegt: fällt aus Umschalter und Echtgeld-Aggregat, Historie bleibt
   // lesbar. Ein befülltes Depot wird nie gelöscht, nur archiviert.
   archivedAt: timestamp('archivedAt'),
@@ -201,6 +210,27 @@ export const stock = pgTable('stock', {
   // „noch nie" und ist damit sofort fällig. Fälligkeit rechnet
   // `lib/watchlist-review.ts` — rollierend über sieben Tage, ohne Stichtag.
   lastReviewedAt: timestamp('lastReviewedAt'),
+
+  // Kontrakt-Spezifikation (Migration 0036) — die HANDEINGABE, nicht die
+  // Vorgabe. Die Vorgaben für ES, NQ, GC … stehen in `lib/contract-specs.ts`
+  // und werden über die Kontrakt-Wurzel des Tickers gefunden; was hier steht,
+  // schlägt sie FELDWEISE. Gelesen ausschließlich über `resolveContractSpec` —
+  // wer die Spalten roh ausliest, bekommt für die meisten Instrumente NULL und
+  // übersieht die Vorgabe.
+  contractTickSize: doublePrecision('contractTickSize'),
+  contractTickValue: doublePrecision('contractTickValue'),
+  contractSize: doublePrecision('contractSize'),
+  contractCurrency: text('contractCurrency'),
+  // fest | notional — siehe `MarginModel` in `lib/contract-specs.ts`.
+  contractMarginModel: text('contractMarginModel'),
+  contractInitialMargin: doublePrecision('contractInitialMargin'),
+  contractMaintenanceMargin: doublePrecision('contractMaintenanceMargin'),
+  // Erhaltungssatz als ANTEIL des Kontraktwerts (nur beim Modell 'notional').
+  contractMaintenanceRate: doublePrecision('contractMaintenanceRate'),
+  // Abschalter: „dieses Instrument handle ich NICHT in Kontrakten." Der Ausweg,
+  // wenn die Wurzel-Erkennung danebenliegt.
+  contractsDisabled: boolean('contractsDisabled').notNull().default(false),
+
   createdAt: timestamp('createdAt').notNull().defaultNow(),
 })
 
@@ -316,6 +346,28 @@ export const trade = pgTable('trade', {
   feeExit: doublePrecision('feeExit'),
   // Verkaufsanteil beim Take-Profit in Prozent (Teilverkauf-Projektion), Standard 100.
   takeProfitPct: doublePrecision('takeProfitPct').default(100),
+
+  // --- Kontrakte (Migration 0036) ---
+  //
+  // Wie viele Kontrakte gehandelt werden. NULL = kein Kontrakt-Trade; dann
+  // rechnet alles unverändert über Kapitaleinsatz und Stückzahl weiter.
+  //
+  // `positionSize` bleibt auch hier die Größe, mit der die App rechnet: Ein
+  // Kontrakt-Trade legt dort `contracts × contractMultiplier` ab. Dadurch
+  // stimmt `(Ausstieg − Einstieg) × positionSize` in trade-stats, trade-events,
+  // excursion und bot-twin weiterhin, ohne dass eine Formel angefasst wurde.
+  contracts: doublePrecision('contracts'),
+  // Die Spezifikation, EINGEFROREN beim Anlegen — dieselbe Haltung wie bei
+  // feeEntry/feeExit seit Migration 0010: Ein später geänderter Tick-Wert oder
+  // Einschuss darf die Historie nicht rückwirkend umschreiben.
+  contractTickSize: doublePrecision('contractTickSize'),
+  contractTickValue: doublePrecision('contractTickValue'),
+  contractMultiplier: doublePrecision('contractMultiplier'),
+  contractCurrency: text('contractCurrency'),
+  // Der gebundene Einschuss ALLER Kontrakte dieses Trades, in `contractCurrency`.
+  // Steht zusätzlich in `investedAmount` (dort in Kontowährung umgerechnet) —
+  // das ist das Kapital, das der Broker tatsächlich blockiert.
+  contractInitialMargin: doublePrecision('contractInitialMargin'),
   strategy: text('strategy'),
   // Setup-Tags (Etappe 7b): kurze, vergleichbare Schubladen als JSON-Array —
   // die auswertbare Ergänzung zum Freitext daneben, der die Begründung bleibt.

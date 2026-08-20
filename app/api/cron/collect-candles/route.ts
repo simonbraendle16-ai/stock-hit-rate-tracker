@@ -84,6 +84,10 @@ export async function GET(req: NextRequest) {
       teilziele: demo.teilziele,
       abschluesse: demo.abschluesse,
       vorFenster: demo.vorFenster,
+      // Verworfen, weil die Depotdeckung nicht mehr reichte (Teil 3). Gehoert
+      // ausgewiesen: Ein abgebrochener Trade, der nirgends auftaucht, sieht von
+      // aussen aus wie einer, bei dem nichts passiert ist.
+      ungedeckt: demo.ungedeckt,
       unvollstaendig: demo.unvollstaendig,
       ohneKerzen: demo.ohneKerzen,
       error: demo.error,

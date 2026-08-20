@@ -17,6 +17,13 @@ import {
 import type { Market } from '@/lib/market-data/types'
 import { computeRiskReward, computeShares } from '@/lib/trade-math'
 import {
+  contractTradeFelder,
+  gebundeneMargin,
+  specFromStock,
+  type ContractTradeFelder,
+} from '@/lib/contract-trade'
+import { berechneDeckung, maxKontrakte, parseFxRates, pruefeDeckung } from '@/lib/margin'
+import {
   computeDisciplineStats,
   computeEquityStats,
   computeMoodStats,
@@ -103,6 +110,11 @@ export type TradeInput = {
   investedAmount?: number | null
   // Hebel, 1 = ungehebelt.
   leverage?: number | null
+  // Anzahl Kontrakte (Teil 3). Gesetzt nur bei Instrumenten mit gültiger
+  // Kontrakt-Spezifikation; dann bestimmt SIE die Positionsgröße, und
+  // `investedAmount` wird zum Einschuss statt zum Kapitaleinsatz. Ohne Angabe
+  // bleibt alles beim bisherigen Weg über Einsatz und Hebel.
+  contracts?: number | null
   // Geplante Ordergebühren; beim Abschluss eingefroren.
   feeEntry?: number | null
   feeExit?: number | null
@@ -162,6 +174,172 @@ async function resolveZielDepot(
   throw new Error(
     'Bitte wähle das Depot, in das dieser Trade gebucht werden soll — in die Zusammenfassung „Alle Echtgeld-Depots" kann nicht gebucht werden.',
   )
+}
+
+/**
+ * Die Deckung eines Depots: Kontostand minus bereits gebundener Einschuss.
+ *
+ * Kontostand = Startkapital + Ein-/Auszahlungen + realisierte P&L. Verluste
+ * zählen also mit — nach zehn Verlusten ist eben nicht mehr alles frei, und
+ * eine App, die das verschweigt, hilft beim Überziehen.
+ *
+ * `exceptTradeId` schließt einen Trade aus der Bindung aus. Beim Aktivieren
+ * wird der eigene Trade sonst doppelt gezählt: einmal als bereits gebunden,
+ * einmal als das, was gerade geprüft wird.
+ */
+async function ladeDeckung(userId: string, portfolioId: number, exceptTradeId?: number) {
+  const depot = await loadOwnedPortfolio(userId, portfolioId)
+  const rows = await db
+    .select({
+      id: trade.id,
+      status: trade.status,
+      investedAmount: trade.investedAmount,
+      // Muss mit: `gebundeneMargin` zählt nur Kontrakt-Trades. Ohne diese
+      // Spalte wäre die Bindung stumm immer 0.
+      contracts: trade.contracts,
+    })
+    .from(trade)
+    .where(and(eq(trade.userId, userId), eq(trade.portfolioId, portfolioId)))
+
+  // Realisierte P&L des Depots — event-aware, exakt wie in der Bilanz.
+  const abgeschlossen = await db
+    .select()
+    .from(trade)
+    .where(
+      and(
+        eq(trade.userId, userId),
+        eq(trade.portfolioId, portfolioId),
+        eq(trade.status, 'abgeschlossen'),
+      ),
+    )
+  const eventsByTrade = await loadEventsByTrade(userId)
+  let realisiertePnl = 0
+  for (const t of abgeschlossen) {
+    realisiertePnl += tradeNetPnl(t, eventsByTrade.get(t.id) ?? []) ?? 0
+  }
+
+  const flows = await loadScopedCashflows(userId, [portfolioId])
+  const offene = rows.filter((r) => r.id !== exceptTradeId)
+
+  return {
+    depot,
+    rates: parseFxRates(depot.fxRates),
+    deckung: berechneDeckung({
+      startCapital: depot.startCapital,
+      netCashflow: netCashflow(flows),
+      realisiertePnl,
+      gebundeneMargin: gebundeneMargin(offene),
+    }),
+  }
+}
+
+/**
+ * Deckung prüfen und bei Unterdeckung abbrechen — mit einer Begründung, die die
+ * Zahlen nennt und sagt, wie viele Kontrakte gegangen wären.
+ *
+ * Eine stille Überziehung wäre das Gegenteil von „das Risiko steht vor dem
+ * Einstieg fest": Sie verschiebt die Entscheidung in den Moment, in dem der
+ * Broker die Position zwangsweise schließt.
+ */
+async function verlangeDeckung(args: {
+  userId: string
+  portfolioId: number
+  felder: ContractTradeFelder
+  ticker: string
+  exceptTradeId?: number
+}): Promise<{ einschussKonto: number | null; hinweis: string | null }> {
+  const { deckung, depot, rates } = await ladeDeckung(
+    args.userId,
+    args.portfolioId,
+    args.exceptTradeId,
+  )
+  const settings = await getSettings()
+  const kontowaehrung = settings.currency ?? 'EUR'
+
+  const pruefung = pruefeDeckung({
+    einschuss: args.felder.contractInitialMargin,
+    waehrung: args.felder.contractCurrency,
+    kontowaehrung,
+    rates,
+    deckung,
+    label: `${args.ticker} · ${args.felder.contracts} Kontrakte`,
+  })
+  if (pruefung.ok) {
+    // `hinweis` heißt: nicht prüfbar (Fremdwährung ohne hinterlegten Kurs).
+    // Dann gibt es auch keinen Einschuss in Kontowährung — die Spalte bleibt
+    // leer statt zu raten.
+    //
+    // Der Hinweis wird WEITERGEREICHT, nicht verschluckt. Ein Trade, der
+    // ungeprüft durchgeht, muss das sagen: Sonst sieht er aus wie einer, der
+    // die Prüfung bestanden hat. Und weil `investedAmount` leer bleibt, fällt
+    // er auch aus der gebundenen Margin — die Lücke wäre also doppelt still.
+    if (pruefung.hinweis) return { einschussKonto: null, hinweis: pruefung.hinweis }
+    return { einschussKonto: pruefung.benoetigt, hinweis: null }
+  }
+
+  const moeglich = maxKontrakte({
+    einschussJeKontrakt: args.felder.contractInitialMargin / args.felder.contracts,
+    waehrung: args.felder.contractCurrency,
+    kontowaehrung,
+    rates,
+    frei: deckung.frei,
+  })
+  const zusatz =
+    moeglich == null
+      ? ''
+      : moeglich === 0
+        ? ` Im Depot „${depot.name}" geht derzeit kein einziger Kontrakt.`
+        : ` Im Depot „${depot.name}" gehen derzeit ${moeglich} Kontrakte.`
+  throw new Error(pruefung.grund + zusatz)
+}
+
+/**
+ * Die Kontrakt-Spalten eines Trades — oder `null`, wenn es keiner ist.
+ *
+ * Zwei Bedingungen müssen zusammenkommen: Der Nutzer hat Kontrakte angegeben,
+ * UND das Instrument hat eine gültige Spezifikation. Fehlt eins von beidem,
+ * bleibt es beim bisherigen Weg über Kapitaleinsatz und Stückzahl. Ein halb
+ * bekannter Kontrakt wird bewusst nicht gerechnet — er wäre ein stiller
+ * Falschwert mit dem 50-fachen Multiplikator.
+ *
+ * Aufgelöst wird über die `stockId` und nur ersatzweise über den Ticker: Ein
+ * Trade hängt an seinem Instrument, und nur dort steht die Handeingabe.
+ */
+async function ladeKontraktFelder(args: {
+  userId: string
+  stockId: number | null
+  ticker: string
+  market: string
+  contracts?: number | null
+  entryPrice: number
+  stopLoss: number
+  leverage: number
+}): Promise<ContractTradeFelder | null> {
+  const n = args.contracts
+  if (n == null || !Number.isFinite(n) || n <= 0) return null
+
+  let row: Parameters<typeof specFromStock>[0] = null
+  if (args.stockId != null) {
+    const [s] = await db
+      .select()
+      .from(stock)
+      .where(and(eq(stock.id, args.stockId), eq(stock.userId, args.userId)))
+    if (s) row = s
+  }
+  // Ohne verknüpftes Instrument bleibt die Vorgabe über die Kontrakt-Wurzel —
+  // eine Handeingabe gibt es dann naturgemäß nicht.
+  if (!row) row = { ticker: args.ticker, market: args.market }
+
+  const spec = specFromStock(row)
+  if (!spec) return null
+
+  return contractTradeFelder({
+    spec,
+    contracts: n,
+    entryPrice: args.entryPrice,
+    stopLoss: args.stopLoss,
+    leverage: args.leverage,
+  })
 }
 
 /** Hebel auf einen sinnvollen Bereich begrenzen; 1 = ungehebelt. */
@@ -310,7 +488,9 @@ async function loadTradeTargets(userId: string, tradeId: number): Promise<TradeT
  * fully planned (preTradeAnswered) when wave count, entry, stop and a
  * target/invalidation are all present.
  */
-export async function createTrade(input: TradeInput): Promise<{ id: number }> {
+export async function createTrade(
+  input: TradeInput,
+): Promise<{ id: number; deckungsHinweis: string | null }> {
   const userId = await getUserId()
   const ticker = input.ticker.trim().toUpperCase()
   if (!ticker) throw new Error('Ticker ist erforderlich.')
@@ -465,10 +645,46 @@ export async function createTrade(input: TradeInput): Promise<{ id: number }> {
   const zielDepot = await resolveZielDepot(userId, input.portfolioId)
   const withMoney = kindOf(zielDepot) === 'echtgeld'
 
-  const investedAmount = input.investedAmount ?? null
   const leverage = normalizeLeverage(input.leverage)
-  const positionSize =
-    investedAmount != null
+
+  // --- Kontrakte (Teil 3) ---------------------------------------------------
+  //
+  // Ein Terminkontrakt wird gezählt, nicht für einen Betrag gekauft. Liegt eine
+  // gültige Spezifikation vor UND hat der Nutzer Kontrakte angegeben, bestimmt
+  // sie die Positionsgröße; `investedAmount` trägt dann den EINSCHUSS, also das
+  // Kapital, das der Broker tatsächlich blockiert. Ohne beides bleibt alles beim
+  // bisherigen Weg über Einsatz und Hebel — kein Bruch im Altbestand.
+  const kontraktFelder = await ladeKontraktFelder({
+    userId,
+    stockId,
+    ticker,
+    market: input.market ?? 'aktien',
+    contracts: input.contracts,
+    entryPrice: input.entryPrice,
+    stopLoss: input.stopLoss,
+    leverage,
+  })
+
+  // Der Einschuss in KONTOWÄHRUNG — das ist, was in `investedAmount` gehört,
+  // denn diese Spalte ist überall die Kontowährungs-Größe. Ohne hinterlegten
+  // Umrechnungskurs bleibt sie leer: Ein 1:1 übernommener USD-Betrag wäre in
+  // der Bilanz um knapp zehn Prozent falsch, und das wäre schlimmer als eine
+  // Lücke, die man sieht.
+  const deckungsErgebnis = kontraktFelder
+    ? await verlangeDeckung({
+        userId,
+        portfolioId: zielDepot.id,
+        felder: kontraktFelder,
+        ticker,
+      })
+    : null
+
+  const investedAmount = kontraktFelder
+    ? (deckungsErgebnis?.einschussKonto ?? null)
+    : (input.investedAmount ?? null)
+  const positionSize = kontraktFelder
+    ? kontraktFelder.positionSize
+    : investedAmount != null
       ? computeShares(investedAmount, input.entryPrice, leverage)
       : (input.positionSize ?? null)
   const takeProfitPct = zielPlan.takeProfitPct
@@ -496,6 +712,15 @@ export async function createTrade(input: TradeInput): Promise<{ id: number }> {
         positionSize,
         investedAmount,
         leverage,
+        // Die Spezifikation wird EINGEFROREN — dieselbe Haltung wie bei den
+        // Gebühren: Ein später geänderter Tick-Wert oder Einschuss darf die
+        // Historie nicht rückwirkend umschreiben.
+        contracts: kontraktFelder?.contracts ?? null,
+        contractTickSize: kontraktFelder?.contractTickSize ?? null,
+        contractTickValue: kontraktFelder?.contractTickValue ?? null,
+        contractMultiplier: kontraktFelder?.contractMultiplier ?? null,
+        contractCurrency: kontraktFelder?.contractCurrency ?? null,
+        contractInitialMargin: kontraktFelder?.contractInitialMargin ?? null,
         feeEntry,
         feeExit,
         takeProfitPct,
@@ -542,7 +767,11 @@ export async function createTrade(input: TradeInput): Promise<{ id: number }> {
 
   revalidatePath('/')
   revalidatePath('/trades')
-  return { id: row.id }
+  // `deckungsHinweis` ist gesetzt, wenn der Einschuss NICHT gegen die Deckung
+  // geprueft werden konnte (Fremdwaehrung ohne hinterlegten Kurs). Der Trade
+  // ist angelegt — aber das Formular sagt es, statt ihn wie einen geprüften
+  // aussehen zu lassen.
+  return { id: row.id, deckungsHinweis: deckungsErgebnis?.hinweis ?? null }
 }
 
 async function loadOwnedTrade(userId: string, id: number): Promise<TradeRow> {
@@ -620,7 +849,7 @@ export async function activateTrade(
   // Etappe 3: auf Wunsch beim Aktivieren Kurs-Alerts aus dem Plan ableiten
   // (Stop/Ziel/Einstieg). Bewusst optional — der Kernvorgang bleibt unverändert.
   opts?: { createPlanAlerts?: boolean },
-): Promise<{ revengeWarning: boolean; alertsCreated: number }> {
+): Promise<{ revengeWarning: boolean; alertsCreated: number; deckungsHinweis: string | null }> {
   const userId = await getUserId()
   const t = await loadOwnedTrade(userId, id)
   if (t.status !== 'geplant') throw new Error('Nur geplante Trades können aktiviert werden.')
@@ -632,6 +861,32 @@ export async function activateTrade(
     throw new Error('Erst die 4 Douglas-Fragen beantworten (Wellenzählung, Einstieg, Stop, Ziel/Invalidation).')
   }
   const checkIn = moodForKind(t.tradeKind, mood, 'entry')
+
+  // Deckung erneut prüfen (Teil 3). Zwischen Planen und Eröffnen kann anderes
+  // Kapital gebunden worden sein — drei Pläne, die einzeln passten, passen
+  // zusammen nicht. Der eigene Trade wird dabei ausgeklammert, sonst zählte
+  // sein Einschuss doppelt: einmal als gebunden, einmal als das, was hier
+  // geprüft wird.
+  let deckungsHinweis: string | null = null
+  if (t.contracts != null && t.contractInitialMargin != null && t.contractCurrency) {
+    const ergebnis = await verlangeDeckung({
+      userId,
+      portfolioId: t.portfolioId,
+      felder: {
+        contracts: t.contracts,
+        contractTickSize: t.contractTickSize ?? 0,
+        contractTickValue: t.contractTickValue ?? 0,
+        contractMultiplier: t.contractMultiplier ?? 0,
+        contractCurrency: t.contractCurrency,
+        contractInitialMargin: t.contractInitialMargin,
+        positionSize: t.positionSize ?? 0,
+        risiko: 0,
+      },
+      ticker: t.ticker,
+      exceptTradeId: t.id,
+    })
+    deckungsHinweis = ergebnis.hinweis
+  }
 
   // Revenge-Guard: any loss closed within the cooldown window?
   //
@@ -712,7 +967,7 @@ export async function activateTrade(
   revalidatePath('/')
   revalidatePath('/trades')
   revalidatePath('/tracking')
-  return { revengeWarning, alertsCreated }
+  return { revengeWarning, alertsCreated, deckungsHinweis }
 }
 
 /**

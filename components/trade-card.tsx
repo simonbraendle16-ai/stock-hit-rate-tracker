@@ -626,7 +626,7 @@ export function ActivateDialog({
     }
     setBusy(true)
     try {
-      const { revengeWarning, alertsCreated } = await activateTrade(trade.id, mood, {
+      const { revengeWarning, alertsCreated, deckungsHinweis } = await activateTrade(trade.id, mood, {
         createPlanAlerts: withAlerts,
       })
       toast.success('Trade aktiviert.')
@@ -639,6 +639,12 @@ export function ActivateDialog({
         toast.warning(
           'Revenge-Guard: kurz nach einem Verlust — handelst du den Plan oder die Wut?',
         )
+      }
+      // Eroeffnet, aber die Deckung war nicht pruefbar (Fremdwaehrung ohne
+      // hinterlegten Kurs). Dieselbe Haltung wie beim Anlegen: Der Trade laeuft,
+      // die Luecke wird benannt statt verschwiegen.
+      if (deckungsHinweis) {
+        toast.warning(deckungsHinweis, { duration: Infinity, closeButton: true })
       }
       onOpenChange(false)
       onDone()

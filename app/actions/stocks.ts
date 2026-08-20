@@ -6,6 +6,12 @@ import { stock, assessment, trade } from '@/lib/db/schema'
 import { and, asc, eq, isNull, type SQL } from 'drizzle-orm'
 import { headers } from 'next/headers'
 import { revalidatePath } from 'next/cache'
+import { specFromStock } from '@/lib/contract-trade'
+import {
+  lookupContractSpec,
+  type ContractSpec,
+  type ContractSpecOverride,
+} from '@/lib/contract-specs'
 
 async function getUserId() {
   const session = await auth.api.getSession({ headers: await headers() })
@@ -15,14 +21,14 @@ async function getUserId() {
 
 type StockRow = typeof stock.$inferSelect
 
-/** Postgres „undefined column“ (42703) — Migration 0009 oder 0019 fehlt noch. */
+/** Postgres „undefined column“ (42703) — Migration 0009, 0019 oder 0036 fehlt noch. */
 function isMissingColumn(err: unknown): boolean {
   if (typeof err !== 'object' || err === null) return false
   const e = err as { code?: string; cause?: { code?: string }; message?: string }
   return (
     e.code === '42703' ||
     e.cause?.code === '42703' ||
-    /watchlistSection|sortOrder|providerSymbol|resolution/.test(e.message ?? '')
+    /watchlistSection|sortOrder|providerSymbol|resolution|contract/i.test(e.message ?? '')
   )
 }
 
@@ -68,6 +74,17 @@ async function selectStocksTolerant(where: SQL | undefined): Promise<StockRow[]>
       // Ohne die Spalte gilt nichts als angesehen — die Wochenrunde zeigt dann
       // alles als offen, statt die Watchlist scheitern zu lassen.
       lastReviewedAt: null,
+      // Ohne die Kontrakt-Spalten (0036) gibt es keine Handeingabe; die Vorgabe
+      // über die Kontrakt-Wurzel greift trotzdem.
+      contractTickSize: null,
+      contractTickValue: null,
+      contractSize: null,
+      contractCurrency: null,
+      contractMarginModel: null,
+      contractInitialMargin: null,
+      contractMaintenanceMargin: null,
+      contractMaintenanceRate: null,
+      contractsDisabled: false,
     }))
   }
 }
@@ -602,4 +619,122 @@ export async function deleteStock(id: number): Promise<void> {
     .delete(stock)
     .where(and(eq(stock.id, id), eq(stock.userId, userId)))
   revalidatePath('/')
+}
+
+// ---------------------------------------------------------------------------
+// Kontrakt-Spezifikation (Plan Demo-Handel, Teil 3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Die gültige Spezifikation eines Instruments — Vorgabe über die Kontrakt-Wurzel,
+ * feldweise überschrieben von dem, was am Instrument steht. Zusätzlich, was davon
+ * Handeingabe ist: Das Formular soll zeigen, welcher Wert von wem stammt.
+ */
+export async function getContractSpec(stockId: number): Promise<{
+  spec: ContractSpec | null
+  vorgabe: ContractSpec | null
+  hand: ContractSpecOverride
+  ticker: string
+} | null> {
+  const userId = await getUserId()
+  const [row] = await db
+    .select()
+    .from(stock)
+    .where(and(eq(stock.id, stockId), eq(stock.userId, userId)))
+  if (!row) return null
+  return {
+    spec: specFromStock(row),
+    vorgabe: lookupContractSpec(row.ticker, row.market),
+    hand: {
+      tickSize: row.contractTickSize,
+      tickValue: row.contractTickValue,
+      contractSize: row.contractSize,
+      currency: row.contractCurrency,
+      marginModel: row.contractMarginModel,
+      initialMargin: row.contractInitialMargin,
+      maintenanceMargin: row.contractMaintenanceMargin,
+      maintenanceRate: row.contractMaintenanceRate,
+      disabled: row.contractsDisabled,
+    },
+    ticker: row.ticker,
+  }
+}
+
+/**
+ * Kontrakt-Spezifikation am Instrument von Hand setzen.
+ *
+ * Leere Felder heissen „nimm die Vorgabe" und werden auf NULL gesetzt — nicht
+ * auf 0. Eine Tick-Größe von 0 wäre eine Division durch null, eine Handeingabe
+ * mit dem Wert 0 also ein stiller Defekt statt eines Rückfalls.
+ */
+export async function updateContractSpec(
+  stockId: number,
+  patch: {
+    tickSize?: number | null
+    tickValue?: number | null
+    contractSize?: number | null
+    currency?: string | null
+    marginModel?: string | null
+    initialMargin?: number | null
+    maintenanceMargin?: number | null
+    maintenanceRate?: number | null
+    disabled?: boolean
+  },
+): Promise<void> {
+  const userId = await getUserId()
+
+  const positiv = (v: number | null | undefined): number | null =>
+    typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null
+  const modell =
+    patch.marginModel === 'fest' || patch.marginModel === 'notional' ? patch.marginModel : null
+
+  const result = await db
+    .update(stock)
+    .set({
+      contractTickSize: positiv(patch.tickSize),
+      contractTickValue: positiv(patch.tickValue),
+      contractSize: positiv(patch.contractSize),
+      contractCurrency: patch.currency?.trim().toUpperCase() || null,
+      contractMarginModel: modell,
+      contractInitialMargin: positiv(patch.initialMargin),
+      contractMaintenanceMargin: positiv(patch.maintenanceMargin),
+      contractMaintenanceRate: positiv(patch.maintenanceRate),
+      contractsDisabled: patch.disabled === true,
+    })
+    .where(and(eq(stock.id, stockId), eq(stock.userId, userId)))
+    .returning({ id: stock.id })
+
+  if (result.length === 0) throw new Error('Instrument nicht gefunden.')
+
+  revalidatePath('/')
+  revalidatePath(`/stock/${stockId}`)
+  revalidatePath('/trades/new')
+}
+
+/**
+ * Die Spezifikation für das Trade-Formular — aufgelöst über die `stockId`, sonst
+ * über Ticker und Markt. Ohne verknüpftes Instrument gibt es keine Handeingabe,
+ * die Vorgabe über die Kontrakt-Wurzel greift aber trotzdem.
+ */
+export async function getContractSpecFor(args: {
+  stockId?: number | null
+  ticker?: string | null
+  market?: string | null
+}): Promise<ContractSpec | null> {
+  const userId = await getUserId()
+  if (args.stockId != null) {
+    const [row] = await db
+      .select()
+      .from(stock)
+      .where(and(eq(stock.id, args.stockId), eq(stock.userId, userId)))
+    if (row) return specFromStock(row)
+  }
+  const ticker = args.ticker?.trim()
+  if (!ticker) return null
+  const [row] = await db
+    .select()
+    .from(stock)
+    .where(and(eq(stock.userId, userId), eq(stock.ticker, ticker.toUpperCase())))
+  if (row) return specFromStock(row)
+  return specFromStock({ ticker, market: args.market ?? 'aktien' })
 }
