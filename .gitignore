@@ -19,3 +19,5 @@ node_modules
 *.tsbuildinfo
 # Lokaler codegraph-Index (regenerierbar, groß) — nicht versionieren
 .codegraph/
+.vercel
+.env*
