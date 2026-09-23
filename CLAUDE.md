@@ -29,20 +29,18 @@ Tailwind v4 + shadcn · recharts · pnpm via corepack.
 - Migrationen: **handgeschriebenes SQL** in `drizzle/`, additiv + idempotent, angewendet per
   `node scripts/apply-migration.mjs`. Die Dateien setzen ein Basis-Schema voraus — eine leere
   DB zuerst mit `drizzle-kit push` aus `lib/db/schema.ts` aufbauen, sonst scheitert `0001`.
-- **Datenbank: Supabase** (seit 09.08.2026, vorher Neon). Verbindung über den Transaction-Pooler
-  (Port 6543); `uselibpqcompat=true&sslmode=require` ist Pflicht, weil `pg` 8.22 ein blosses
-  `sslmode=require` als `verify-full` auslegt und an Supabases eigener CA scheitert.
-  **Die DB ist derzeit leer** — die echten Trades liegen noch bei Neon und sind erst ab
-  **01.09.2026** abholbar (`node scripts/migrate-neon-to-supabase.mjs`, siehe `NEON_DATABASE_URL`).
+- **Datenbank: Neon** (Stand 23.09.2026). Lokale und veröffentlichte App nutzen dieselbe
+  Datenbank. 52 Trades liegen dort über mehrere Accounts; der persönliche API-Account hat 26.
+  Die ältere Supabase-Migrationsnotiz in `PROJEKT-KONTEXT.md` ist historisch.
 - Nach Ordner-Verschiebung: `CI=true corepack pnpm install`.
 
 ## Architektur
 - Routen: `/` Cockpit · `/trades` · `/analysis` · `/tracking` · `/stock/[id]` · `/trainer` ·
-  `/settings`. Datenzugriff über **Server Actions** (`app/actions/*.ts`); API nur Better Auth,
-  `/api/{candles,sparklines,quote}` und `/api/cron/*`.
+  `/journal` · `/settings`. Datenzugriff über Server Actions (`app/actions/*.ts`) und die
+  persönliche, tokenbasierte `/api/assistant/v1/*`-API; Details in `ASSISTANT-API.md`.
 - Schema `lib/db/schema.ts`: `stock` · `assessment` (Prognose ohne Geld) · `trade` ·
-  `trade_event` · `trade_target` · `price_alert` · `portfolio` · `quote_snapshot` ·
-  `candle_cache` · `training_*`.
+  `trade_event` · `trade_target` · `price_alert` · `portfolio` · `journal_entry` · `insight` ·
+  `assistant_api_token` · `quote_snapshot` · `candle_cache` · `training_*`.
 - Reine, getestete Logik liegt in `lib/` (`trade-math`, `trade-stats` mit `baseBucket`/
   `bucketRs` als gemeinsamem Kennzahlen-Kern, `trade-events`, `trade-targets`, `excursion`,
   `bot-twin`, `alerts`, `market-data/*` u. a.) — **wiederverwenden, nie neu erfinden**.
