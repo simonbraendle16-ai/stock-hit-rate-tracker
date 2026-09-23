@@ -7,6 +7,10 @@ import {
   integer,
   doublePrecision,
   primaryKey,
+  uuid,
+  jsonb,
+  index,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core'
 
 // --- Better Auth required tables -------------------------------------------
@@ -304,6 +308,10 @@ export const assessment = pgTable('assessment', {
 export const trade = pgTable('trade', {
   id: serial('id').primaryKey(),
   userId: text('userId').notNull(),
+  version: integer('version').notNull().default(1),
+  externalRequestKey: text('externalRequestKey'),
+  externalRequestHash: text('externalRequestHash'),
+  externalSource: jsonb('externalSource').$type<{ kind: string; capturedAt: string }>(),
   // Das Depot, in das dieser Trade gebucht ist (Etappe 12). Pflicht — und die
   // QUELLE der Handelsart: `tradedWithMoney` weiter unten ist nur die
   // abgeleitete Schreibweise von `portfolio.kind`. Jede Auswertung filtert
@@ -424,7 +432,68 @@ export const trade = pgTable('trade', {
   openedAt: timestamp('openedAt'),
   closedAt: timestamp('closedAt'),
   createdAt: timestamp('createdAt').notNull().defaultNow(),
-})
+}, (table) => [
+  uniqueIndex('trade_user_external_request_key_idx').on(table.userId, table.externalRequestKey),
+])
+
+// Persönliche Reflexion. Der Trade-Bezug ist optional; eine Notiz kann auch
+// eine Situation ohne ausgeführte Order betreffen.
+export const journalEntry = pgTable('journal_entry', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: text('userId').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  tradeId: integer('tradeId').references(() => trade.id, { onDelete: 'set null' }),
+  occurredAt: timestamp('occurredAt').notNull().defaultNow(),
+  kind: text('kind').notNull().default('user_note'),
+  situation: text('situation').notNull(),
+  intention: text('intention'),
+  action: text('action'),
+  thoughts: text('thoughts'),
+  reflection: text('reflection'),
+  ruleRef: text('ruleRef'),
+  sourceRefs: jsonb('sourceRefs').$type<string[]>().notNull().default([]),
+  version: integer('version').notNull().default(1),
+  createdAt: timestamp('createdAt').notNull().defaultNow(),
+  updatedAt: timestamp('updatedAt').notNull().defaultNow(),
+}, (table) => [
+  index('journal_entry_user_time_idx').on(table.userId, table.occurredAt),
+  index('journal_entry_user_trade_idx').on(table.userId, table.tradeId),
+])
+
+export type InsightEvidenceRef = { kind: 'trade' | 'journal'; id: string }
+
+// Erkenntnisse bleiben Hypothesen mit Belegen und Gegenbelegen. Ihr Status
+// ist keine Zustimmung zu einer neuen verbindlichen Handelsregel.
+export const insight = pgTable('insight', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: text('userId').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  statement: text('statement').notNull(),
+  area: text('area'),
+  status: text('status').notNull().default('hypothesis'),
+  evidenceRefs: jsonb('evidenceRefs').$type<InsightEvidenceRef[]>().notNull().default([]),
+  counterEvidenceRefs: jsonb('counterEvidenceRefs').$type<InsightEvidenceRef[]>().notNull().default([]),
+  limits: text('limits'),
+  proposal: text('proposal'),
+  version: integer('version').notNull().default(1),
+  createdAt: timestamp('createdAt').notNull().defaultNow(),
+  updatedAt: timestamp('updatedAt').notNull().defaultNow(),
+}, (table) => [
+  index('insight_user_status_idx').on(table.userId, table.status),
+  index('insight_user_updated_idx').on(table.userId, table.updatedAt),
+])
+
+// Persönliche Zugänge für die externe Assistenz. Der Klartextschlüssel wird nie gespeichert.
+export const assistantApiToken = pgTable('assistant_api_token', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: text('userId').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  tokenHash: text('tokenHash').notNull().unique(),
+  scopes: jsonb('scopes').$type<string[]>().notNull(),
+  createdAt: timestamp('createdAt').notNull().defaultNow(),
+  lastUsedAt: timestamp('lastUsedAt'),
+  revokedAt: timestamp('revokedAt'),
+}, (table) => [
+  index('assistant_api_token_user_idx').on(table.userId),
+])
 
 // Kurs-Alerts (Etappe 3): ein vom Nutzer gesetztes Preislevel, das beim Laden
 // der Kerzen gegen den aktuellen Kurs geprüft wird. Das Symbol (ticker/market)

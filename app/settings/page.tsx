@@ -10,6 +10,7 @@ import { PortfolioManager } from '@/components/portfolio-manager'
 import { getPortfolioUsage, getScopeContext } from '@/app/actions/portfolios'
 import { getNotifyStatus } from '@/app/actions/notifications'
 import { NotifyPanel } from '@/components/notify-panel'
+import Link from 'next/link'
 
 export default async function SettingsPage() {
   const session = await auth.api.getSession({ headers: await headers() })
@@ -36,6 +37,11 @@ export default async function SettingsPage() {
           </p>
         </div>
         <SettingsForm initial={settings} />
+        <Link href="/settings/assistant-api" className="panel mt-5 block rounded-xl p-5 transition-colors hover:border-primary/50">
+          <span className="eyebrow">Verbindung</span>
+          <span className="mt-2 block font-heading text-lg font-semibold text-foreground">Persönliche API-Schlüssel →</span>
+          <span className="note mt-1 block">Zugriff für deinen Trading-Assistenten verwalten.</span>
+        </Link>
         {/* Etappe 14: steht bewusst weit oben. Ob die App sich meldet, entscheidet
             darüber, ob ein geplanter Trade überhaupt stattfindet — das ist
             wichtiger als jede Gebühreneinstellung darunter. */}
