@@ -79,6 +79,12 @@ export default async function TradesPage() {
           </Link>
         </div>
 
+        {kontext.isPaper && (
+          <Link href="/broker-orders" className="mb-6 inline-block text-sm underline">
+            AvaTrade-Demo-Aufträge ansehen
+          </Link>
+        )}
+
         {trades.length === 0 ? (
           <div className="panel sheen rise-in p-10 text-center">
             <p className="text-sm text-foreground">

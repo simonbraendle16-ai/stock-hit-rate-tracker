@@ -528,6 +528,37 @@ export const priceAlert = pgTable('price_alert', {
   createdAt: timestamp('createdAt').notNull().defaultNow(),
 })
 
+// Brokerbeobachtungen bleiben getrennt vom fachlichen Trade-Plan. Ein Limitauftrag
+// kann bereits beim Broker angenommen sein, obwohl in der App noch ein Ziel fehlt.
+export const brokerOrder = pgTable('broker_order', {
+  id: serial('id').primaryKey(),
+  userId: text('userId').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  portfolioId: integer('portfolioId').notNull().references(() => portfolio.id),
+  broker: text('broker').notNull().default('avatrade'),
+  brokerAccountId: text('brokerAccountId').notNull(),
+  brokerOrderId: text('brokerOrderId').notNull(),
+  brokerPositionId: text('brokerPositionId'),
+  linkedTradeId: integer('linkedTradeId').references(() => trade.id, { onDelete: 'set null' }),
+  ticker: text('ticker').notNull(),
+  direction: text('direction').notNull(),
+  orderType: text('orderType').notNull(),
+  state: text('state').notNull(),
+  limitPrice: doublePrecision('limitPrice'),
+  executionPrice: doublePrecision('executionPrice'),
+  quantity: doublePrecision('quantity'),
+  stopLoss: doublePrecision('stopLoss'),
+  takeProfit: doublePrecision('takeProfit'),
+  placedAt: timestamp('placedAt'),
+  filledAt: timestamp('filledAt'),
+  observedAt: timestamp('observedAt').notNull(),
+  createdAt: timestamp('createdAt').notNull().defaultNow(),
+  updatedAt: timestamp('updatedAt').notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex('broker_order_owner_account_order_idx').on(table.userId, table.broker, table.brokerAccountId, table.brokerOrderId),
+  uniqueIndex('broker_order_owner_plan_idx').on(table.userId, table.linkedTradeId),
+  index('broker_order_owner_portfolio_idx').on(table.userId, table.portfolioId, table.placedAt),
+])
+
 // Etappe 14: Protokoll der Alarm-Prüfläufe. Der Takt kommt von einem externen
 // Cron-Dienst (Vercel-Hobby lässt nur einen Lauf pro Tag zu) — fällt der still
 // aus, sähe die App fertig aus und bliebe stumm. Diese Tabelle macht das
