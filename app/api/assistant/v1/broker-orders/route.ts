@@ -41,7 +41,8 @@ async function assertDemoPortfolio(userId: string, portfolioId: number) {
 export async function POST(req: NextRequest) {
   try {
     const userId = await requireApiScope(req, 'trades:write')
-    const input = normalizeBrokerOrder(await readJsonObject(req))
+    const raw = await readJsonObject(req)
+    const input = normalizeBrokerOrder(raw)
     await assertDemoPortfolio(userId, input.portfolioId)
     const configuredAccount = process.env.AVATRADE_DEMO_ACCOUNT_ID
     if (!configuredAccount) throw new ApiError(503, 'Demo-Brokerkonto ist noch nicht konfiguriert.')
@@ -69,8 +70,10 @@ export async function POST(req: NextRequest) {
         limitPrice: input.limitPrice ?? existing.limitPrice,
         executionPrice: input.executionPrice ?? existing.executionPrice,
         quantity: input.quantity ?? existing.quantity,
-        stopLoss: input.stopLoss ?? existing.stopLoss,
-        takeProfit: input.takeProfit ?? existing.takeProfit,
+        stopLoss: input.state === 'accepted' && Object.hasOwn(raw, 'stopLoss')
+          ? input.stopLoss : (input.stopLoss ?? existing.stopLoss),
+        takeProfit: input.state === 'accepted' && Object.hasOwn(raw, 'takeProfit')
+          ? input.takeProfit : (input.takeProfit ?? existing.takeProfit),
         placedAt: input.placedAt ?? existing.placedAt,
         filledAt: input.filledAt ?? existing.filledAt,
         observedAt: input.observedAt,
