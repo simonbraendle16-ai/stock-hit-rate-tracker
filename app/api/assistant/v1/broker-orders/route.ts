@@ -53,7 +53,8 @@ export async function POST(req: NextRequest) {
     const [existing] = await db.select().from(brokerOrder).where(identity).limit(1)
     if (existing) {
       if (existing.portfolioId !== input.portfolioId || existing.ticker !== input.ticker ||
-          existing.direction !== input.direction || existing.orderType !== input.orderType) {
+          existing.direction !== input.direction ||
+          (existing.orderType !== input.orderType && !(input.state === 'filled' && input.orderType === 'other'))) {
         throw new ApiError(409, 'Broker-Order-ID widerspricht dem gespeicherten Auftrag.')
       }
       if ((existing.state === 'cancelled' && input.state === 'filled') ||
@@ -110,7 +111,8 @@ export async function POST(req: NextRequest) {
     const [concurrent] = await db.select().from(brokerOrder).where(identity).limit(1)
     if (concurrent) {
       if (concurrent.portfolioId !== input.portfolioId || concurrent.ticker !== input.ticker ||
-          concurrent.direction !== input.direction || concurrent.orderType !== input.orderType) {
+          concurrent.direction !== input.direction ||
+          (concurrent.orderType !== input.orderType && !(input.state === 'filled' && input.orderType === 'other'))) {
         throw new ApiError(409, 'Broker-Order-ID widerspricht dem gespeicherten Auftrag.')
       }
       return NextResponse.json(concurrent)
