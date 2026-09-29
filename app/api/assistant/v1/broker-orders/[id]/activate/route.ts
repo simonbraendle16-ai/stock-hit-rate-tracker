@@ -3,8 +3,7 @@ import { brokerExit, brokerOrder, trade, tradeEvent } from '@/lib/db/schema'
 import { ApiError, apiResponseError, onlyKeys, positiveId, readJsonObject, requireApiScope } from '@/lib/assistant-api'
 import { normalizeMoodCheck, serializeMoodTags, type MoodCheckInput } from '@/lib/emotions'
 import { requiresMoodCheck, requiresPreTradeGate } from '@/lib/trade-kind'
-import { parseViolations } from '@/lib/trade-stats'
-import { and, desc, eq, isNull, sql } from 'drizzle-orm'
+import { and, eq, isNull, sql } from 'drizzle-orm'
 import { NextRequest, NextResponse } from 'next/server'
 
 export async function POST(req: NextRequest, context: { params: Promise<{ id: string }> }) {
@@ -50,14 +49,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
       if (!t.positionSize || Math.abs(t.positionSize - order.quantity) > Math.max(1e-8, t.positionSize * 1e-6)) {
         throw new ApiError(409, 'Broker-Menge und geplante Positionsgröße weichen ab; bitte zuerst klären.')
       }
-      const [lastLoss] = await tx.select({ closedAt: trade.closedAt }).from(trade).where(and(
-        eq(trade.userId, userId), eq(trade.portfolioId, t.portfolioId), eq(trade.result, 'verlust'),
-      )).orderBy(desc(trade.closedAt)).limit(1)
-      const violations: string[] = parseViolations(t.ruleViolations)
-      if (lastLoss?.closedAt && Date.now() - lastLoss.closedAt.getTime() < 60 * 60 * 1000 &&
-          !violations.includes('revenge')) violations.push('revenge')
       const [changed] = await tx.update(trade).set({ status: 'aktiv', openedAt: order.filledAt,
-        ruleViolations: JSON.stringify(violations),
         ...(mood ? { moodEntry: mood.score, moodEntryTags: serializeMoodTags(mood.tags), moodEntryNote: mood.note } : {}),
       }).where(and(eq(trade.id, t.id), eq(trade.userId, userId), eq(trade.status, 'geplant')))
         .returning({ id: trade.id })
