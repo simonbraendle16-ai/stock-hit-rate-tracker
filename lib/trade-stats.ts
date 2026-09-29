@@ -296,7 +296,8 @@ export function computeDisciplineStats(
   const completed = rows.length
   const followed = rows.filter((t) => t.followedPlan).length
   const wins = rows.filter((t) => t.result === 'gewinn').length
-  const disciplineScore = completed ? (followed / completed) * 100 : 0
+  const assessed = rows.filter((t) => t.followedPlan != null).length
+  const disciplineScore = assessed ? (followed / assessed) * 100 : 0
 
   // Win-Rate und Erwartungswert beide über ENTSCHIEDENE Trades (Gewinn|Verlust),
   // damit sie denselben Nenner nutzen. Breakeven zählt in keine der beiden.
@@ -542,7 +543,8 @@ export function baseBucket(
     rated: rs.length,
     winRate: trades ? (wins / trades) * 100 : 0,
     expectancy: rs.length ? rs.reduce((a, b) => a + b, 0) / rs.length : 0,
-    planFollowedRate: trades ? (followed / trades) * 100 : 0,
+    planFollowedRate: rows.some((t) => t.followedPlan != null)
+      ? (followed / rows.filter((t) => t.followedPlan != null).length) * 100 : 0,
     enough: trades >= minGroupSize,
   }
 }

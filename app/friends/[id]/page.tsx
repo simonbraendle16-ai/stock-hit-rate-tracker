@@ -140,7 +140,7 @@ function TradeRow({ trade: t }: { trade: FriendTrade }) {
             <span className="ml-2 font-normal text-muted-foreground">
               {isLong ? 'Long' : 'Short'}
             </span>
-            {!t.followedPlan && t.status === 'abgeschlossen' && (
+            {t.followedPlan === false && t.status === 'abgeschlossen' && (
               <span className="ml-2 inline-flex items-center gap-1 font-normal text-warning">
                 <ShieldAlert className="size-3" /> abgewichen
               </span>

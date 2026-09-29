@@ -559,6 +559,29 @@ export const brokerOrder = pgTable('broker_order', {
   index('broker_order_owner_portfolio_idx').on(table.userId, table.portfolioId, table.placedAt),
 ])
 
+// Einzelne Ausstiege tragen eine eigene Broker-ID. Teilverkäufe bleiben als
+// Belege erhalten und können nicht durch einen späteren Vollausstieg ersetzt werden.
+export const brokerExit = pgTable('broker_exit', {
+  id: serial('id').primaryKey(),
+  userId: text('userId').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  portfolioId: integer('portfolioId').notNull().references(() => portfolio.id),
+  broker: text('broker').notNull().default('avatrade'),
+  brokerAccountId: text('brokerAccountId').notNull(),
+  brokerPositionId: text('brokerPositionId').notNull(),
+  brokerExitId: text('brokerExitId').notNull(),
+  brokerOrderId: integer('brokerOrderId').references(() => brokerOrder.id, { onDelete: 'set null' }),
+  linkedTradeId: integer('linkedTradeId').references(() => trade.id, { onDelete: 'set null' }),
+  quantity: doublePrecision('quantity').notNull(),
+  price: doublePrecision('price').notNull(),
+  exitedAt: timestamp('exitedAt').notNull(),
+  observedAt: timestamp('observedAt').notNull(),
+  processedAt: timestamp('processedAt'),
+  createdAt: timestamp('createdAt').notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex('broker_exit_identity_idx').on(table.userId, table.broker, table.brokerAccountId, table.brokerExitId),
+  index('broker_exit_position_idx').on(table.userId, table.broker, table.brokerAccountId, table.brokerPositionId),
+])
+
 // Etappe 14: Protokoll der Alarm-Prüfläufe. Der Takt kommt von einem externen
 // Cron-Dienst (Vercel-Hobby lässt nur einen Lauf pro Tag zu) — fällt der still
 // aus, sähe die App fertig aus und bliebe stumm. Diese Tabelle macht das
