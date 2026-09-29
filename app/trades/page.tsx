@@ -11,16 +11,24 @@ import { CockpitHeader } from '@/components/cockpit-header'
 import { PaperBadge } from '@/components/paper-badge'
 import { TradeCard } from '@/components/trade-card'
 import { Button } from '@/components/ui/button'
+import { db } from '@/lib/db'
+import { brokerOrder, portfolio } from '@/lib/db/schema'
+import { and, desc, eq } from 'drizzle-orm'
 import { Plus } from 'lucide-react'
 
 export default async function TradesPage() {
   const session = await auth.api.getSession({ headers: await headers() })
   if (!session?.user) redirect('/sign-in')
 
-  const [trades, settings, kontext] = await Promise.all([
+  const [trades, settings, kontext, brokerOrders] = await Promise.all([
     listTrades(),
     getSettings(),
     getScopeContext(),
+    db.select({ order: brokerOrder }).from(brokerOrder)
+      .innerJoin(portfolio, eq(brokerOrder.portfolioId, portfolio.id))
+      .where(and(eq(brokerOrder.userId, session.user.id),
+        eq(portfolio.userId, session.user.id), eq(portfolio.kind, 'demo')))
+      .orderBy(desc(brokerOrder.id)).limit(100),
   ])
 
   // Teilziele (Etappe 13) und Ereignisse für die ganze Liste in je EINER Abfrage.
@@ -79,10 +87,36 @@ export default async function TradesPage() {
           </Link>
         </div>
 
-        {kontext.isPaper && (
-          <Link href="/broker-orders" className="mb-6 inline-block text-sm underline">
-            AvaTrade-Demo-Aufträge ansehen
-          </Link>
+        {brokerOrders.length > 0 && (
+          <section className="mb-6 rounded-xl border border-border bg-card p-4 sm:p-5" aria-label="AvaTrade-Demo-Brokerbelege">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <div>
+                <p className="eyebrow">Demo · AvaTrade</p>
+                <h3 className="mt-1 font-heading text-lg font-semibold">Importierte Brokeraufträge und Positionen</h3>
+              </div>
+              <Link href="/broker-orders" className="text-sm underline">Alle Brokerbelege ansehen</Link>
+            </div>
+            <p className="note mt-2 text-xs">Brokerbelege sind erst nach bestätigtem Planbezug geplante App-Trades.</p>
+            <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {brokerOrders.map(({ order }) => (
+                <div key={order.id} className="rounded-lg border border-border p-3 text-sm">
+                  <div className="flex items-start justify-between gap-2">
+                    <strong>{order.ticker} · {order.direction === 'long' ? 'Kauf' : 'Verkauf'}</strong>
+                    <span className="text-xs text-muted-foreground">
+                      {order.state === 'accepted' ? 'Angenommen' : order.state === 'filled' ? 'Ausgeführt' : 'Storniert'}
+                    </span>
+                  </div>
+                  <p className="note mt-1 text-xs">Order-ID {order.brokerOrderId} · Menge {order.quantity ?? 'offen'}</p>
+                  <p className="note text-xs">Zuletzt gesehen: {order.observedAt.toLocaleString('de-DE')}</p>
+                  {order.linkedTradeId && (
+                    <Link href={`/trades/${order.linkedTradeId}`} className="mt-2 inline-block text-xs underline">
+                      Verknüpften Trade öffnen
+                    </Link>
+                  )}
+                </div>
+              ))}
+            </div>
+          </section>
         )}
 
         {trades.length === 0 ? (
