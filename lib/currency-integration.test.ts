@@ -1,14 +1,15 @@
 import { beforeAll, afterAll, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
-import { PGlite } from '../.test-tools/node_modules/@electric-sql/pglite/dist/index.js'
-import { drizzle } from '../.test-tools/node_modules/drizzle-orm/pglite/index.js'
+import { PGlite } from '@electric-sql/pglite'
+import { drizzle } from 'drizzle-orm/pglite'
 import { eq } from 'drizzle-orm'
 import * as schema from './db/schema'
 import { NextRequest } from 'next/server'
 import { PRE_TRADE_QUESTIONS } from './pre-trade-questions'
 import { hashToken } from './assistant-api'
 import { POST } from '../app/api/assistant/v1/trades/route'
+import { PATCH as declareCurrency } from '../app/api/assistant/v1/portfolios/[id]/route'
 import { assignPortfolioCurrency, updatePortfolioFxRates, moveTrade } from '../app/actions/portfolios'
 import { changeCurrency, updateSettings } from '../app/actions/settings'
 import { updateTradePlan } from '../app/actions/trades'
@@ -19,6 +20,8 @@ vi.mock('@/lib/db', () => ({ get db() { return state.db } }))
 vi.mock('@/lib/auth', () => ({ auth: { api: { getSession: async () => ({ user: { id: 'currency-test' } }) } } }))
 vi.mock('next/headers', () => ({ headers: async () => new Headers() }))
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }))
+// This suite tests currency gates; Demo candle reconciliation is tested separately.
+vi.mock('@/lib/manual-trade', () => ({ withManualTrade: async (_user: string, _id: number, callback: () => Promise<unknown>) => callback() }))
 
 let pg: PGlite
 let demo: number, real: number, foreign: number, original: number
@@ -45,7 +48,7 @@ beforeAll(async () => {
   await pg.exec(`INSERT INTO portfolio ("userId", name, kind) VALUES ('currency-test','Demo','demo'), ('currency-test','Main','echtgeld'), ('other-test','Foreign','demo');
     INSERT INTO trade ("userId","portfolioId",ticker,"entryPrice","stopLoss","takeProfit",direction,"investedAmount","positionSize",notes,"preTradeAnswered")
     SELECT 'currency-test',id,'META',754.43,769,687.15,'short',1056.2,6.999986744959771,'Preserve original',true FROM portfolio WHERE name='Demo';`)
-  const migration = readFileSync('drizzle/0043_money_currency.sql', 'utf8')
+  const migration = readFileSync('drizzle/0044_money_currency.sql', 'utf8')
   await pg.exec(migration)
   await pg.exec(migration) // idempotent execution, actual SQL engine
   const depots = await state.db.select().from(schema.portfolio)
@@ -64,6 +67,18 @@ beforeAll(async () => {
 afterAll(async () => { await pg?.close() })
 
 describe('isolated PostgreSQL currency integration', () => {
+  it('declares account currencies through the API without changing an existing declaration', async () => {
+    const call = (id: number, currency: string) => declareCurrency(new NextRequest('http://localhost/api/assistant/v1/portfolios/' + id, {
+      method: 'PATCH', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ currency }),
+    }), { params: Promise.resolve({ id: String(id) }) })
+    expect((await call(demo, 'USD')).status).toBe(200)
+    expect((await call(demo, 'EUR')).status).toBe(422)
+    expect((await call(foreign, 'USD')).status).toBe(404)
+    const [p] = await state.db.select().from(schema.portfolio).where(eq(schema.portfolio.id, demo))
+    expect(p.currency).toBe('USD')
+    const [old] = await state.db.select().from(schema.trade).where(eq(schema.trade.id, original))
+    expect(old.accountCurrency).toBeNull()
+  })
   it('keeps mixed-currency scope selectable without summing its capital', async () => {
     const [extra] = await state.db.insert(schema.portfolio).values({ userId: 'currency-test', name: 'Second real', kind: 'echtgeld', currency: 'USD', startCapital: 1234 }).returning()
     await schreibeScope('currency-test', { type: 'alleEchtgeld' })

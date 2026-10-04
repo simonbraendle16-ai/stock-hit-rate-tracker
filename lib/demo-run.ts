@@ -439,13 +439,14 @@ async function bucheFill(args: {
         .where(and(eq(tradeEvent.tradeId, t.id), eq(tradeEvent.userId, t.userId)))
         .orderBy(asc(tradeEvent.at), asc(tradeEvent.id))
       const settle = settlePosition(t, alle)
-      if (!Number.isFinite(settle.totalNet)) throw new Error('Demo-Abschluss nicht bewertbar: Währungsabrechnung unvollständig.')
 
       await tx
         .update(trade)
         .set({
           status: 'abgeschlossen',
-          result: ergebnisAus(settle.totalNet),
+          // A proven simulated exit closes the quantity even when legacy money
+          // metadata is unknown. Never manufacture a monetary win/loss.
+          result: Number.isFinite(settle.totalNet) ? ergebnisAus(settle.totalNet) : null,
           actualExitPrice: fill.preis,
           // Die Ausführung IST der Plan — das ist der ganze Punkt der
           // Automatik. Anders als beim Abschluss von Hand gibt es hier keinen

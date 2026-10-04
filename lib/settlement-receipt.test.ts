@@ -66,5 +66,8 @@ describe('actual broker settlement', () => {
   it('does not turn a repeated observation into a receipt revision', () => {
     expect(receiptSignature(normalizeSettlementReceipt(raw))).toBe(receiptSignature(normalizeSettlementReceipt({
       ...raw, capturedAt: '2026-10-04T13:00:00Z' })))
+    const normalized = normalizeSettlementReceipt(raw)
+    const reordered = Object.fromEntries(Object.entries(normalized).reverse()) as typeof normalized
+    expect(receiptSignature(reordered)).toBe(receiptSignature(normalized))
   })
 })

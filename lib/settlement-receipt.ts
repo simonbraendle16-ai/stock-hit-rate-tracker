@@ -56,5 +56,5 @@ export function receiptFromPayload(payload: string | null): SettlementReceipt | 
 
 export function receiptSignature(receipt: SettlementReceipt) {
   // Observation time does not make a repeated broker statement a correction.
-  return JSON.stringify({ ...receipt, capturedAt: undefined })
+  return JSON.stringify({ ...normalizeSettlementReceipt(receipt), capturedAt: undefined })
 }

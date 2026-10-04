@@ -129,6 +129,11 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers())
 
 describe('Demo-Ausführung mit gespeicherten Positionen', () => {
+  it('bewertet einen ausdrücklich gleichwährungsdeklarierten Demo-Plan und erhält unbekannten Altbestand', async () => {
+    Object.assign(state.trades[0] as object, { quoteCurrency: 'EUR', accountCurrency: 'EUR', quoteToAccountRate: 1 })
+    await runDemoFills()
+    expect(state.trades[0]).toMatchObject({ status: 'abgeschlossen', result: 'gewinn' })
+  })
   it('kennzeichnet echte Archivbuchungen mit gröberer Zeitauflösung und wiederholt sie nicht', async () => {
     state.candles = [candle('09:45'), candle('10:00', { high: 112 }), candle('10:15', { high: 122 })]
     const result = await repairDemoArchive('user', 1, at('10:30').getTime() / 1000, false)
@@ -191,7 +196,7 @@ describe('Demo-Ausführung mit gespeicherten Positionen', () => {
     state.events.push({ ...opened(), id: 3, type: 'nachkauf', at: at('10:00'), quantity: 50, price: 105 })
     await runDemoFills()
     expect((state.events as TradeEventRow[]).slice(3).map((e) => e.quantity)).toEqual([40, 80])
-    expect(state.trades[0]).toMatchObject({ status: 'abgeschlossen', result: 'gewinn' })
+    expect(state.trades[0]).toMatchObject({ status: 'abgeschlossen', result: null })
   })
   it('hält nach Einstieg und Teilziel den aktiven Zustand für die nächste Kerze', async () => {
     state.trades = [{ ...row(), status: 'geplant', openedAt: null, createdAt: at('10:00') }]

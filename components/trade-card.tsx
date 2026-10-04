@@ -304,7 +304,7 @@ export function TradeCard({
       {t.status === 'abgeschlossen' && t.result && (
         <p className={cn('mt-2 font-mono text-xs font-bold uppercase', resultStyle[t.result])}>
           Ergebnis: {t.result}
-          {t.followedPlan ? ' · Plan befolgt ✓' : ' · Plan abgewichen ✗'}
+          {t.followedPlan === true ? ' · Plan befolgt ✓' : t.followedPlan === false ? ' · Plan abgewichen ✗' : ' · Planbewertung offen'}
         </p>
       )}
 
@@ -436,8 +436,13 @@ export function TradeCard({
 // in der Überschrift und darin, dass auf Papier keine Gebühren anfallen.
 export function MoneyPanel({ t, currency = 'EUR', events = [] }: { t: TradeRow; currency?: string; events?: TradeEventRow[] }) {
   if (t.investedAmount == null) return null
+  const closed = t.status === 'abgeschlossen'
+  const realizedNet = closed ? tradeNetPnl(t, events) : null
   if (frozenFxRate(t) === null) {
-    return <div className="mt-3 rounded-lg border border-warning/30 p-3 text-xs text-warning">Altbestand: Depotwährung, Kurswährung und Umrechnung sind noch nicht bestätigt. Geldprojektionen werden deshalb nicht als geprüfte Beträge angezeigt.</div>
+    return <div className="mt-3 rounded-lg border border-warning/30 p-3 text-xs text-warning">
+      <p>Altbestand: Depotwährung, Kurswährung und Umrechnung des Plans sind noch nicht bestätigt. Geldprojektionen werden deshalb nicht als geprüfte Beträge angezeigt.</p>
+      {realizedNet !== null ? <dl className="mt-2"><MRow label="Belegte Netto-Abrechnung" value={formatMoney(realizedNet, currency)} tone={realizedNet >= 0 ? 'pos' : 'neg'} /></dl> : null}
+    </div>
   }
 
   const paper = !t.tradedWithMoney
@@ -446,11 +451,9 @@ export function MoneyPanel({ t, currency = 'EUR', events = [] }: { t: TradeRow; 
   const invested = t.investedAmount
   const shares = t.positionSize ?? null
   const leverage = t.leverage ?? 1
-  const closed = t.status === 'abgeschlossen' && !!t.result
 
   // Realisiertes Netto-Ergebnis aus derselben Funktion wie Bilanz und Statistik —
   // keine zweite Rechenlogik in der Anzeige. `null` = kein Ausstiegskurs erfasst.
-  const realizedNet = closed ? tradeNetPnl(t, events) : null
 
   // Geplante Gebühren des Trades; bei Altbestand ohne Wert die Vorgabe. Auf
   // Papier kostet nichts — dieselbe Regel wie in `tradeFees`, sonst würde ein
@@ -551,7 +554,9 @@ export function MoneyPanel({ t, currency = 'EUR', events = [] }: { t: TradeRow; 
           </>
         )}
       </dl>
-      {t.quoteCurrency !== t.accountCurrency && <p className="mt-2 text-xs text-warning">Planbewertung zum eingefrorenen FX-Kurs. Realisierte Kontowährungs-P&amp;L braucht eine belegte Abrechnung; der Plankurs ersetzt sie nicht.</p>}
+      {t.quoteCurrency !== t.accountCurrency && <p className="mt-2 text-xs text-muted-foreground">{realizedNet !== null
+        ? 'Realisierter Nettobetrag aus den Abrechnungsbelegen. Der eingefrorene FX-Kurs gilt weiterhin nur für den Plan.'
+        : 'Planbewertung zum eingefrorenen FX-Kurs. Realisierte Kontowährungs-P&L braucht eine belegte Abrechnung; der Plankurs ersetzt sie nicht.'}</p>}
     </div>
   )
 }
