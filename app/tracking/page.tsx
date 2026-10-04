@@ -88,8 +88,8 @@ export default async function TrackingPage() {
   const buckets = {
     winPlan: completed.filter((t) => t.result === 'gewinn' && t.followedPlan).length,
     lossPlan: completed.filter((t) => t.result === 'verlust' && t.followedPlan).length,
-    winDeviate: completed.filter((t) => t.result === 'gewinn' && !t.followedPlan).length,
-    lossDeviate: completed.filter((t) => t.result === 'verlust' && !t.followedPlan).length,
+    winDeviate: completed.filter((t) => t.result === 'gewinn' && t.followedPlan === false).length,
+    lossDeviate: completed.filter((t) => t.result === 'verlust' && t.followedPlan === false).length,
   }
   const bucketDefs = [
     { label: 'Gewinn + Plan befolgt', value: buckets.winPlan, color: 'var(--positive)' },
@@ -105,7 +105,7 @@ export default async function TrackingPage() {
     const k = monthKey(t)
     const e = byMonth.get(k) ?? { followed: 0, deviated: 0 }
     if (t.followedPlan) e.followed++
-    else e.deviated++
+    else if (t.followedPlan === false) e.deviated++
     byMonth.set(k, e)
   }
   const months = [...byMonth.entries()]

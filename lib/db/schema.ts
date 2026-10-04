@@ -7,6 +7,10 @@ import {
   integer,
   doublePrecision,
   primaryKey,
+  uuid,
+  jsonb,
+  index,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core'
 
 // --- Better Auth required tables -------------------------------------------
@@ -304,6 +308,10 @@ export const assessment = pgTable('assessment', {
 export const trade = pgTable('trade', {
   id: serial('id').primaryKey(),
   userId: text('userId').notNull(),
+  version: integer('version').notNull().default(1),
+  externalRequestKey: text('externalRequestKey'),
+  externalRequestHash: text('externalRequestHash'),
+  externalSource: jsonb('externalSource').$type<{ kind: string; capturedAt: string }>(),
   // Das Depot, in das dieser Trade gebucht ist (Etappe 12). Pflicht — und die
   // QUELLE der Handelsart: `tradedWithMoney` weiter unten ist nur die
   // abgeleitete Schreibweise von `portfolio.kind`. Jede Auswertung filtert
@@ -428,7 +436,68 @@ export const trade = pgTable('trade', {
   demoBoundaryAt: timestamp('demoBoundaryAt'),
   demoIssue: text('demoIssue'),
   createdAt: timestamp('createdAt').notNull().defaultNow(),
-})
+}, (table) => [
+  uniqueIndex('trade_user_external_request_key_idx').on(table.userId, table.externalRequestKey),
+])
+
+// Persönliche Reflexion. Der Trade-Bezug ist optional; eine Notiz kann auch
+// eine Situation ohne ausgeführte Order betreffen.
+export const journalEntry = pgTable('journal_entry', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: text('userId').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  tradeId: integer('tradeId').references(() => trade.id, { onDelete: 'set null' }),
+  occurredAt: timestamp('occurredAt').notNull().defaultNow(),
+  kind: text('kind').notNull().default('user_note'),
+  situation: text('situation').notNull(),
+  intention: text('intention'),
+  action: text('action'),
+  thoughts: text('thoughts'),
+  reflection: text('reflection'),
+  ruleRef: text('ruleRef'),
+  sourceRefs: jsonb('sourceRefs').$type<string[]>().notNull().default([]),
+  version: integer('version').notNull().default(1),
+  createdAt: timestamp('createdAt').notNull().defaultNow(),
+  updatedAt: timestamp('updatedAt').notNull().defaultNow(),
+}, (table) => [
+  index('journal_entry_user_time_idx').on(table.userId, table.occurredAt),
+  index('journal_entry_user_trade_idx').on(table.userId, table.tradeId),
+])
+
+export type InsightEvidenceRef = { kind: 'trade' | 'journal'; id: string }
+
+// Erkenntnisse bleiben Hypothesen mit Belegen und Gegenbelegen. Ihr Status
+// ist keine Zustimmung zu einer neuen verbindlichen Handelsregel.
+export const insight = pgTable('insight', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: text('userId').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  statement: text('statement').notNull(),
+  area: text('area'),
+  status: text('status').notNull().default('hypothesis'),
+  evidenceRefs: jsonb('evidenceRefs').$type<InsightEvidenceRef[]>().notNull().default([]),
+  counterEvidenceRefs: jsonb('counterEvidenceRefs').$type<InsightEvidenceRef[]>().notNull().default([]),
+  limits: text('limits'),
+  proposal: text('proposal'),
+  version: integer('version').notNull().default(1),
+  createdAt: timestamp('createdAt').notNull().defaultNow(),
+  updatedAt: timestamp('updatedAt').notNull().defaultNow(),
+}, (table) => [
+  index('insight_user_status_idx').on(table.userId, table.status),
+  index('insight_user_updated_idx').on(table.userId, table.updatedAt),
+])
+
+// Persönliche Zugänge für die externe Assistenz. Der Klartextschlüssel wird nie gespeichert.
+export const assistantApiToken = pgTable('assistant_api_token', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: text('userId').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  tokenHash: text('tokenHash').notNull().unique(),
+  scopes: jsonb('scopes').$type<string[]>().notNull(),
+  createdAt: timestamp('createdAt').notNull().defaultNow(),
+  lastUsedAt: timestamp('lastUsedAt'),
+  revokedAt: timestamp('revokedAt'),
+}, (table) => [
+  index('assistant_api_token_user_idx').on(table.userId),
+])
 
 export const demoRunState = pgTable('demo_run_state', {
   id: text('id').primaryKey(),
@@ -468,6 +537,60 @@ export const priceAlert = pgTable('price_alert', {
   notifiedAt: timestamp('notifiedAt', { withTimezone: true }),
   createdAt: timestamp('createdAt').notNull().defaultNow(),
 })
+
+// Brokerbeobachtungen bleiben getrennt vom fachlichen Trade-Plan. Ein Limitauftrag
+// kann bereits beim Broker angenommen sein, obwohl in der App noch ein Ziel fehlt.
+export const brokerOrder = pgTable('broker_order', {
+  id: serial('id').primaryKey(),
+  userId: text('userId').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  portfolioId: integer('portfolioId').notNull().references(() => portfolio.id),
+  broker: text('broker').notNull().default('avatrade'),
+  brokerAccountId: text('brokerAccountId').notNull(),
+  brokerOrderId: text('brokerOrderId').notNull(),
+  brokerPositionId: text('brokerPositionId'),
+  linkedTradeId: integer('linkedTradeId').references(() => trade.id, { onDelete: 'set null' }),
+  ticker: text('ticker').notNull(),
+  direction: text('direction').notNull(),
+  orderType: text('orderType').notNull(),
+  state: text('state').notNull(),
+  limitPrice: doublePrecision('limitPrice'),
+  executionPrice: doublePrecision('executionPrice'),
+  quantity: doublePrecision('quantity'),
+  stopLoss: doublePrecision('stopLoss'),
+  takeProfit: doublePrecision('takeProfit'),
+  placedAt: timestamp('placedAt'),
+  filledAt: timestamp('filledAt'),
+  observedAt: timestamp('observedAt').notNull(),
+  createdAt: timestamp('createdAt').notNull().defaultNow(),
+  updatedAt: timestamp('updatedAt').notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex('broker_order_owner_account_order_idx').on(table.userId, table.broker, table.brokerAccountId, table.brokerOrderId),
+  uniqueIndex('broker_order_owner_plan_idx').on(table.userId, table.linkedTradeId),
+  index('broker_order_owner_portfolio_idx').on(table.userId, table.portfolioId, table.placedAt),
+])
+
+// Einzelne Ausstiege tragen eine eigene Broker-ID. Teilverkäufe bleiben als
+// Belege erhalten und können nicht durch einen späteren Vollausstieg ersetzt werden.
+export const brokerExit = pgTable('broker_exit', {
+  id: serial('id').primaryKey(),
+  userId: text('userId').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  portfolioId: integer('portfolioId').notNull().references(() => portfolio.id),
+  broker: text('broker').notNull().default('avatrade'),
+  brokerAccountId: text('brokerAccountId').notNull(),
+  brokerPositionId: text('brokerPositionId').notNull(),
+  brokerExitId: text('brokerExitId').notNull(),
+  brokerOrderId: integer('brokerOrderId').references(() => brokerOrder.id, { onDelete: 'set null' }),
+  linkedTradeId: integer('linkedTradeId').references(() => trade.id, { onDelete: 'set null' }),
+  quantity: doublePrecision('quantity').notNull(),
+  price: doublePrecision('price').notNull(),
+  exitedAt: timestamp('exitedAt').notNull(),
+  observedAt: timestamp('observedAt').notNull(),
+  processedAt: timestamp('processedAt'),
+  createdAt: timestamp('createdAt').notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex('broker_exit_identity_idx').on(table.userId, table.broker, table.brokerAccountId, table.brokerExitId),
+  index('broker_exit_position_idx').on(table.userId, table.broker, table.brokerAccountId, table.brokerPositionId),
+])
 
 // Etappe 14: Protokoll der Alarm-Prüfläufe. Der Takt kommt von einem externen
 // Cron-Dienst (Vercel-Hobby lässt nur einen Lauf pro Tag zu) — fällt der still

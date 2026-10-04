@@ -18,7 +18,7 @@ import { TradeAlertsToggle } from '@/components/trade-alerts-toggle'
 import { getScopeContext } from '@/app/actions/portfolios'
 import { listAlerts } from '@/app/actions/alerts'
 import { triggeredTargetPricesByTrade } from '@/lib/alerts'
-import { ArrowLeft, LineChart, Lock } from 'lucide-react'
+import { ArrowLeft, BookOpenText, LineChart, Lock } from 'lucide-react'
 
 export default async function TradeDetailPage({
   params,
@@ -88,6 +88,13 @@ export default async function TradeDetailPage({
             targets={targets}
             triggeredTargetPrices={beruehrt}
           />
+
+          <Link
+            href={`/journal?tradeId=${t.id}`}
+            className="panel flex items-center gap-2 p-3 font-mono text-xs text-primary hover:underline"
+          >
+            <BookOpenText className="size-4" /> Journal und Erkenntnisse zu diesem Trade
+          </Link>
 
           {/* Wo liegt dieser Trade — und wie kommt er woandershin? */}
           <TradePortfolioCard
