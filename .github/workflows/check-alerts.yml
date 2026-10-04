@@ -123,3 +123,32 @@ jobs:
           echo "HTTP $code"
           cat candles.json
           if [ "$code" != "200" ]; then exit 1; fi
+
+      # Independent hourly gate: open Demo instruments are refreshed directly.
+      - name: Demo-Trades automatisch ausführen
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          code=$(curl --silent --show-error --location \
+            --max-time 65 \
+            --output demo.json \
+            --write-out '%{http_code}' \
+            --header "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.APP_URL }}/api/cron/demo-fills")
+          echo "Demo HTTP $code"
+          cat demo.json
+          if [ "$code" != "200" ]; then
+            vorher=$(gh run list --repo "${{ github.repository }}" \
+              --workflow "${{ github.workflow }}" --status completed --limit 1 \
+              --json conclusion --jq '.[0].conclusion' 2>/dev/null || echo "unbekannt")
+            if [ "$vorher" = "failure" ]; then
+              echo "::warning::Demo-Automatik weiterhin gestört."
+              exit 0
+            fi
+            echo "::error::Demo-Automatik konnte nicht ausgeführt werden."
+            exit 1
+          fi
+          if [ "$(jq -r '.ok' demo.json)" != "true" ]; then
+            echo "::warning::Demo-Automatik meldet fehlende Kursdaten; Details im Bericht."
+          fi

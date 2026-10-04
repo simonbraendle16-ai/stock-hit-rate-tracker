@@ -1,6 +1,7 @@
 'use client'
 
 import { frozenFxRate } from '@/lib/money-currency'
+import { InlineNotice } from '@/components/form-frame'
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
@@ -133,6 +134,7 @@ export function TradeCard({
       router.refresh()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Fehler')
+      router.refresh()
     } finally {
       setBusy(false)
     }
@@ -154,6 +156,7 @@ export function TradeCard({
       router.refresh()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Fehler')
+      router.refresh()
       setBusy(false)
     }
   }
@@ -165,6 +168,9 @@ export function TradeCard({
       className="panel sheen rise-in flex h-full flex-col p-4"
       style={delayMs ? { animationDelay: `${delayMs}ms` } : undefined}
     >
+      {t.demoIssue && !t.tradedWithMoney && (
+        <InlineNotice tone="warning" className="mb-3">{t.demoIssue}</InlineNotice>
+      )}
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-2">
           <span
@@ -667,6 +673,7 @@ export function ActivateDialog({
       onDone()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Fehler')
+      onDone()
     } finally {
       setBusy(false)
     }
@@ -746,6 +753,7 @@ export function NoTradeDialog({
       onDone()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Fehler')
+      onDone()
     } finally {
       setBusy(false)
     }

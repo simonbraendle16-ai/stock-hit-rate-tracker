@@ -76,7 +76,7 @@ function describe(item: TimelineItem): { title: string; detail: string | null } 
     case 'invalidation_ignoriert':
       return { title: 'Invalidation geändert', detail: fromTo ?? item.note }
     case 'geschlossen':
-      return { title: item.note ?? 'Geschlossen', detail: item.price != null ? `zu ${fmtNum(item.price)}` : null }
+      return { title: item.automatic ? 'Geschlossen' : item.note ?? 'Geschlossen', detail: item.price != null ? `zu ${fmtNum(item.price)}` : null }
     default:
       return { title: item.note ?? 'Notiz', detail: null }
   }
@@ -111,6 +111,7 @@ export function TradeTimeline({ trade, events }: { trade: TradeRow; events: Trad
                 <div className="flex flex-wrap items-baseline justify-between gap-x-2">
                   <span className="font-mono text-xs font-bold text-foreground">
                     {title}
+                    {item.automatic && <span className="ml-1.5 text-muted-foreground">· automatisch (Demo)</span>}
                     {item.isViolation && (
                       <span className="ml-1.5 inline-flex items-center gap-0.5 font-normal text-destructive">
                         <AlertTriangle className="inline size-3" /> Regelbruch

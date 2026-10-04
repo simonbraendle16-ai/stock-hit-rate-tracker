@@ -252,16 +252,23 @@ interface ChartResult {
   }
 }
 
-async function fetchChart(symbol: string, interval: Interval): Promise<ChartResult> {
+async function fetchChart(symbol: string, interval: Interval, since?: number): Promise<ChartResult> {
   const url = new URL(
     `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`,
   )
   url.searchParams.set('interval', YAHOO_INTERVAL[interval])
-  url.searchParams.set('range', YAHOO_RANGE[interval])
+  if (since != null && interval === '5min') {
+    // Yahoo only supplies the recent intraday window. Older gaps remain visible.
+    const earliest = Math.floor(Date.now() / 1000) - 59 * 24 * 60 * 60
+    url.searchParams.set('period1', String(Math.max(earliest, Math.floor(since))))
+    url.searchParams.set('period2', String(Math.floor(Date.now() / 1000)))
+  } else {
+    url.searchParams.set('range', YAHOO_RANGE[interval])
+  }
 
   let res: Response
   try {
-    res = await fetch(url, { headers: { 'User-Agent': UA }, cache: 'no-store' })
+    res = await fetch(url, { headers: { 'User-Agent': UA }, cache: 'no-store', signal: AbortSignal.timeout(10_000) })
   } catch (err) {
     throw new MarketDataError(
       `Yahoo ist nicht erreichbar (${err instanceof Error ? err.message : 'Netzfehler'}).`,
@@ -361,8 +368,8 @@ function aggregateTo4h(candles: Candle[]): Candle[] {
 }
 
 export const yahooProvider: MarketDataProvider = {
-  async getCandles(symbol: string, interval: Interval): Promise<Candle[]> {
-    const result = await fetchChart(symbol, interval)
+  async getCandles(symbol: string, interval: Interval, since?: number): Promise<Candle[]> {
+    const result = await fetchChart(symbol, interval, since)
     let candles = toCandles(result)
     if (interval === '4h') candles = aggregateTo4h(candles)
     if (candles.length === 0) {

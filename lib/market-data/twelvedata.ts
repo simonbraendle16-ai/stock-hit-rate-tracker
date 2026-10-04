@@ -28,7 +28,7 @@ interface TdValue {
 }
 
 export const twelveDataProvider: MarketDataProvider = {
-  async getCandles(symbol: string, interval: Interval): Promise<Candle[]> {
+  async getCandles(symbol: string, interval: Interval, since?: number): Promise<Candle[]> {
     const apiKey = process.env.TWELVEDATA_API_KEY
     if (!apiKey) {
       throw new MarketDataError('TWELVEDATA_API_KEY ist nicht gesetzt.', 'upstream')
@@ -37,11 +37,16 @@ export const twelveDataProvider: MarketDataProvider = {
     const url = new URL('https://api.twelvedata.com/time_series')
     url.searchParams.set('symbol', symbol.toUpperCase())
     url.searchParams.set('interval', TD_INTERVAL[interval])
-    url.searchParams.set('outputsize', String(DEFAULT_OUTPUT_SIZE[interval]))
+    url.searchParams.set('outputsize', String(since == null ? DEFAULT_OUTPUT_SIZE[interval] : 5000))
+    if (since != null) {
+      url.searchParams.set('start_date', new Date(since * 1000).toISOString().slice(0, 19).replace('T', ' '))
+      url.searchParams.set('end_date', new Date().toISOString().slice(0, 19).replace('T', ' '))
+      url.searchParams.set('order', 'asc')
+    }
     url.searchParams.set('timezone', 'UTC')
     url.searchParams.set('apikey', apiKey)
 
-    const res = await fetch(url, { cache: 'no-store' })
+    const res = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(10_000) })
     if (res.status === 404) {
       throw new MarketDataError(
         `Unbekannter Ticker „${symbol}“ bei Twelve Data.`,

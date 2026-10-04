@@ -206,7 +206,7 @@ export class MarketDataError extends Error {
 }
 
 export interface MarketDataProvider {
-  getCandles(symbol: string, interval: Interval): Promise<Candle[]>
+  getCandles(symbol: string, interval: Interval, since?: number): Promise<Candle[]>
 }
 
 /**

@@ -345,3 +345,130 @@ Charts mit Auswahl. 1012 Tests grün, `tsc --noEmit` sauber, `pnpm build` läuft
 ## Ausdrücklich nicht dabei
 Orderbuch/DOM · Footprint · Teilausführungen innerhalb einer Kerze · Slippage ·
 Echtgeld-Automatik · Export nach Quantower.
+
+
+## Nachtrag 04.10.2026 — feste Demo-Preise und manuelle Eingriffe
+
+- Automatische Demo-Einstiege, Teilziele, TP und Stops verwenden immer das
+  festgelegte Level, auch bei Kurssprüngen. Die Buchungszeit ist die Kerzenzeit,
+  der spätere Laufkurs beeinflusst den Preis nicht.
+- `/api/cron/demo-fills` hat einen eigenen stündlichen Takt mit atomarem Lease.
+  Der bestehende GitHub-Workflow ruft die Route auf; Fehler und verbleibende
+  Arbeit werden beim nächsten Fünf-Minuten-Tick erneut versucht. Der allgemeine
+  Kerzensammler verbucht keine Trades mehr.
+- Ausgewertet werden abgeschlossene 5-Minuten-Kerzen. Ein dauerhafter Prüfstand
+  ersetzt die Zwei-Stunden-Kappung. Historie wird in begrenzten Seiten gelesen;
+  noch benötigte Kerzen werden während der Aufarbeitung nicht gekürzt.
+- Automatik und manuelle Handelsaktionen sperren Depot und Trade in derselben
+  Reihenfolge. Frühere Auslösungen werden vor manuellen Eingriffen separat
+  gespeichert. Tatsächliche Teilverkäufe und Nachkäufe bestimmen die Restmenge.
+- Neue Pläne/Änderungen innerhalb einer Kerze gelten ab der nächsten vollständigen
+  Kerze: Die frühere Hälfte einer OHLC-Kerze kann nicht dem neuen Plan zugeordnet
+  werden. Bei Stop und TP in derselben Kerze gewinnt weiterhin der Stop.
+- Fehlende Anfangsabdeckung und Intraday-Lücken stoppen die Prüfung vor der
+  Datenlücke; fehlende/ungültige Daten verschieben den Prüfstand nicht. Bei
+  Börseninstrumenten können tägliche Sitzungspausen ohne Börsenkalender nicht
+  von vollständig fehlenden Handelstagen unterschieden werden. Krypto wird
+  durchgehend geprüft. Manuelle Buchung bleibt mit sichtbarer Warnung möglich.
+- Echtgeld wird nicht automatisch ausgeführt. Automatische Demo-Ereignisse
+  werden in der Chronik markiert; manuelle Planverstöße bleiben erhalten.
+
+### Aktivierung
+
+Vor dem Deployment `drizzle/0043_demo_execution.sql` auf einer isolierten
+Neon-Testbranch prüfen und anschließend über die bestehende Migrationsstrecke
+auf der Zieldatenbank anwenden (direkte Verbindung). Die Migration ist additiv
+und wiederholbar; sie ändert keine bisherigen Handelsbuchungen. Anschließend
+App und Workflow gemeinsam veröffentlichen. Bei einem externen Taktgeber muss
+zusätzlich `/api/cron/demo-fills` mit dem vorhandenen `CRON_SECRET` aufgerufen
+werden; Aufrufe alle fünf Minuten sind erlaubt, die Route begrenzt selbst auf
+stündlich. `force=1` umgeht die Fälligkeit, nicht die laufende Sperre.
+
+Der Trockenlauf `runDemoFills({ trocken: true })` liest nur gespeicherte Daten
+und verändert weder Trades, Kursdaten, Ereignisse, Zielstufen noch Prüfstände.
+Für die Abnahme vorhandene Tests, Typprüfung und Produktionsbuild ausführen.
+Die lokale Sichtprüfung verwendet ausschließlich erfundene Demo-Daten.
+
+Lokaler Abschluss: 1.061 Tests bestanden, separate Typprüfung und Produktionsbuild erfolgreich.
+Die Migration 0043 wurde am 04.10.2026 auf einer isolierten Neon-Branch getestet
+und auf der bestätigten Produktionsdatenbank angewendet.
+
+
+### Produktionsabschluss 04.10.2026
+
+- Der zwischenzeitlich neuere GitHub-Stand (Journal, Assistenz-API und Broker-Import)
+  wurde vor der Veröffentlichung zusammengeführt. Die Demo-Migration heißt deshalb
+  `0043_demo_execution.sql`; Nummer 0038 war inzwischen belegt.
+- `scripts/apply-demo-migration.mjs` prüft nur Migration 0043, zweimalige Anwendung,
+  Spalten und Datentypen; ohne `--apply` wird zurückgerollt. Direkte Verbindung
+  über `DATABASE_URL_UNPOOLED`; alternative Env-Datei über `DEMO_MIGRATION_ENV_FILE`.
+- Mit Brokerbelegen verknüpfte Trades verwenden weiterhin bestätigte Broker-Fills
+  und werden nicht zusätzlich simuliert. Broker-Verknüpfung, Aktivierung und
+  Ausstieg sperren das Depot, sodass sie sich nicht mit der Demo-Automatik überholen.
+- Der bisherige Alarm-Workflow war manuell deaktiviert. Sein Status bleibt erhalten.
+  Der eigene Workflow `.github/workflows/demo-execution.yml` aktiviert ausschließlich
+  Demo-Ausführungen. Er verwendet die vorhandenen Secrets `APP_URL` und `CRON_SECRET`
+  und ruft alle fünf Minuten den stündlich begrenzten Lauf auf. GitHub kann geplante
+  Ausführungen verzögern; Preise richten sich weiterhin nach den geplanten Levels.
+- Nach dem Abgleich: 1.080 Tests, separate Typprüfung und Produktionsbuild erfolgreich.
+
+- Live-Veröffentlichung: `dpl_BpKLm61DEqzck9XBGZuHrT3vvshg`, Vercel-Status READY,
+  Quellstand `96d9f05`, Alias https://stock-hit-rate-tracker-astra-quest.vercel.app.
+- Der eigene Demo-Workflow ist aktiv. Erster tatsächlicher GitHub-Lauf:
+  https://github.com/simonbraendle16-ai/stock-hit-rate-tracker/actions/runs/37204989208
+  (HTTP 200, acht Trades geprüft, ein Einstieg und ein Stop zum Planpreis verbucht).
+  Sechs ältere Trades haben keine vollständige 5-Minuten-Anfangsabdeckung;
+  sie bleiben mit Warnung offen und müssen manuell geprüft werden. Ihr Prüfstand
+  wurde nicht über fehlende Historie hinweg verschoben. Anbieter liefern die
+  benötigte alte Historie nicht vollständig; es wurden keine Kurse erfunden.
+- Zweiter Lauf:
+  https://github.com/simonbraendle16-ai/stock-hit-rate-tracker/actions/runs/37205185530
+  (HTTP 200, `ran: false`, keine Wiederholung bereits gespeicherter Buchungen).
+  Der nächste Termin und die Freigabe der Lauf-Sperre wurden in der Datenbank geprüft.
+- Live-Sichtprüfung: Handelsübersicht, neue Demo-Formularhinweise, vorhandene
+  manuelle Aktionen und Markierung automatischer Ereignisse in der Chronik geprüft.
+  Es wurden keine zusätzlichen Test-Trades in Produktion angelegt.
+- Die temporäre Neon-Testbranch und zusätzlich heruntergeladene Env-Dateien
+  wurden nach Abschluss entfernt. Der deaktivierte Alarm-Workflow bleibt deaktiviert.
+
+
+### Reparatur des Altbestands am 04.10.2026
+
+Die sechs anfangs blockierten Fälle wurden auf ausdrücklichen Nutzerwunsch
+repariert. Historische 5-Minuten-Kerzen der Aktien und von Bitcoin konnten über
+die bereits konfigurierte Twelve-Data-Archivquelle abgerufen und unter bestätigter
+Instrumentidentität ergänzt werden. Neue Zuordnungen schließen fehlende Trade-
+Instrument-Bezüge. Bestehende Kerzen werden durch das Reparaturskript nicht überschrieben.
+
+`since` wird jetzt auch von den alternativen Anbietern berücksichtigt. Für ältere
+Aktienhistorie wird eine Archivquelle genutzt, statt Yahoos auf 59 Tage gekürztes
+Fenster als vollständige Historie zu akzeptieren. Binance erhält den historischen
+`startTime`; USD-Kryptoschreibweisen werden korrekt auf das unterstützte Paar umgesetzt.
+Bekannte US-Aktienbörsen und COMEX haben definierte tägliche Schließzeiten
+(inklusive New-York-Sommerzeit). Unbekannte Börsen und echte Intraday-Lücken
+bleiben geschützt; Krypto bleibt kontinuierlich.
+
+Für Gold wurde ausdrücklich die Rekonstruktion aus echten 15-Minuten-Archivkerzen
+autorisiert. Fehlende Fenster sind damit geprüft, ohne daraus künstliche
+5-Minuten-Kerzen zu erzeugen. Grobere Buchungen tragen Intervalldauer und
+Auslösungsfenster in den Ereignisdaten; reine Abdeckungsprüfungen stehen als Notiz
+in der Chronik. Eine teilweise bereits geprüfte Archivkerze darf nur überbrückt
+werden, wenn sie keinen Auslöser berührt. Der spätere Gold-Einstieg wurde aus einer
+echten 5-Minuten-Kerze zum unveränderten Planlevel gebucht. Laufende Automatik
+bleibt bei fünf Minuten. AAPL ist auf Nutzerwunsch „kein Handel“; der ursprüngliche
+Plan bleibt erhalten.
+
+Werkzeug: `scripts/repair-demo-history.ts`, standardmäßig Vorschau, gezielt mit
+`--ids`, optional `--discard` und `--archive`; nur `--apply` schreibt. Der Lauf
+prüft Demo-Zugehörigkeit und Brokerverknüpfungen, verwendet die gemeinsamen Sperren
+und begrenzte Seiten. Quellen, Ausgangslage und Abschlussprüfung liegen lokal im
+ignorierten Ordner `.baseline-demo-repair`; persönliche Trades werden nicht ins
+Repository übernommen. Ein Wiederholungslauf bestätigte: keine neuen Ereignisse,
+keine Warnungen, keine Restpositionen bei abgeschlossenen Trades, unveränderte
+Planlevels und Ausführungspreise exakt an den jeweiligen Levels.
+
+Verifikation nach Reparatur: 1.093 Tests, separate Typprüfung, Produktionsbuild
+und Prüfung der gespeicherten Buchungen. Vier der fünf verbleibenden Pläne bzw.
+Positionen wurden historisch ausgeführt, ein Plan wartet auf seinen Einstieg;
+der sechste Datensatz ist ausdrücklich verworfen. Der historische Gold-Abgleich
+bewertet nur Zeitfenster nach dem Anlagezeitpunkt des Plans.

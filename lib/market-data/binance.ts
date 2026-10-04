@@ -20,21 +20,23 @@ const BINANCE_INTERVAL: Record<Interval, string> = {
 
 /** `BTC` → `BTCUSDT`; bereits vollständige Paare (`BTCUSDT`, `ETHEUR`) bleiben unverändert. */
 export function toBinanceSymbol(symbol: string): string {
-  const s = symbol.toUpperCase().replace(/[^A-Z0-9]/g, '')
+  const clean = symbol.toUpperCase().replace(/[^A-Z0-9]/g, '')
+  const s = clean.endsWith('USD') ? `${clean.slice(0, -3)}USDT` : clean
   const quoteSuffixes = ['USDT', 'USDC', 'BUSD', 'EUR', 'BTC', 'ETH']
   if (quoteSuffixes.some((q) => s.length > q.length && s.endsWith(q))) return s
   return `${s}USDT`
 }
 
 export const binanceProvider: MarketDataProvider = {
-  async getCandles(symbol: string, interval: Interval): Promise<Candle[]> {
+  async getCandles(symbol: string, interval: Interval, since?: number): Promise<Candle[]> {
     const pair = toBinanceSymbol(symbol)
     const url = new URL('https://api.binance.com/api/v3/klines')
     url.searchParams.set('symbol', pair)
     url.searchParams.set('interval', BINANCE_INTERVAL[interval])
+    if (since != null) url.searchParams.set('startTime', String(Math.floor(since * 1000)))
     url.searchParams.set('limit', String(Math.min(DEFAULT_OUTPUT_SIZE[interval], 1000)))
 
-    const res = await fetch(url, { cache: 'no-store' })
+    const res = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(10_000) })
     if (res.status === 400) {
       throw new MarketDataError(
         `Unbekanntes Krypto-Symbol „${symbol}“ (Binance-Paar ${pair}).`,

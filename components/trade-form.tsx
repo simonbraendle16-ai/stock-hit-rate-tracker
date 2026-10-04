@@ -562,8 +562,14 @@ export function TradeForm({
             </InlineNotice>
           )}
           {depot?.kind === 'demo' && (
-            <div className="mt-2">
+            <div className="mt-2 flex flex-col items-start gap-2">
               <PaperBadge size="compact" />
+              <p className="note">
+                Geplante Einstiege, TP und Stop werden automatisch zu deinen festgelegten
+                Preisen verbucht, auch bei Kurssprüngen. Prüfung stündlich in
+                5-Minuten-Auflösung, auch bei geschlossener App. Neue Pläne und Änderungen gelten
+                ab der nächsten vollständigen Kerze. Du kannst weiterhin manuell handeln.
+              </p>
             </div>
           )}
         </Field>

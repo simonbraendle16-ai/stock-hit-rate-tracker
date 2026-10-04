@@ -14,11 +14,18 @@ export async function saveSettlementReceipt(tx: Tx, userId: string, eventId: num
   try { receipt = normalizeSettlementReceipt(raw) } catch (e) {
     throw new ApiError(422, e instanceof Error ? e.message : 'Ungültiger Abrechnungsbeleg.')
   }
-  const [event] = await tx.select().from(tradeEvent).where(and(eq(tradeEvent.id, eventId), eq(tradeEvent.userId, userId))).limit(1)
-  if (!event || !['teilverkauf', 'geschlossen'].includes(event.type)) throw new ApiError(404, 'Ausstiegsereignis nicht gefunden.')
-  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${'settlement:' + userId + ':' + event.tradeId}, 0))`)
-  const [t] = await tx.select().from(trade).where(and(eq(trade.id, event.tradeId), eq(trade.userId, userId))).limit(1)
+  const [initialEvent] = await tx.select().from(tradeEvent).where(and(eq(tradeEvent.id, eventId), eq(tradeEvent.userId, userId))).limit(1)
+  if (!initialEvent || !['teilverkauf', 'geschlossen'].includes(initialEvent.type)) throw new ApiError(404, 'Ausstiegsereignis nicht gefunden.')
+  const [before] = await tx.select().from(trade).where(and(eq(trade.id, initialEvent.tradeId), eq(trade.userId, userId))).limit(1)
+  if (!before) throw new ApiError(404, 'Trade nicht gefunden.')
+  // Share the same portfolio-first order as Demo execution and manual actions.
+  await tx.execute(sql`SELECT id FROM portfolio WHERE id = ${before.portfolioId} AND "userId" = ${userId} FOR UPDATE`)
+  await tx.execute(sql`SELECT id FROM trade WHERE id = ${before.id} AND "userId" = ${userId} FOR UPDATE`)
+  const [t] = await tx.select().from(trade).where(and(eq(trade.id, initialEvent.tradeId), eq(trade.userId, userId))).limit(1)
   if (!t) throw new ApiError(404, 'Trade nicht gefunden.')
+  if (t.portfolioId !== before.portfolioId) throw new ApiError(409, 'Depotzuordnung wurde geändert. Trade neu lesen.')
+  const [event] = await tx.select().from(tradeEvent).where(and(eq(tradeEvent.id, eventId), eq(tradeEvent.userId, userId))).limit(1)
+  if (!event) throw new ApiError(404, 'Ausstiegsereignis nicht gefunden.')
   const [depot] = await tx.select().from(portfolio).where(and(eq(portfolio.id, t.portfolioId), eq(portfolio.userId, userId))).limit(1)
   const accountCurrency = t.accountCurrency ?? depot?.currency
   if (!accountCurrency || receipt.currency !== accountCurrency) throw new ApiError(422, 'Beleg muss in der bestätigten Depotwährung abgerechnet sein.')
@@ -35,7 +42,10 @@ export async function saveSettlementReceipt(tx: Tx, userId: string, eventId: num
   const [saved] = await tx.insert(tradeSettlementReceipt).values({ userId, tradeId: t.id,
     eventId, version: version + 1, receipt, correctionReason: current ? correctionReason!.trim() : null }).returning()
   let payload: Record<string, unknown> = {}
-  try { payload = JSON.parse(event.payload ?? '{}') } catch { /* Preserve original in revision reference. */ }
+  try {
+    const parsed = JSON.parse(event.payload ?? '{}')
+    payload = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : { priorPayload: event.payload }
+  } catch { payload = { priorPayload: event.payload } }
   await tx.update(tradeEvent).set({ payload: JSON.stringify({ ...payload, settlement: receipt,
     settlementReceiptId: saved.id, settlementVersion: saved.version }) }).where(eq(tradeEvent.id, eventId))
   if (t.status === 'abgeschlossen') {
