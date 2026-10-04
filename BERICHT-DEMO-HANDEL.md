@@ -19,6 +19,11 @@ behoben. Planlevels blieben unverändert; Preise, Restmengen und Wiederholungssc
 wurden direkt an den gespeicherten Buchungen geprüft.
 
 [Live-App](https://stock-hit-rate-tracker-astra-quest.vercel.app) ·
-[Geprüfter Hintergrundlauf](https://github.com/simonbraendle16-ai/stock-hit-rate-tracker/actions/runs/37204989208)
+[Geprüfter Hintergrundaufruf nach Reparatur](https://github.com/simonbraendle16-ai/stock-hit-rate-tracker/actions/runs/37208465194)
+
+Reparaturstand `19a74bb` ist auf `main` und produktiv veröffentlicht. Im Browser
+wurden Golds aktiver Einstieg bei 4.265 und ILMNs Abschluss bei exakt 208 bestätigt.
+Der anschließende Hintergrundaufruf antwortete mit HTTP 200 und `ok: true`;
+die nächste Stundenprüfung war noch nicht fällig.
 
 Technische Details und Betriebsablauf: [PLAN-DEMO-HANDEL.md](PLAN-DEMO-HANDEL.md).
