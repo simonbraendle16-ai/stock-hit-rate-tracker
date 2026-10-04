@@ -472,3 +472,12 @@ und Prüfung der gespeicherten Buchungen. Vier der fünf verbleibenden Pläne bz
 Positionen wurden historisch ausgeführt, ein Plan wartet auf seinen Einstieg;
 der sechste Datensatz ist ausdrücklich verworfen. Der historische Gold-Abgleich
 bewertet nur Zeitfenster nach dem Anlagezeitpunkt des Plans.
+
+Abschluss der Veröffentlichung: Reparaturcommit `19a74bb` auf `main` gepusht;
+Vercel-Produktionsdeployment `dpl_AWr99u4pFRKUHiABDUqy3XMJzz82` ist READY und
+unter der bestehenden Live-Adresse erreichbar. Browserprüfung bestätigte Gold
+aktiv mit automatischem Einstieg bei 4.265 sowie ILMN abgeschlossen durch Stop
+bei 208, jeweils ohne Historienwarnung. GitHub-Lauf `37208465194` bestätigte
+HTTP 200 und `ok: true`. Er führte wegen des noch nicht fälligen Stundenfensters
+keine neue Handelsprüfung aus (`ran: false`); die separate Datenbankprüfung
+bestätigte zuvor alle sechs Datensätze und den Wiederholungsschutz.
