@@ -3,7 +3,7 @@
 // shares the same portfolio/trade lock as manual actions.
 import { and, asc, eq, inArray } from 'drizzle-orm'
 import { db } from '@/lib/db'
-import { portfolio, trade, tradeEvent, tradeTarget, userSettings } from '@/lib/db/schema'
+import { brokerOrder, portfolio, trade, tradeEvent, tradeTarget, userSettings } from '@/lib/db/schema'
 import { getCachedCandles } from '@/lib/market-data/cached'
 import { readStoredCandles, pruneStoredCandles } from '@/lib/market-data/candle-store'
 import { createSymbolResolver } from '@/lib/market-data/lookup'
@@ -51,11 +51,15 @@ export async function runDemoFills(
       .from(portfolio).where(opts.userId ? eq(portfolio.userId, opts.userId) : undefined)
     const ids = depots.filter((p) => normalizePortfolioKind(p.kind) === 'demo').map((p) => p.id)
     if (!ids.length) return { ...report, ran: true }
-    const trades = await db.select().from(trade).where(and(
+    let trades = await db.select().from(trade).where(and(
       inArray(trade.portfolioId, ids), inArray(trade.status, ['geplant', 'aktiv']),
       opts.userId ? eq(trade.userId, opts.userId) : undefined,
       opts.tradeId != null ? eq(trade.id, opts.tradeId) : undefined,
     ))
+    const brokerLinks = await db.select({ linkedTradeId: brokerOrder.linkedTradeId }).from(brokerOrder)
+      .where(inArray(brokerOrder.portfolioId, ids))
+    const brokerTradeIds = new Set(brokerLinks.map((row) => row.linkedTradeId))
+    trades = trades.filter((row) => !brokerTradeIds.has(row.id))
     // Healthy trades first so repeatedly failing symbols cannot starve the rest.
     // A shared symbol is refreshed again if a later trade needs older history.
     const baseline = (t: typeof trade.$inferSelect) =>
@@ -93,6 +97,10 @@ export async function runDemoFills(
           if (t.ticker !== before.ticker || t.stockId !== before.stockId || t.market !== before.market) {
             return { issue: null, pending: true }
           }
+          // Broker-linked trades use confirmed broker fills, never simulated prices.
+          const linked = await db.select({ id: brokerOrder.id }).from(brokerOrder)
+            .where(and(eq(brokerOrder.userId, t.userId), eq(brokerOrder.linkedTradeId, t.id))).limit(1)
+          if (linked.length) return null
           const events = await ladeEreignisse(t.userId, t.id)
           const targets = await ladeStufen(t.userId, t.id)
           const beginn = pruefBeginn(t, events).beginn

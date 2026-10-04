@@ -63,6 +63,8 @@ export async function POST(req: NextRequest) {
     if (!depot) throw new ApiError(404, 'Demo-Depot nicht gefunden.')
 
     const result = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT id FROM portfolio WHERE id = ${input.portfolioId}
+        AND "userId" = ${userId} FOR UPDATE`)
       // Eine Positions-ID serialisiert ihre Ausstiege, auch wenn zwei Beobachtungen parallel eintreffen.
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${userId + ':' + input.brokerAccountId + ':' + input.brokerPositionId}, 0))`)
       const [existing] = await tx.select().from(brokerExit).where(and(eq(brokerExit.userId, userId),

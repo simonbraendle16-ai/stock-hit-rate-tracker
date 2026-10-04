@@ -1,0 +1,37 @@
+name: Demo-Handel automatisch ausführen
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: demo-execution
+  cancel-in-progress: false
+
+jobs:
+  execute:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Fälligen Demo-Lauf ausführen
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          code=$(curl --silent --show-error --location \
+            --max-time 65 --output demo.json --write-out '%{http_code}' \
+            --header "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/cron/demo-fills")
+          echo "Demo HTTP $code"
+          cat demo.json
+          if [ "$code" != "200" ]; then
+            echo "::error::Demo-Ausführung fehlgeschlagen."
+            exit 1
+          fi
+          if [ "$(jq -r '.ok' demo.json)" != "true" ]; then
+            echo "::warning::Demo-Ausführung meldet fehlende Kursdaten; Details im Bericht."
+          fi

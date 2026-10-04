@@ -390,4 +390,24 @@ Für die Abnahme vorhandene Tests, Typprüfung und Produktionsbuild ausführen.
 Die lokale Sichtprüfung verwendet ausschließlich erfundene Demo-Daten.
 
 Lokaler Abschluss: 1.061 Tests bestanden, separate Typprüfung und Produktionsbuild erfolgreich.
-Die neue Migration wurde noch nicht gegen die Live-Datenbank ausgeführt.
+Die Migration 0043 wurde am 04.10.2026 auf einer isolierten Neon-Branch getestet
+und auf der bestätigten Produktionsdatenbank angewendet.
+
+
+### Produktionsabschluss 04.10.2026
+
+- Der zwischenzeitlich neuere GitHub-Stand (Journal, Assistenz-API und Broker-Import)
+  wurde vor der Veröffentlichung zusammengeführt. Die Demo-Migration heißt deshalb
+  `0043_demo_execution.sql`; Nummer 0038 war inzwischen belegt.
+- `scripts/apply-demo-migration.mjs` prüft nur Migration 0043, zweimalige Anwendung,
+  Spalten und Datentypen; ohne `--apply` wird zurückgerollt. Direkte Verbindung
+  über `DATABASE_URL_UNPOOLED`; alternative Env-Datei über `DEMO_MIGRATION_ENV_FILE`.
+- Mit Brokerbelegen verknüpfte Trades verwenden weiterhin bestätigte Broker-Fills
+  und werden nicht zusätzlich simuliert. Broker-Verknüpfung, Aktivierung und
+  Ausstieg sperren das Depot, sodass sie sich nicht mit der Demo-Automatik überholen.
+- Der bisherige Alarm-Workflow war manuell deaktiviert. Sein Status bleibt erhalten.
+  Der eigene Workflow `.github/workflows/demo-execution.yml` aktiviert ausschließlich
+  Demo-Ausführungen. Er verwendet die vorhandenen Secrets `APP_URL` und `CRON_SECRET`
+  und ruft alle fünf Minuten den stündlich begrenzten Lauf auf. GitHub kann geplante
+  Ausführungen verzögern; Preise richten sich weiterhin nach den geplanten Levels.
+- Nach dem Abgleich: 1.080 Tests, separate Typprüfung und Produktionsbuild erfolgreich.

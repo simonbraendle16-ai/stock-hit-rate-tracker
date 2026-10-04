@@ -6,7 +6,7 @@ import type { TradeTargetRow } from './trade-targets'
 import type { Candle } from './market-data/types'
 
 const state = vi.hoisted(() => ({
-  trades: [] as unknown[], events: [] as unknown[], targets: [] as unknown[],
+  brokerOrders: [] as unknown[], trades: [] as unknown[], events: [] as unknown[], targets: [] as unknown[],
   candles: [] as unknown[], kind: 'demo', fail: false, changeInstrument: false, locked: Promise.resolve(),
 }))
 type Predicate = { kind: string; field?: string; value?: unknown; parts?: Predicate[] }
@@ -25,6 +25,7 @@ vi.mock('@/lib/db', () => {
   }
   const rows = (table: Parameters<typeof getTableName>[0]) => {
     const name = getTableName(table)
+    if (name === 'broker_order') return state.brokerOrders
     if (name === 'trade') return state.trades
     if (name === 'trade_event') return state.events
     if (name === 'trade_target') return state.targets
@@ -116,7 +117,7 @@ const opened = (): TradeEventRow => ({
 beforeEach(() => {
   vi.useFakeTimers()
   vi.setSystemTime(at('12:00'))
-  Object.assign(state, { trades: [row()], events: [opened()],
+  Object.assign(state, { brokerOrders: [], trades: [row()], events: [opened()],
     targets: [target(1, 110, 40), target(2, 120, 60)],
     candles: [candle('09:55'), candle('10:00'), candle('10:05', { high: 112 }), candle('10:10', { high: 122 })],
     kind: 'demo', fail: false, changeInstrument: false, locked: Promise.resolve() })
@@ -126,6 +127,14 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers())
 
 describe('Demo-Ausführung mit gespeicherten Positionen', () => {
+  it('simuliert keine Ausführungen für verknüpfte Brokerpositionen', async () => {
+    state.brokerOrders = [{ id: 1, userId: 'user', portfolioId: 1, linkedTradeId: 1 }]
+    const result = await runDemoFills({ refresh: false })
+    expect(result.zeilen).toEqual([])
+    expect(state.events).toHaveLength(1)
+    expect((state.trades[0] as typeof trade.$inferSelect).status).toBe('aktiv')
+  })
+
   it('bucht mehrere Ziele chronologisch zu Planpreisen und wiederholt sie nicht', async () => {
     const result = await runDemoFills()
     expect(result).toMatchObject({ teilziele: 1, abschluesse: 1, error: null })

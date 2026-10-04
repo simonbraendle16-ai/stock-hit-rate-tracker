@@ -19,6 +19,11 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
       throw new ApiError(422, 'Bestätigter Trade-Bezug mit Zeitpunkt erforderlich.')
     }
     const result = await db.transaction(async (tx) => {
+      const [ownedOrder] = await tx.select({ portfolioId: brokerOrder.portfolioId }).from(brokerOrder)
+        .where(and(eq(brokerOrder.id, id), eq(brokerOrder.userId, userId))).limit(1)
+      if (!ownedOrder) throw new ApiError(404, 'Brokerbeleg nicht gefunden.')
+      await tx.execute(sql`SELECT id FROM portfolio WHERE id = ${ownedOrder.portfolioId}
+        AND "userId" = ${userId} FOR UPDATE`)
       await tx.execute(sql`SELECT id FROM broker_order WHERE "userId" = ${userId}
         AND id IN (${id}, ${replacesBrokerOrderId ?? id}) ORDER BY id FOR UPDATE`)
       const [order] = await tx.select().from(brokerOrder).where(and(eq(brokerOrder.id, id),
