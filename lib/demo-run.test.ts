@@ -1,76 +1,73 @@
-// Geprüft wird hier die EGRESS-GRENZE des Demo-Laufs — die Regel, ohne die er
-// bei jedem Durchgang dieselbe, stetig wachsende Kerzenmenge erneut liest.
-// Der Rest von `demo-run.ts` schreibt in die Datenbank und gehört nicht in die
-// Suite; die Ausführungsentscheidung selbst steht in `demo-fill.test.ts`.
 import { describe, expect, it } from 'vitest'
-import { pruefBeginn, PRUEF_FENSTER_MS } from './demo-run'
+import { pruefBeginn, completedDemoCandles, demoCoveragePrefix } from './demo-progress'
 import type { trade } from './db/schema'
+import type { TradeEventRow } from './trade-events'
+import type { Candle } from './market-data/types'
 
-type TradeRow = typeof trade.$inferSelect
+const date = (value: string) => new Date(`2026-10-02T${value}:00Z`)
+const row = (patch: Partial<typeof trade.$inferSelect> = {}) => ({
+  createdAt: date('09:00'), openedAt: date('10:00'),
+  demoCheckedAt: null, demoBoundaryAt: null, ...patch,
+}) as typeof trade.$inferSelect
+const event = (type: string, at: Date) => ({ type, at }) as TradeEventRow
+const candle = (at: Date, patch: Partial<Candle> = {}): Candle => ({
+  time: at.getTime() / 1000, open: 100, high: 110, low: 95, close: 100, volume: 1, ...patch,
+})
 
-const JETZT = new Date('2026-08-20T12:00:00Z').getTime()
-
-function tradeMit(p: { openedAt?: Date | null; createdAt: Date }): TradeRow {
-  return {
-    openedAt: p.openedAt ?? null,
-    createdAt: p.createdAt,
-  } as unknown as TradeRow
-}
-
-function ereignis(at: Date) {
-  return { at } as unknown as Parameters<typeof pruefBeginn>[1][number]
-}
-
-describe('pruefBeginn', () => {
-  it('nimmt das letzte Ereignis, wenn es im Fenster liegt', () => {
-    const vorEinerStunde = new Date(JETZT - 60 * 60 * 1000)
-    const r = pruefBeginn(
-      tradeMit({ createdAt: new Date('2026-01-01') }),
-      [ereignis(vorEinerStunde)],
-      JETZT,
-    )
-    expect(r.beginn.getTime()).toBe(vorEinerStunde.getTime())
-    expect(r.gekappt).toBe(false)
+describe('Dauerhafter Demo-Prüfstand', () => {
+  it('holt auch ältere ungeprüfte Historie nach statt nach zwei Stunden abzuschneiden', () => {
+    expect(pruefBeginn(row({ createdAt: new Date('2026-09-01'), openedAt: null }), []).beginn)
+      .toEqual(new Date('2026-09-01'))
   })
-
-  it('KAPPT ein Ereignis, das älter ist als das Fenster', () => {
-    // Der eigentliche Egress-Schutz: Ein Trade, an dem seit Wochen nichts
-    // passiert ist, darf nicht bei jedem Lauf Wochen an Kerzen nachlesen.
-    const vorDreiWochen = new Date(JETZT - 21 * 24 * 60 * 60 * 1000)
-    const r = pruefBeginn(
-      tradeMit({ createdAt: new Date('2026-01-01') }),
-      [ereignis(vorDreiWochen)],
-      JETZT,
-    )
-    expect(r.beginn.getTime()).toBe(JETZT - PRUEF_FENSTER_MS)
-    expect(r.gekappt).toBe(true)
+  it('nimmt den gespeicherten Prüfstand auch ohne neues Handelsereignis', () => {
+    expect(pruefBeginn(row({ demoCheckedAt: date('12:00') }), []).beginn).toEqual(date('12:00'))
   })
-
-  it('fällt ohne Ereignis auf die Eröffnung zurück', () => {
-    const vorZehnMinuten = new Date(JETZT - 10 * 60 * 1000)
-    const r = pruefBeginn(tradeMit({ openedAt: vorZehnMinuten, createdAt: new Date('2026-01-01') }), [], JETZT)
-    expect(r.beginn.getTime()).toBe(vorZehnMinuten.getTime())
-    expect(r.gekappt).toBe(false)
+  it('eine Notiz überspringt keine ungeprüften Kerzen', () => {
+    expect(pruefBeginn(row(), [event('notiz', date('12:00'))]).beginn).toEqual(date('10:00'))
   })
-
-  it('fällt ohne Eröffnung auf die Anlage zurück — und kappt sie, wenn sie alt ist', () => {
-    const r = pruefBeginn(tradeMit({ createdAt: new Date('2026-01-01') }), [], JETZT)
-    expect(r.beginn.getTime()).toBe(JETZT - PRUEF_FENSTER_MS)
-    expect(r.gekappt).toBe(true)
+  it('eine manuelle Planänderung gilt erst ab ihrer neuen Grenze', () => {
+    expect(pruefBeginn(row({ demoCheckedAt: date('11:00'), demoBoundaryAt: date('11:32') }), []).beginn)
+      .toEqual(date('11:32'))
   })
-
-  it('nimmt das JÜNGSTE Ereignis, nicht das erste', () => {
-    const alt = new Date(JETZT - 90 * 60 * 1000)
-    const neu = new Date(JETZT - 30 * 60 * 1000)
-    const r = pruefBeginn(
-      tradeMit({ createdAt: new Date('2026-01-01') }),
-      [ereignis(alt), ereignis(neu)],
-      JETZT,
-    )
-    expect(r.beginn.getTime()).toBe(neu.getTime())
+  it('berücksichtigt alte manuelle Änderungen ohne gespeicherten Prüfstand', () => {
+    expect(pruefBeginn(row(), [event('teilverkauf', date('11:10')), event('notiz', date('12:00'))]).beginn)
+      .toEqual(date('11:10'))
   })
+})
 
-  it('das Fenster ist zwei Stunden — ein voller Lauf Puffer beim stündlichen Takt', () => {
-    expect(PRUEF_FENSTER_MS).toBe(2 * 60 * 60 * 1000)
+describe('Abgeschlossene Kerzen und manuelle Grenzen', () => {
+  it('prüft die laufende Kerze erst nach ihrem Ende', () => {
+    const candles = [candle(date('11:55')), candle(date('12:00'))]
+    expect(completedDemoCandles(candles, date('11:00'), date('12:03').getTime())).toEqual([candles[0]])
+    expect(completedDemoCandles(candles, date('11:00'), date('12:05').getTime())).toEqual(candles)
+  })
+  it('wendet neue Levels nicht auf High/Low von vor einer Änderung innerhalb derselben Kerze an', () => {
+    const candles = [candle(date('11:30')), candle(date('11:35'))]
+    expect(completedDemoCandles(candles, date('11:32'), date('12:00').getTime())).toEqual([candles[1]])
+  })
+  it('liest eine vollständig geprüfte Kerze beim nächsten Lauf nicht erneut', () => {
+    expect(completedDemoCandles([candle(date('11:55')), candle(date('12:00'))], date('12:00'), date('12:05').getTime()))
+      .toEqual([candle(date('12:00'))])
+  })
+  it('lässt den Prüfstand bei ungültigen OHLC-Daten stehen', () => {
+    expect(() => completedDemoCandles([candle(date('11:00'), { low: NaN })], date('10:00'), date('12:00').getTime()))
+      .toThrow('Prüfstand bleibt unverändert')
+  })
+})
+
+describe('Kurslücken', () => {
+  it('verarbeitet den nachgewiesenen Anfang und stoppt vor einer fehlenden Intraday-Kerze', () => {
+    const candles = [candle(date('11:00')), candle(date('11:10'))]
+    expect(demoCoveragePrefix(candles, candle(date('10:55')), date('11:00'), 'aktien'))
+      .toEqual({ usable: [candles[0]], gap: true })
+  })
+  it('behandelt geschlossene Börsensitzungen nicht als fehlende Intraday-Kerzen', () => {
+    const friday = new Date('2026-10-02T15:55:00Z')
+    const monday = new Date('2026-10-05T09:00:00Z')
+    expect(demoCoveragePrefix([candle(monday)], candle(friday), friday, 'aktien').gap).toBe(false)
+    expect(demoCoveragePrefix([candle(monday)], candle(friday), friday, 'krypto').gap).toBe(true)
+  })
+  it('bewertet fehlende Kerzen vor einer manuellen Grenze nicht gegen den neuen Plan', () => {
+    expect(demoCoveragePrefix([candle(date('11:35'))], candle(date('11:00')), date('11:32'), 'aktien').gap).toBe(false)
   })
 })

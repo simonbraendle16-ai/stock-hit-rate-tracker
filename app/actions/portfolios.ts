@@ -12,6 +12,7 @@
 
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
+import { withManualTrade } from '@/lib/manual-trade'
 import { portfolio, trade } from '@/lib/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
 import { headers } from 'next/headers'
@@ -273,7 +274,7 @@ export async function deletePortfolio(id: number): Promise<void> {
  * Zurückgegeben wird, was sich geändert hat — die Oberfläche zeigt es an, statt
  * die Folgen stillschweigend hinzunehmen.
  */
-export async function moveTrade(
+async function moveTradeImpl(
   tradeId: number,
   portfolioId: number,
 ): Promise<{ crossesKind: boolean; tradedWithMoney: boolean }> {
@@ -294,7 +295,7 @@ export async function moveTrade(
 
   await db
     .update(trade)
-    .set({ portfolioId, tradedWithMoney: effekt.tradedWithMoney })
+    .set({ portfolioId, tradedWithMoney: effekt.tradedWithMoney, demoBoundaryAt: new Date(), demoCheckedAt: null })
     .where(and(eq(trade.id, tradeId), eq(trade.userId, userId)))
 
   revalidateAll()
@@ -379,4 +380,8 @@ export async function updatePortfolioFxRates(
     .where(and(eq(portfolio.id, portfolioId), eq(portfolio.userId, userId)))
 
   revalidateAll()
+}
+
+export async function moveTrade(...args: Parameters<typeof moveTradeImpl>) {
+  return withManualTrade(await getUserId(), args[0], () => moveTradeImpl(...args))
 }

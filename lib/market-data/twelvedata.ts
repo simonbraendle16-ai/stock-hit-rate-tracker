@@ -41,7 +41,7 @@ export const twelveDataProvider: MarketDataProvider = {
     url.searchParams.set('timezone', 'UTC')
     url.searchParams.set('apikey', apiKey)
 
-    const res = await fetch(url, { cache: 'no-store' })
+    const res = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(10_000) })
     if (res.status === 404) {
       throw new MarketDataError(
         `Unbekannter Ticker „${symbol}“ bei Twelve Data.`,

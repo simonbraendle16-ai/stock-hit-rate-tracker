@@ -2,6 +2,7 @@
 
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
+import { withManualTrade } from '@/lib/manual-trade'
 import { priceAlert, trade, tradeEvent, tradeTarget, assessment, stock } from '@/lib/db/schema'
 import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm'
 import { headers } from 'next/headers'
@@ -843,7 +844,7 @@ function requirePositive(v: number | null | undefined, msg: string): number {
  * festgehalten, nicht rückwirkend erinnert.
  * Returns a Revenge-Guard warning if a loss was closed within the cooldown.
  */
-export async function activateTrade(
+async function activateTradeImpl(
   id: number,
   mood: MoodCheckInput,
   // Etappe 3: auf Wunsch beim Aktivieren Kurs-Alerts aus dem Plan ableiten
@@ -975,7 +976,7 @@ export async function activateTrade(
  * stop or invalidation is a Douglas rule violation — it is logged, not silently
  * accepted. Pass `force` to override (and take the discipline hit).
  */
-export async function updateTradePlan(
+async function updateTradePlanImpl(
   id: number,
   patch: Partial<TradeInput>,
   force = false,
@@ -1322,7 +1323,7 @@ async function syncPlanAlertsAfterEdit(
  * Close a trade. A loss must be explicitly accepted (Douglas: "Meine Zählung
  * war für diesen Trade falsch. Der nächste Trade zählt.").
  */
-export async function closeTrade(
+async function closeTradeImpl(
   id: number,
   data: {
     result: 'gewinn' | 'verlust' | 'breakeven'
@@ -1466,7 +1467,7 @@ export async function closeTrade(
  * Ausstiegskurs). Deshalb muss beim Teilverkauf zwingend eine Restmenge offen
  * bleiben (`quantity < openQty`).
  */
-export async function partialClose(
+async function partialCloseImpl(
   id: number,
   data: { quantity: number; price: number; fee?: number | null; note?: string | null },
 ): Promise<void> {
@@ -1516,7 +1517,7 @@ export async function partialClose(
  * Pyramidisieren ist Douglas-konform; es erhöht aber das Risiko über den
  * ursprünglichen Einsatz hinaus, was in der R-Anzeige sichtbar wird.
  */
-export async function addToPosition(
+async function addToPositionImpl(
   id: number,
   data: { quantity: number; price: number; fee?: number | null; note?: string | null },
 ): Promise<void> {
@@ -1613,7 +1614,7 @@ function basisQuantity(t: TradeRow, events: TradeEventRow[]): number {
  * `closeTrade` — die Oberfläche öffnet dafür den Abschluss-Dialog mit dem Kurs
  * dieser Stufe und reicht `targetId` mit.
  */
-export async function executeTarget(
+async function executeTargetImpl(
   tradeId: number,
   targetId: number,
   data: { price?: number | null; fee?: number | null; note?: string | null } = {},
@@ -1724,7 +1725,7 @@ export async function listTradeEvents(id: number): Promise<TradeEventRow[]> {
  * expectancy, P&L and the hit-rate curve (none of those count it). Feeds the
  * separate Zonen-Trefferquote via getZoneStats().
  */
-export async function markNoTrade(id: number, note?: string | null): Promise<void> {
+async function markNoTradeImpl(id: number, note?: string | null): Promise<void> {
   const userId = await getUserId()
   const t = await loadOwnedTrade(userId, id)
   if (t.status !== 'geplant') {
@@ -1744,9 +1745,10 @@ export async function markNoTrade(id: number, note?: string | null): Promise<voi
   revalidatePath('/tracking')
 }
 
-export async function abortTrade(id: number): Promise<void> {
+async function abortTradeImpl(id: number): Promise<void> {
   const userId = await getUserId()
   const t = await loadOwnedTrade(userId, id)
+  if (!['geplant', 'aktiv'].includes(t.status)) throw new Error('Trade ist bereits beendet.')
   const closedAt = new Date()
   const wasActive = t.status === 'aktiv'
 
@@ -1777,7 +1779,7 @@ export async function abortTrade(id: number): Promise<void> {
   revalidatePath('/trades')
 }
 
-export async function deleteTrade(id: number): Promise<void> {
+async function deleteTradeImpl(id: number): Promise<void> {
   const userId = await getUserId()
   await db.transaction(async (tx) => {
     // Events und Stufen zuerst entfernen — sonst blieben verwaiste Zeilen stehen.
@@ -2286,4 +2288,41 @@ export async function exportTradesCsv(): Promise<string> {
     )
   }
   return lines.join('\n')
+}
+
+// Shared ordering and transaction lock for manual position/plan changes.
+export async function activateTrade(...args: Parameters<typeof activateTradeImpl>) {
+  return withManualTrade(await getUserId(), args[0], () => activateTradeImpl(...args))
+}
+
+export async function updateTradePlan(...args: Parameters<typeof updateTradePlanImpl>) {
+  return withManualTrade(await getUserId(), args[0], () => updateTradePlanImpl(...args))
+}
+
+export async function closeTrade(...args: Parameters<typeof closeTradeImpl>) {
+  return withManualTrade(await getUserId(), args[0], () => closeTradeImpl(...args))
+}
+
+export async function partialClose(...args: Parameters<typeof partialCloseImpl>) {
+  return withManualTrade(await getUserId(), args[0], () => partialCloseImpl(...args))
+}
+
+export async function addToPosition(...args: Parameters<typeof addToPositionImpl>) {
+  return withManualTrade(await getUserId(), args[0], () => addToPositionImpl(...args))
+}
+
+export async function executeTarget(...args: Parameters<typeof executeTargetImpl>) {
+  return withManualTrade(await getUserId(), args[0], () => executeTargetImpl(...args))
+}
+
+export async function markNoTrade(...args: Parameters<typeof markNoTradeImpl>) {
+  return withManualTrade(await getUserId(), args[0], () => markNoTradeImpl(...args))
+}
+
+export async function abortTrade(...args: Parameters<typeof abortTradeImpl>) {
+  return withManualTrade(await getUserId(), args[0], () => abortTradeImpl(...args))
+}
+
+export async function deleteTrade(...args: Parameters<typeof deleteTradeImpl>) {
+  return withManualTrade(await getUserId(), args[0], () => deleteTradeImpl(...args), { boundary: false })
 }

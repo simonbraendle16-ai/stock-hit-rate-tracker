@@ -57,6 +57,7 @@ interface StoredReadOptions {
   before?: number
   /** Nur Kerzen AB diesem Zeitpunkt (Unix-Sekunden, einschließlich). */
   since?: number
+  ascending?: boolean
 }
 
 /**
@@ -116,9 +117,9 @@ export async function readStoredCandles(
     .select(spalten)
     .from(candleCache)
     .where(and(...bedingungen))
-    .orderBy(desc(candleCache.time))
+    .orderBy(options.ascending ? asc(candleCache.time) : desc(candleCache.time))
     .limit(limit)
-  return rows.reverse()
+  return options.ascending ? rows : rows.reverse()
 }
 
 /**
@@ -248,6 +249,12 @@ async function writeSeries(
 }
 
 export interface CandleQueryOptions {
+  /** Forward paging keeps recovery reads bounded. */
+  since?: number
+  ascending?: boolean
+  forceRefresh?: boolean
+  /** Trading must not silently receive stale candles after an upstream failure. */
+  requireFresh?: boolean
   /** Wie viele Kerzen ausgeliefert werden. Ohne Angabe die Vorgabe der Zeitebene. */
   limit?: number
   /**
@@ -297,18 +304,19 @@ export async function getStoredCandles(
   // die können nur aus den jüngsten `limit` gespeicherten stammen oder aus dem
   // frischen Satz des Anbieters, der ohnehin am aktuellen Rand liegt.
   const [schwanz, serie] = await Promise.all([
-    readStoredCandles(symbol, interval, { limit }),
+    readStoredCandles(symbol, interval, { limit, since: options.since, ascending: options.ascending }),
     readSeries(symbol, interval),
   ])
 
   if (options.storedOnly) return schwanz
 
-  if (schwanz.length > 0 && isFresh(interval, serie?.fetchedAt ?? null)) {
+  if (!options.forceRefresh && schwanz.length > 0 && isFresh(interval, serie?.fetchedAt ?? null)) {
     return schwanz
   }
 
   try {
-    const frisch = await resolveProvider(market).getCandles(symbol, interval)
+    const geliefert = await resolveProvider(market).getCandles(symbol, interval, options.since)
+    const frisch = options.since == null ? geliefert : geliefert.filter((c) => c.time >= options.since!)
 
     // Vergleichsfenster für den Abgleich: nur der Zeitraum, den der Anbieter
     // überhaupt liefert. Ältere gespeicherte Kerzen können mit keiner frischen
@@ -335,6 +343,9 @@ export async function getStoredCandles(
     // das wir gerade in der Hand hatten.
     await writeSeries(symbol, interval, market, await readCoverage(symbol, interval), null)
 
+    if (options.ascending) {
+      return readStoredCandles(symbol, interval, { limit, since: options.since, ascending: true })
+    }
     return takeLast(mergeCandles(schwanz, frisch), limit)
   } catch (err) {
     const meldung = err instanceof Error ? err.message : 'Unbekannter Fehler'
@@ -352,6 +363,7 @@ export async function getStoredCandles(
     // Ein Anbieterausfall darf einen vorhandenen Verlauf nicht verdecken —
     // dieselbe Haltung wie beim Kurs: lieber ein alter Stand als ein leeres
     // Feld. Nur wenn wirklich nichts da ist, geht der Fehler nach oben.
+    if (options.requireFresh) throw err
     if (schwanz.length > 0) return schwanz
     throw err instanceof MarketDataError
       ? err

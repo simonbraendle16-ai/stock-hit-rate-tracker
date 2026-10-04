@@ -83,11 +83,11 @@ export function resolveProvider(market: Market): MarketDataProvider {
   }
 
   return {
-    async getCandles(symbol, interval) {
+    async getCandles(symbol, interval, since) {
       let lastError: unknown
       for (let i = 0; i < chain.length; i++) {
         try {
-          return await chain[i].provider.getCandles(symbol, interval)
+          return await chain[i].provider.getCandles(symbol, interval, since)
         } catch (err) {
           lastError = err
           const code = err instanceof MarketDataError ? err.code : 'upstream'

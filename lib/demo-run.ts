@@ -1,60 +1,11 @@
-// Teil 2 des Demo-Handels: der Lauf, der die Entscheidung aus `demo-fill.ts`
-// TATSÄCHLICH bucht — sitzungsfrei, damit der Takt ihn für alle Nutzer
-// anstoßen kann. Gebaut wie `lib/alert-run.ts`: Diese Datei lädt Zeilen, holt
-// Kerzen und schreibt Ergebnisse; das Urteil selbst steht rein und getestet
-// nebenan.
-//
-// NUR DEMO. Ein Echtgeld-Trade wird hier nie angefasst — eine automatisch
-// gebuchte Echtgeld-Zahl hätte keine Deckung bei der Bank und wäre damit genau
-// der stille Falschwert, den dieses Projekt nicht duldet. Die Auswahl läuft
-// über `portfolio.kind`, die einzige Quelle der Handelsart.
-//
-// GEPRÜFT WIRD AUF `5min`. Je feiner die Kerze, desto seltener der mehrdeutige
-// Fall „Stop und Ziel in derselben Kerze", in dem konservativ der Stop gilt.
-// Yahoo gibt Fünf-Minuten-Kerzen 60 Tage weit heraus, und ein Demo-Trade mit
-// offenem oder geplantem Status ist Sammelstufe A — die Ebene ist also da.
-// Reicht die Abdeckung ausnahmsweise nicht bis zum Prüfbeginn zurück, wird das
-// GEMELDET (`unvollstaendig`) statt stillschweigend übersprungen: Ein Trade,
-// der nicht geprüft werden konnte, darf nicht wie einer aussehen, bei dem
-// nichts passiert ist.
-//
-// DER TAKT HÄNGT AM SAMMELLAUF, NICHT AN DEN ALARMEN. Der Lauf sitzt in
-// `/api/cron/collect-candles`, die ihre Fälligkeit selbst prüft (stündlich) und
-// unmittelbar davor die Kerzen geholt hat. Das spart einen eigenen Merker —
-// und vor allem Egress:
-//
-// Ein Lauf alle fünf Minuten, der je Trade bis zum letzten Ereignis
-// zurückschaut, liest bei 13 Trades bis zu 2.000 Kerzen je Trade — 2,1 MB pro
-// Lauf, 599 MB am Tag, 17,5 GB im Monat. Das ist derselbe Fehler, der schon
-// einmal 5 GB verbraucht und die Datenbank abgeschaltet hat.
-//
-// Zwei Grenzen halten das klein:
-//   1. `PRUEF_FENSTER_MS` — es wird nie weiter zurückgeschaut als zwei Stunden.
-//      Bei stündlichem Takt ist das ein voller Lauf Puffer; was darüber hinaus
-//      liegt, wird als `unvollstaendig` GEMELDET statt still übergangen.
-//   2. Stündlich statt alle fünf Minuten.
-// Zusammen: rund 600 KB am Tag, etwa 18 MB im Monat.
-//
-// Das kostet keine Genauigkeit. Die Ausführungszeit ist die KERZENZEIT: Ein
-// Stop, der um 13:05 auslöste, wird mit 13:05 gebucht — ob der Lauf ihn um
-// 13:10 findet oder um 14:00, ändert an der Zahl nichts. Die sofortige Meldung
-// macht ohnehin der Alarm-Lauf, der weiter alle fünf Minuten prüft.
-//
-// TROCKENLAUF. `runDemoFills({ trocken: true })` schreibt NICHTS und meldet in
-// `zeilen`, was gebucht würde — derselbe Schutz, den `scripts/apply-retention.mjs`
-// mit `--dry` bietet. Der Zustand wird dabei im Speicher fortgeschrieben, damit
-// auch Folgeereignisse sichtbar sind (Einstieg, dann Teilziel).
-//
-// CHECK-IN WIRD NACHGEFORDERT, NICHT ÜBERSPRUNGEN. Ein automatischer Abschluss
-// setzt `moodExit` und `lossAccepted` NICHT — er bucht die Zahlen und lässt die
-// Douglas-Fragen offen. Der Mensch nimmt den Verlust weiterhin bewusst an, nur
-// eben nach der mechanischen Ausführung. Woran man diese Trades erkennt: Jedes
-// hier geschriebene Ereignis trägt `payload.auto = true`.
-
+// Demo orders are evaluated on completed 5-minute candles, at their planned
+// prices. A durable cursor replaces the old two-hour lookback. Every batch
+// shares the same portfolio/trade lock as manual actions.
 import { and, asc, eq, inArray } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { portfolio, trade, tradeEvent, tradeTarget, userSettings } from '@/lib/db/schema'
 import { getCachedCandles } from '@/lib/market-data/cached'
+import { readStoredCandles, pruneStoredCandles } from '@/lib/market-data/candle-store'
 import { createSymbolResolver } from '@/lib/market-data/lookup'
 import type { Candle, Interval, Market } from '@/lib/market-data/types'
 import { demoFills, type DemoFill } from '@/lib/demo-fill'
@@ -63,260 +14,227 @@ import { settlePosition, type TradeEventRow } from '@/lib/trade-events'
 import { normalizePortfolioKind } from '@/lib/portfolio-scope'
 import { gebundeneMargin } from '@/lib/contract-trade'
 import { berechneDeckung, parseFxRates, pruefeDeckung } from '@/lib/margin'
-import { netCashflow, tradeNetPnl } from '@/lib/trade-stats'
+import { netCashflow, tradeNetPnl, parseViolations } from '@/lib/trade-stats'
 import { loadScopedCashflows } from '@/lib/portfolio-context'
+import { withTradeLock } from '@/lib/trade-lock'
+import { pruefBeginn, completedDemoCandles, demoCoveragePrefix, DEMO_CANDLE_SECONDS } from '@/lib/demo-progress'
 
-/** Die Zeitebene, auf der ausgeführt wird. Begründung im Kopfkommentar. */
+export { pruefBeginn } from '@/lib/demo-progress'
 export const FILL_INTERVAL: Interval = '5min'
+export const DEMO_BATCH_SIZE = 250
 
-/** Sekunden je Kerze dieser Ebene — für die Mengenabschätzung. */
-const FILL_SEKUNDEN = 5 * 60
-
-/**
- * Obergrenze der gelesenen Kerzen je Trade.
- *
- * Sie steht hier und wandert als `limit` ins SQL — **nie** wird eine Reihe ganz
- * gelesen und danach zurechtgeschnitten. Genau dieser Fehler hat 5 GB Transfer
- * verbraucht und die Datenbank abgeschaltet. 2.000 entspricht der
- * Aufbewahrungsgrenze der Ebene: mehr existiert ohnehin nicht.
- */
-const MAX_KERZEN = 2000
-
-/**
- * Wie weit ein Lauf höchstens zurückschaut.
- *
- * Ohne diese Grenze bleibt der Prüfbeginn eines ruhigen Trades für immer beim
- * letzten Ereignis stehen — und jeder Lauf liest dieselbe, stetig wachsende
- * Menge erneut. Zwei Stunden geben dem stündlichen Takt einen vollen Lauf
- * Puffer; fällt mehr aus, sagt der Bericht es (`unvollstaendig`).
- */
-export const PRUEF_FENSTER_MS = 2 * 60 * 60 * 1000
-
-/** Was ein Lauf gebucht hätte oder gebucht hat — je Trade eine Zeile. */
 export type DemoFillZeile = {
-  tradeId: number
-  ticker: string
-  art: string
-  preis: number
-  menge: number
-  zeit: string
-  grund: string
+  tradeId: number; ticker: string; art: string; preis: number
+  menge: number; zeit: string; grund: string
 }
-
 export type DemoRunReport = {
-  ran: boolean
-  /** War es ein Trockenlauf? Dann wurde NICHTS geschrieben. */
-  trocken: boolean
-  /** Wie viele Demo-Trades überhaupt in Frage kamen. */
-  tradesGeprueft: number
-  einstiege: number
-  teilziele: number
-  abschluesse: number
-  /**
-   * Trades, deren Kerzen nicht bis zum Prüfbeginn zurückreichen — hier KANN
-   * eine Ausführung übersehen worden sein. Sichtbar statt still.
-   */
-  unvollstaendig: number[]
-  /** Trades ohne verwertbare Kerzen (unbekanntes Symbol, leere Reihe). */
-  ohneKerzen: number[]
-  /**
-   * Trades, deren Level schon VOR dem Prüffenster erreicht war. Sie werden
-   * gemeldet und NICHT gebucht — zu welchem Kurs sie real ausgeführt worden
-   * wären, weiss niemand mehr. Das entscheidet der Mensch von Hand.
-   */
-  vorFenster: number[]
-  /**
-   * Kontrakt-Trades, deren Einschuss beim Füllen nicht mehr gedeckt war. Sie
-   * werden VERWORFEN (`status: 'abgebrochen'`) statt gebucht — ein Broker
-   * hätte die Order genauso abgelehnt, und ein Demo-Konto, das ins Minus
-   * laufen darf, übt das Falsche.
-   */
-  ungedeckt: number[]
-  /** Die einzelnen Ausführungen — im Trockenlauf die einzige Ausgabe. */
-  zeilen: DemoFillZeile[]
-  error: string | null
+  ran: boolean; trocken: boolean; tradesGeprueft: number
+  einstiege: number; teilziele: number; abschluesse: number
+  unvollstaendig: number[]; ohneKerzen: number[]; vorFenster: number[]
+  ungedeckt: number[]; ausstehend: number[]; zeilen: DemoFillZeile[]; error: string | null
 }
-
-/** Ein Bericht ohne Lauf — auch der Fangzweig des Aufrufers meldet damit sauber. */
 export function leererDemoBericht(): DemoRunReport {
-  return {
-    ran: false,
-    trocken: false,
-    tradesGeprueft: 0,
-    einstiege: 0,
-    teilziele: 0,
-    abschluesse: 0,
-    unvollstaendig: [],
-    ohneKerzen: [],
-    vorFenster: [],
-    ungedeckt: [],
-    zeilen: [],
-    error: null,
-  }
+  return { ran: false, trocken: false, tradesGeprueft: 0, einstiege: 0,
+    teilziele: 0, abschluesse: 0, unvollstaendig: [], ohneKerzen: [],
+    vorFenster: [], ungedeckt: [], ausstehend: [], zeilen: [], error: null }
 }
 
-/**
- * Ab wann geprüft wird.
- *
- * Der jüngste FACHLICHE Zeitpunkt, den der Trade kennt: das letzte Ereignis,
- * sonst die Eröffnung, sonst die Anlage. Alles davor ist bereits abgerechnet —
- * eine ältere Kerze erneut auszuführen hiesse, denselben Einstieg zweimal zu
- * buchen.
- *
- * `at` (fachlich), nicht `createdAt` (technisch): Ein von Hand nachgetragenes
- * Ereignis liegt in der Vergangenheit, wurde aber eben erst geschrieben.
- */
-export function pruefBeginn(
-  t: typeof trade.$inferSelect,
-  events: TradeEventRow[],
-  jetzt: number,
-): { beginn: Date; gekappt: boolean } {
-  const letztes = events.length > 0 ? new Date(events[events.length - 1].at) : null
-  const fachlich = letztes ?? t.openedAt ?? t.createdAt
-  const grenze = new Date(jetzt - PRUEF_FENSTER_MS)
-  // Die spätere der beiden Zeiten gewinnt: nie weiter zurück als das Fenster.
-  if (fachlich.getTime() >= grenze.getTime()) return { beginn: fachlich, gekappt: false }
-  return { beginn: grenze, gekappt: true }
-}
-
-/**
- * Ein Lauf über alle Demo-Trades.
- *
- * `userId` grenzt auf einen Nutzer ein (Server Action); ohne ihn läuft es über
- * alle (Cron). Der Aufbau folgt `runAlertCheck`: erst laden, dann rechnen, dann
- * je Trade in EINER Transaktion schreiben. Ein Trade, der scheitert, beendet
- * den Lauf nicht — sein Fehler steht im Bericht.
- */
+/** User-scoped calls reconcile one trade before a manual operation. */
 export async function runDemoFills(
-  opts: { userId?: string; trocken?: boolean } = {},
+  opts: { userId?: string; tradeId?: number; trocken?: boolean; maxMs?: number; refresh?: boolean } = {},
 ): Promise<DemoRunReport> {
   const report = leererDemoBericht()
   report.trocken = opts.trocken === true
-
+  const started = Date.now()
   try {
-    // --- Nur Depots der Art 'demo' -----------------------------------------
-    const depots = await db
-      .select({ id: portfolio.id, kind: portfolio.kind, userId: portfolio.userId })
-      .from(portfolio)
-      .where(opts.userId ? eq(portfolio.userId, opts.userId) : undefined)
-
-    const demoIds = depots
-      .filter((p) => normalizePortfolioKind(p.kind) === 'demo')
-      .map((p) => p.id)
-    if (demoIds.length === 0) return { ...report, ran: true }
-
-    // --- Offene Trades in diesen Depots ------------------------------------
-    const trades = await db
-      .select()
-      .from(trade)
-      .where(
-        and(
-          inArray(trade.portfolioId, demoIds),
-          inArray(trade.status, ['geplant', 'aktiv']),
-        ),
-      )
-    report.tradesGeprueft = trades.length
-    if (trades.length === 0) return { ...report, ran: true }
-
-    // Die Symbolauflösung hängt am Nutzer (dessen Instrumente) — ein Resolver
-    // je Nutzer, nie der Rohticker an den Anbieter.
-    const resolver = new Map<string, Awaited<ReturnType<typeof createSymbolResolver>>>()
-
-    for (const t of trades) {
+    const depots = await db.select({ id: portfolio.id, kind: portfolio.kind })
+      .from(portfolio).where(opts.userId ? eq(portfolio.userId, opts.userId) : undefined)
+    const ids = depots.filter((p) => normalizePortfolioKind(p.kind) === 'demo').map((p) => p.id)
+    if (!ids.length) return { ...report, ran: true }
+    const trades = await db.select().from(trade).where(and(
+      inArray(trade.portfolioId, ids), inArray(trade.status, ['geplant', 'aktiv']),
+      opts.userId ? eq(trade.userId, opts.userId) : undefined,
+      opts.tradeId != null ? eq(trade.id, opts.tradeId) : undefined,
+    ))
+    // Healthy trades first so repeatedly failing symbols cannot starve the rest.
+    // A shared symbol is refreshed again if a later trade needs older history.
+    const baseline = (t: typeof trade.$inferSelect) =>
+      pruefBeginn(t, []).beginn.getTime()
+    trades.sort((a, b) => Number(Boolean(a.demoIssue)) - Number(Boolean(b.demoIssue)) || baseline(a) - baseline(b))
+    const resolvers = new Map<string, Awaited<ReturnType<typeof createSymbolResolver>>>()
+    const refreshed = new Map<string, number>()
+    const pendingSymbols = new Set<string>()
+    for (let i = 0; i < trades.length; i++) {
+      const before = trades[i]
+      if (opts.maxMs != null && Date.now() - started >= opts.maxMs) {
+        report.ausstehend.push(...trades.slice(i).map((t) => t.id))
+        break
+      }
+      report.tradesGeprueft++
       try {
-        if (!resolver.has(t.userId)) resolver.set(t.userId, await createSymbolResolver(t.userId))
-        const resolve = resolver.get(t.userId)!
-        const symbol = resolve(t.ticker, t.stockId)
-
-        const events = await ladeEreignisse(t.userId, t.id)
-        const targetRows = await ladeStufen(t.userId, t.id)
-        const { beginn, gekappt } = pruefBeginn(t, events, Date.now())
-        const beginnSek = Math.floor(beginn.getTime() / 1000)
-
-        const kerzen = await ladeKerzen(symbol, t.market as Market, beginnSek)
-        if (kerzen.length === 0) {
-          report.ohneKerzen.push(t.id)
-          continue
+        if (!resolvers.has(before.userId)) {
+          resolvers.set(before.userId, await createSymbolResolver(before.userId))
         }
-        // Zwei Wege in dieselbe Meldung: Entweder wurde das Fenster gekappt
-        // (der letzte Lauf ist zu lange her), oder die Kerzenreihe reicht nicht
-        // so weit zurück. In beiden Fällen KANN eine Ausführung dazwischen
-        // liegen, die niemand mehr sieht — das gehört gesagt, nicht verschwiegen.
-        if (gekappt || kerzen[0].time > beginnSek) report.unvollstaendig.push(t.id)
-
-        const neue = kerzen.filter((c) => c.time >= beginnSek)
-        if (neue.length === 0) continue
-
-        const gebucht = await verarbeiteTrade({
-          t,
-          events,
-          targetRows,
-          kerzen: neue,
-          vorherKurs: vorkurs(kerzen, beginnSek),
-          trocken: report.trocken,
+        const symbol = resolvers.get(before.userId)!(before.ticker, before.stockId)
+        const key = `${before.market}:${symbol}`
+        const refreshSince = Math.floor(baseline(before) / 1000)
+          - (before.demoCheckedAt ? DEMO_CANDLE_SECONDS : 7 * 24 * 60 * 60)
+        if (!report.trocken && opts.refresh !== false && refreshSince < (refreshed.get(key) ?? Infinity)) {
+          await getCachedCandles(symbol, before.market as Market, FILL_INTERVAL, {
+            since: refreshSince,
+            limit: 1, forceRefresh: true, requireFresh: true,
+          })
+          refreshed.set(key, refreshSince)
+        }
+        const result = await withTradeLock(before.userId, before.id, async (t, depot) => {
+          if (normalizePortfolioKind(depot.kind) !== 'demo' || !['geplant', 'aktiv'].includes(t.status)) return null
+          // The symbol was resolved before taking the lock. A concurrent edit
+          // must never evaluate a new instrument using the old one's candles.
+          if (t.ticker !== before.ticker || t.stockId !== before.stockId || t.market !== before.market) {
+            return { issue: null, pending: true }
+          }
+          const events = await ladeEreignisse(t.userId, t.id)
+          const targets = await ladeStufen(t.userId, t.id)
+          const beginn = pruefBeginn(t, events).beginn
+          const since = Math.ceil(beginn.getTime() / (DEMO_CANDLE_SECONDS * 1000)) * DEMO_CANDLE_SECONDS
+          const [previous, rows] = await Promise.all([
+            readStoredCandles(symbol, FILL_INTERVAL, { before: since, limit: 1 }),
+            getCachedCandles(symbol, t.market as Market, FILL_INTERVAL, {
+              since, ascending: true, limit: DEMO_BATCH_SIZE + 1, storedOnly: true,
+            }),
+          ])
+          const candles = completedDemoCandles(rows, beginn, Date.now())
+          if (!candles.length) {
+            if (!rows.length && !previous.length) {
+              await markIssue(t, 'Keine verwertbaren 5-Minuten-Kursdaten. Manuelle Buchung bleibt möglich.', report.trocken)
+              return { issue: 'empty' as const }
+            }
+            return null // Market closed, or only an unfinished candle is available.
+          }
+          const coverage = demoCoveragePrefix(candles, previous[0] ?? null, beginn, t.market)
+          if (coverage.gap && !coverage.usable.length) {
+            await markIssue(t, 'Lücke in den 5-Minuten-Kursdaten. Bitte frühere Ausführungen manuell prüfen.', report.trocken)
+            return { issue: 'coverage' as const }
+          }
+          if (!(t.positionSize != null && t.positionSize > 0)) {
+            await markIssue(t, 'Ohne Positionsgröße ist keine automatische Ausführung möglich.', report.trocken)
+            return { issue: 'coverage' as const }
+          }
+          const batch = coverage.usable.slice(0, DEMO_BATCH_SIZE)
+          const outcome = await verarbeiteTrade({ t, events, targetRows: targets, kerzen: batch,
+            vorherKurs: previous[0]?.close ?? null, trocken: report.trocken })
+          if (!report.trocken) {
+            await db.update(trade).set({
+              demoCheckedAt: new Date((batch[batch.length - 1].time + DEMO_CANDLE_SECONDS) * 1000),
+              // A warning about manually bypassed missing history stays visible.
+              demoIssue: coverage.gap && !outcome.closed
+                ? 'Lücke in den 5-Minuten-Kursdaten. Bitte frühere Ausführungen manuell prüfen.'
+                : t.demoIssue?.startsWith('Ungeprüfte Historie:') ? t.demoIssue : null,
+            }).where(and(eq(trade.id, t.id), eq(trade.userId, t.userId)))
+          }
+          return { issue: coverage.gap && !outcome.closed ? 'coverage' as const : null, outcome,
+            pending: coverage.usable.length > DEMO_BATCH_SIZE && !outcome.closed }
         })
-        report.einstiege += gebucht.einstiege
-        report.teilziele += gebucht.teilziele
-        report.abschluesse += gebucht.abschluesse
-        report.zeilen.push(...gebucht.zeilen)
-        if (gebucht.vorFenster) report.vorFenster.push(t.id)
-        if (gebucht.ungedeckt) report.ungedeckt.push(t.id)
+        if (result?.issue === 'empty') report.ohneKerzen.push(before.id)
+        if (result?.issue === 'coverage') { report.unvollstaendig.push(before.id); pendingSymbols.add(key) }
+        if (result?.outcome) {
+          report.einstiege += result.outcome.einstiege
+          report.teilziele += result.outcome.teilziele
+          report.abschluesse += result.outcome.abschluesse
+          report.zeilen.push(...result.outcome.zeilen)
+          if (result.outcome.ungedeckt) report.ungedeckt.push(before.id)
+        }
+        if (result?.pending) {
+          report.ausstehend.push(before.id)
+          pendingSymbols.add(key)
+        }
       } catch (err) {
-        // Ein einzelnes unbekanntes Symbol darf den Lauf nicht beenden — der
-        // Trade taucht als „ohne Kerzen" auf und wird beim nächsten Mal erneut
-        // versucht.
-        report.ohneKerzen.push(t.id)
-        if (report.error == null) {
-          report.error = err instanceof Error ? err.message : String(err)
+        const message = err instanceof Error ? err.message : String(err)
+        report.ohneKerzen.push(before.id)
+        report.error ??= message
+        if (!report.trocken) {
+          await withTradeLock(before.userId, before.id, async (current, depot) => {
+            if (normalizePortfolioKind(depot.kind) === 'demo') {
+              await markIssue(current, `Demo-Automatik: ${message}`, false)
+            }
+          }).catch(() => {})
         }
       }
     }
-
+    if (!report.trocken && !report.ausstehend.length && !report.error) {
+      for (const [key] of refreshed) {
+        if (pendingSymbols.has(key)) continue
+        const symbol = key.slice(key.indexOf(':') + 1)
+        await pruneStoredCandles(symbol, FILL_INTERVAL, 'A')
+      }
+    }
     report.ran = true
-    return report
   } catch (err) {
     report.error = err instanceof Error ? err.message : String(err)
-    return report
   }
+  return report
 }
 
-/**
- * Der Schlusskurs unmittelbar VOR dem Prüfbeginn — die Anlaufseite des
- * Einstiegs (siehe `demoFills`). Gibt es keine ältere Kerze, bleibt es `null`,
- * und `demoFills` verlangt dann die echte Berührung statt zu raten.
- */
-function vorkurs(kerzen: Candle[], beginnSek: number): number | null {
-  let letzte: Candle | null = null
-  for (const c of kerzen) {
-    if (c.time >= beginnSek) break
-    letzte = c
+async function markIssue(t: typeof trade.$inferSelect, issue: string, trocken: boolean) {
+  if (!trocken) await db.update(trade).set({
+    demoIssue: t.demoIssue?.startsWith('Ungeprüfte Historie:') ? t.demoIssue : issue,
+  })
+    .where(and(eq(trade.id, t.id), eq(trade.userId, t.userId)))
+}
+
+async function verarbeiteTrade(args: {
+  t: typeof trade.$inferSelect; events: TradeEventRow[]; targetRows: TradeTargetRow[]
+  kerzen: Candle[]; vorherKurs: number | null; trocken: boolean
+}) {
+  const { t } = args
+  let status = t.status
+  let stufen = args.targetRows
+  const events = [...args.events]
+  let previous = args.vorherKurs
+  const result = { einstiege: 0, teilziele: 0, abschluesse: 0,
+    zeilen: [] as DemoFillZeile[], ungedeckt: false, closed: false }
+  for (const candle of args.kerzen) {
+    if (result.closed) break
+    const basis = events.find((e) => e.type === 'eroeffnet')?.quantity ?? t.positionSize
+    const fills = demoFills({
+      trade: { status, direction: t.direction, entryPrice: t.entryPrice,
+        stopLoss: t.stopLoss, positionSize: basis },
+      targets: effectiveTargets(t, stufen), candle,
+      vorherKurs: previous,
+      openQuantity: status === 'aktiv' ? settlePosition(t, events).openQty : undefined,
+    })
+    previous = candle.close
+    for (const fill of fills) {
+      if (fill.art === 'einstieg') {
+        const deckung = await deckungReicht(t)
+        if (!deckung.ok) {
+          result.ungedeckt = true
+          result.closed = true
+          if (!args.trocken) await verwerfeUngedeckt(t, new Date(fill.zeit * 1000), deckung.grund)
+          result.zeilen.push({ tradeId: t.id, ticker: t.ticker, art: 'verworfen (ungedeckt)',
+            preis: fill.preis, menge: fill.menge, zeit: new Date(fill.zeit * 1000).toISOString(), grund: deckung.grund })
+          break
+        }
+      }
+      const next = args.trocken ? trockenFolge({ fill, stufen, status }) : await bucheFill({ t: { ...t, status }, fill, stufen })
+      stufen = next.stufen
+      status = next.status
+      events.push({ id: (events[events.length - 1]?.id ?? 0) + 1, tradeId: t.id,
+        userId: t.userId, type: fill.art === 'einstieg' ? 'eroeffnet' : fill.schliesst ? 'geschlossen' : 'teilverkauf',
+        at: new Date(fill.zeit * 1000), quantity: fill.menge, price: fill.preis,
+        fee: 0, payload: null, note: fill.grund, createdAt: new Date() })
+      result.zeilen.push({ tradeId: t.id, ticker: t.ticker, art: fill.art,
+        preis: fill.preis, menge: fill.menge, zeit: new Date(fill.zeit * 1000).toISOString(), grund: fill.grund })
+      if (fill.art === 'einstieg') result.einstiege++
+      else if (fill.art === 'teilziel') result.teilziele++
+      else result.abschluesse++
+      result.closed = fill.schliesst
+      if (result.closed) break
+    }
   }
-  return letzte ? letzte.close : null
+  return result
 }
 
-/** Kerzen der Ausführungsebene — die Menge steht als `limit` im SQL. */
-async function ladeKerzen(symbol: string, market: Market, beginnSek: number): Promise<Candle[]> {
-  const spanne = Math.max(0, Math.floor(Date.now() / 1000) - beginnSek)
-  // Ein Puffer von 2 Kerzen, damit der Vorkurs mitkommt.
-  const noetig = Math.ceil(spanne / FILL_SEKUNDEN) + 2
-  const limit = Math.min(MAX_KERZEN, Math.max(3, noetig))
-  return getCachedCandles(symbol, market, FILL_INTERVAL, { limit, storedOnly: true })
-}
-
-/**
- * Reicht die Depotdeckung, um diesen Kontrakt-Trade zu eröffnen? (Teil 3)
- *
- * Frisch aus der Datenbank gelesen, nicht einmal am Laufanfang: Innerhalb eines
- * Laufs kann ein Stop zuschlagen und das Konto verkleinern, und dann wäre eine
- * am Anfang gemerkte Zahl bereits falsch. Einstiege sind selten (eine Handvoll
- * je Lauf), die Abfrage kostet also nichts, was ins Gewicht fiele.
- *
- * Der geprüfte Trade zählt bei den GEBUNDENEN Mitteln mit — sein Einschuss war
- * seit dem Planen reserviert. Die Frage lautet deshalb nicht „passt er noch
- * obendrauf", sondern „trägt das Konto weiterhin alles, was darauf liegt".
- * Genau das ist der Fall, der eintritt: drei Pläne, die einzeln passten, und
- * zwischenzeitlich realisierte Verluste.
- */
 async function deckungReicht(
   t: typeof trade.$inferSelect,
 ): Promise<{ ok: true } | { ok: false; grund: string }> {
@@ -436,129 +354,6 @@ async function ladeStufen(userId: string, tradeId: number): Promise<TradeTargetR
 }
 
 /**
- * Alle Kerzen eines Trades der Reihe nach durchgehen und buchen.
- *
- * Der Zustand wird MITGEFÜHRT: Ein Einstieg in Kerze 5 macht den Trade für
- * Kerze 6 aktiv, ein Abschluss beendet die Schleife. Sonst würde jede Kerze
- * gegen denselben Anfangszustand geprüft und derselbe Einstieg dutzendfach
- * gebucht.
- */
-async function verarbeiteTrade(args: {
-  t: typeof trade.$inferSelect
-  events: TradeEventRow[]
-  targetRows: TradeTargetRow[]
-  kerzen: Candle[]
-  vorherKurs: number | null
-  trocken: boolean
-}): Promise<{
-  einstiege: number
-  teilziele: number
-  abschluesse: number
-  zeilen: DemoFillZeile[]
-  vorFenster: boolean
-  ungedeckt: boolean
-}> {
-  const { t } = args
-  let status = t.status
-  let stufen = args.targetRows
-  let vorher = args.vorherKurs
-  const zaehler = {
-    einstiege: 0,
-    teilziele: 0,
-    abschluesse: 0,
-    zeilen: [] as DemoFillZeile[],
-    vorFenster: false,
-    ungedeckt: false,
-  }
-
-  for (const kerze of args.kerzen) {
-    if (status === 'abgeschlossen') break
-
-    const fills = demoFills({
-      trade: {
-        status,
-        direction: t.direction,
-        entryPrice: t.entryPrice,
-        stopLoss: t.stopLoss,
-        positionSize: t.positionSize,
-      },
-      targets: effectiveTargets(t, stufen),
-      candle: kerze,
-      vorherKurs: vorher,
-    })
-    vorher = kerze.close
-
-    for (const fill of fills) {
-      // Vor dem Fenster erreicht: melden, nicht buchen. Und die Schleife endet
-      // hier — was danach käme, baute auf einem Zustand auf, den es nie gab.
-      if (fill.vorFenster) {
-        zaehler.vorFenster = true
-        zaehler.zeilen.push({
-          tradeId: t.id,
-          ticker: t.ticker,
-          art: `${fill.art} (vor dem Fenster)`,
-          preis: fill.preis,
-          menge: fill.menge,
-          zeit: new Date(fill.zeit * 1000).toISOString(),
-          grund:
-            'Level lag beim Prüfbeginn bereits jenseits — nicht gebucht, bitte von Hand abrechnen.',
-        })
-        return zaehler
-      }
-
-      // Deckung (Teil 3): Ein Einstieg, den das Konto nicht mehr trägt, wird
-      // nicht gebucht — der Trade wird VERWORFEN. Ein Broker hätte die Order
-      // genauso abgelehnt; ein Demo-Konto, das ins Minus laufen darf, übt das
-      // Falsche. Geprüft wird nur beim Einstieg: Wer drin ist, kommt auch wieder
-      // raus, und ein Stop, den man wegen Unterdeckung nicht ausführt, wäre der
-      // gefährlichste Fehler von allen.
-      if (fill.art === 'einstieg') {
-        const deckung = await deckungReicht(t)
-        if (!deckung.ok) {
-          zaehler.ungedeckt = true
-          zaehler.zeilen.push({
-            tradeId: t.id,
-            ticker: t.ticker,
-            art: 'verworfen (ungedeckt)',
-            preis: fill.preis,
-            menge: fill.menge,
-            zeit: new Date(fill.zeit * 1000).toISOString(),
-            grund: deckung.grund,
-          })
-          if (!args.trocken) {
-            await verwerfeUngedeckt(t, new Date(fill.zeit * 1000), deckung.grund)
-          }
-          return zaehler
-        }
-      }
-
-      zaehler.zeilen.push({
-        tradeId: t.id,
-        ticker: t.ticker,
-        art: fill.art,
-        preis: fill.preis,
-        menge: fill.menge,
-        zeit: new Date(fill.zeit * 1000).toISOString(),
-        grund: fill.grund,
-      })
-      // Im Trockenlauf wird der Zustand nur IM SPEICHER fortgeschrieben — so
-      // sieht man auch die Folgeereignisse (Einstieg, dann Teilziel), ohne dass
-      // eine Zeile in die Datenbank geht.
-      const neu = args.trocken
-        ? trockenFolge({ fill, stufen, status })
-        : await bucheFill({ t, fill, stufen })
-      stufen = neu.stufen
-      status = neu.status
-      if (fill.art === 'einstieg') zaehler.einstiege++
-      else if (fill.art === 'teilziel') zaehler.teilziele++
-      else zaehler.abschluesse++
-    }
-  }
-
-  return zaehler
-}
-
-/**
  * Ein einzelnes Ereignis buchen — in EINER Transaktion, damit Ereignis,
  * Zielstufe und Trade-Zustand nie auseinanderfallen.
  *
@@ -575,7 +370,7 @@ async function bucheFill(args: {
   const at = new Date(fill.zeit * 1000)
   // Die Herkunft steht im Ereignis, nicht in einer neuen Spalte: Daran erkennt
   // die Oberfläche, bei welchen Trades der Check-in noch nachzuholen ist.
-  const payload = JSON.stringify({ auto: true, quelle: 'demo-fill', interval: FILL_INTERVAL })
+  const payload = JSON.stringify({ auto: true, quelle: 'demo-fill', interval: FILL_INTERVAL, preisModus: 'plan', art: fill.art })
   let status = t.status
 
   const eventTyp =
@@ -598,9 +393,7 @@ async function bucheFill(args: {
 
     if (fill.art === 'einstieg') {
       // Der PLAN bleibt unangetastet: `entryPrice` ist das vereinbarte Level,
-      // der tatsächliche Fill steht im Ereignis. Ein Lücken-Fill darf den Plan
-      // nicht rückwirkend auf den besseren Kurs umschreiben — sonst sähe jeder
-      // Trade nachträglich so aus, als sei er genau nach Plan gelaufen.
+      // Der Demo-Fill nutzt dasselbe Level; die Herkunft steht im Ereignis.
       await tx
         .update(trade)
         .set({ status: 'aktiv', openedAt: at })
@@ -640,7 +433,7 @@ async function bucheFill(args: {
           // Die Ausführung IST der Plan — das ist der ganze Punkt der
           // Automatik. Anders als beim Abschluss von Hand gibt es hier keinen
           // Ermessensspielraum, der nachträglich beschönigt werden könnte.
-          followedPlan: true,
+          followedPlan: t.followedPlan !== false && parseViolations(t.ruleViolations).length === 0,
           closedAt: at,
           // `moodExit` und `lossAccepted` bleiben BEWUSST leer — sie werden
           // nachgefordert. Eine Maschine kann keinen Verlust bewusst annehmen;

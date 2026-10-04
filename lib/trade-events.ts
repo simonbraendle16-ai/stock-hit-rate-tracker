@@ -180,7 +180,7 @@ export function settlePosition(t: TradeRow, events: TradeEventRow[]): PositionSe
   }
 }
 
-function parsePayload(raw: string | null): { from?: number; to?: number; violation?: boolean } {
+function parsePayload(raw: string | null): { from?: number; to?: number; violation?: boolean; auto?: boolean } {
   if (!raw) return {}
   try {
     const v = JSON.parse(raw)
@@ -200,6 +200,7 @@ export type TimelineItem = {
   at: Date | null
   /** true = aus Trade-Feldern rekonstruiert (Alt-Trade ohne Events), nicht aus einem echten Event. */
   derived: boolean
+  automatic?: boolean
   /** true = markiert einen Regelbruch (⚠ in der Anzeige). */
   isViolation: boolean
   quantity: number | null
@@ -219,6 +220,7 @@ function itemFromEvent(ev: TradeEventRow): TimelineItem {
     type: ev.type as TradeEventType,
     at: new Date(ev.at),
     derived: false,
+    automatic: payload.auto === true,
     isViolation,
     quantity: ev.quantity ?? null,
     price: ev.price ?? null,

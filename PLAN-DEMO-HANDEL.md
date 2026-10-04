@@ -345,3 +345,49 @@ Charts mit Auswahl. 1012 Tests grün, `tsc --noEmit` sauber, `pnpm build` läuft
 ## Ausdrücklich nicht dabei
 Orderbuch/DOM · Footprint · Teilausführungen innerhalb einer Kerze · Slippage ·
 Echtgeld-Automatik · Export nach Quantower.
+
+
+## Nachtrag 04.10.2026 — feste Demo-Preise und manuelle Eingriffe
+
+- Automatische Demo-Einstiege, Teilziele, TP und Stops verwenden immer das
+  festgelegte Level, auch bei Kurssprüngen. Die Buchungszeit ist die Kerzenzeit,
+  der spätere Laufkurs beeinflusst den Preis nicht.
+- `/api/cron/demo-fills` hat einen eigenen stündlichen Takt mit atomarem Lease.
+  Der bestehende GitHub-Workflow ruft die Route auf; Fehler und verbleibende
+  Arbeit werden beim nächsten Fünf-Minuten-Tick erneut versucht. Der allgemeine
+  Kerzensammler verbucht keine Trades mehr.
+- Ausgewertet werden abgeschlossene 5-Minuten-Kerzen. Ein dauerhafter Prüfstand
+  ersetzt die Zwei-Stunden-Kappung. Historie wird in begrenzten Seiten gelesen;
+  noch benötigte Kerzen werden während der Aufarbeitung nicht gekürzt.
+- Automatik und manuelle Handelsaktionen sperren Depot und Trade in derselben
+  Reihenfolge. Frühere Auslösungen werden vor manuellen Eingriffen separat
+  gespeichert. Tatsächliche Teilverkäufe und Nachkäufe bestimmen die Restmenge.
+- Neue Pläne/Änderungen innerhalb einer Kerze gelten ab der nächsten vollständigen
+  Kerze: Die frühere Hälfte einer OHLC-Kerze kann nicht dem neuen Plan zugeordnet
+  werden. Bei Stop und TP in derselben Kerze gewinnt weiterhin der Stop.
+- Fehlende Anfangsabdeckung und Intraday-Lücken stoppen die Prüfung vor der
+  Datenlücke; fehlende/ungültige Daten verschieben den Prüfstand nicht. Bei
+  Börseninstrumenten können tägliche Sitzungspausen ohne Börsenkalender nicht
+  von vollständig fehlenden Handelstagen unterschieden werden. Krypto wird
+  durchgehend geprüft. Manuelle Buchung bleibt mit sichtbarer Warnung möglich.
+- Echtgeld wird nicht automatisch ausgeführt. Automatische Demo-Ereignisse
+  werden in der Chronik markiert; manuelle Planverstöße bleiben erhalten.
+
+### Aktivierung
+
+Vor dem Deployment `drizzle/0043_demo_execution.sql` auf einer isolierten
+Neon-Testbranch prüfen und anschließend über die bestehende Migrationsstrecke
+auf der Zieldatenbank anwenden (direkte Verbindung). Die Migration ist additiv
+und wiederholbar; sie ändert keine bisherigen Handelsbuchungen. Anschließend
+App und Workflow gemeinsam veröffentlichen. Bei einem externen Taktgeber muss
+zusätzlich `/api/cron/demo-fills` mit dem vorhandenen `CRON_SECRET` aufgerufen
+werden; Aufrufe alle fünf Minuten sind erlaubt, die Route begrenzt selbst auf
+stündlich. `force=1` umgeht die Fälligkeit, nicht die laufende Sperre.
+
+Der Trockenlauf `runDemoFills({ trocken: true })` liest nur gespeicherte Daten
+und verändert weder Trades, Kursdaten, Ereignisse, Zielstufen noch Prüfstände.
+Für die Abnahme vorhandene Tests, Typprüfung und Produktionsbuild ausführen.
+Die lokale Sichtprüfung verwendet ausschließlich erfundene Demo-Daten.
+
+Lokaler Abschluss: 1.061 Tests bestanden, separate Typprüfung und Produktionsbuild erfolgreich.
+Die neue Migration wurde noch nicht gegen die Live-Datenbank ausgeführt.

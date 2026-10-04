@@ -423,7 +423,17 @@ export const trade = pgTable('trade', {
   // --- Timestamps (Revenge-Guard) ---
   openedAt: timestamp('openedAt'),
   closedAt: timestamp('closedAt'),
+  // Exclusive end of checked candles; manual changes have a separate boundary.
+  demoCheckedAt: timestamp('demoCheckedAt'),
+  demoBoundaryAt: timestamp('demoBoundaryAt'),
+  demoIssue: text('demoIssue'),
   createdAt: timestamp('createdAt').notNull().defaultNow(),
+})
+
+export const demoRunState = pgTable('demo_run_state', {
+  id: text('id').primaryKey(),
+  nextRunAt: timestamp('nextRunAt', { withTimezone: true }).notNull(),
+  leaseUntil: timestamp('leaseUntil', { withTimezone: true }).notNull(),
 })
 
 // Kurs-Alerts (Etappe 3): ein vom Nutzer gesetztes Preislevel, das beim Laden

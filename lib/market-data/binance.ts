@@ -34,7 +34,7 @@ export const binanceProvider: MarketDataProvider = {
     url.searchParams.set('interval', BINANCE_INTERVAL[interval])
     url.searchParams.set('limit', String(Math.min(DEFAULT_OUTPUT_SIZE[interval], 1000)))
 
-    const res = await fetch(url, { cache: 'no-store' })
+    const res = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(10_000) })
     if (res.status === 400) {
       throw new MarketDataError(
         `Unbekanntes Krypto-Symbol „${symbol}“ (Binance-Paar ${pair}).`,

@@ -76,6 +76,7 @@ export function MoveTradeDialog({
       router.refresh()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Umbuchen fehlgeschlagen.')
+      router.refresh()
     } finally {
       setBusy(false)
     }

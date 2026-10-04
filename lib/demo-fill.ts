@@ -2,7 +2,7 @@
 // Kerze an diesem einen Trade aus?
 //
 // Rein, ohne Datenbank, ohne React — die Buchung selbst macht der Aufrufer
-// (`app/actions/alerts.ts`). Hier steckt ausschließlich das Urteil, damit es
+// (`lib/demo-run.ts`). Hier steckt ausschließlich das Urteil, damit es
 // prüfbar ist (`lib/demo-fill.test.ts`) und an genau einer Stelle steht.
 //
 // **Warum das Feature Douglas nicht widerspricht, sondern ihn bedient.** Der
@@ -26,7 +26,7 @@ export type DemoFillArt = 'einstieg' | 'teilziel' | 'ziel' | 'stop'
 
 export type DemoFill = {
   art: DemoFillArt
-  /** Der Kurs, zu dem tatsächlich ausgeführt wurde — bei einer Lücke der Eröffnungskurs. */
+  /** Das festgelegte Demo-Level, auch bei Kurssprüngen. */
   preis: number
   /** Unix-Sekunden der KERZE, nicht die Uhrzeit des Sammellaufs. */
   zeit: number
@@ -36,13 +36,8 @@ export type DemoFill = {
   targetId: number | null
   /** Ist der Trade nach diesem Ereignis geschlossen? */
   schliesst: boolean
-  /**
-   * Das Level lag beim Prüfbeginn BEREITS auf der Auslöseseite — es wurde also
-   * vor dem geprüften Fenster erreicht, zu einem Kurs, den niemand mehr kennt.
-   *
-   * Solche Ereignisse werden GEMELDET, nicht gebucht. Sie zum ersten Kurs des
-   * Fensters abzurechnen wäre die Erfindung eines Ausgangs: Ein Ziel bei 100,
-   * dessen Papier heute bei 307 steht, ergäbe einen Gewinn, den es nie gab.
+  /** Informational: the preceding close was already beyond this level.
+   * The runner determines coverage from its durable cursor, not from this flag.
    */
   vorFenster: boolean
   /** Lesbarer Grund für die Zeitleiste — nüchtern, ohne Bewertung. */
@@ -52,8 +47,8 @@ export type DemoFill = {
 /**
  * Das Nötigste, was die Entscheidung vom Trade wissen muss.
  *
- * `positionSize` ist die Anfangsposition in Stück. Fehlt sie, werden Mengen als
- * 0 gemeldet — nie geschätzt: Eine erfundene Stückzahl liefe direkt in die
+ * `positionSize` ist die Anfangsposition in Stück. Fehlt sie, werden keine Ausführungen
+ * gemeldet — nie geschätzt: Eine erfundene Stückzahl liefe direkt in die
  * P&L-Rechnung.
  */
 export type DemoFillTrade = {
@@ -79,21 +74,6 @@ const ENDZUSTAENDE = new Set(['abgeschlossen', 'abgebrochen'])
 function beruehrt(level: number, c: Candle): boolean {
   if (!Number.isFinite(level) || !Number.isFinite(c.high) || !Number.isFinite(c.low)) return false
   return c.low <= level && level <= c.high
-}
-
-/**
- * Der Preis, zu dem wirklich ausgeführt wird.
- *
- * Eröffnet die Kerze bereits JENSEITS des Levels — die Übernacht-Lücke, der
- * Nachrichtensprung —, dann gibt es das Level an diesem Tag nicht mehr: Der
- * erste handelbare Kurs ist die Eröffnung. Das trifft mal zugunsten, mal
- * zuungunsten des Trades, und genau deshalb ist es die ehrliche Annahme. Ein
- * Fill zum Wunschlevel wäre eine Trefferquote, die es so nie gab.
- */
-function fillPreis(level: number, seite: 'above' | 'below', c: Candle): number {
-  if (!Number.isFinite(c.open)) return level
-  const uebersprungen = seite === 'above' ? c.open >= level : c.open <= level
-  return uebersprungen ? c.open : level
 }
 
 /**
@@ -168,6 +148,8 @@ export function demoFills(args: {
    *    erreicht, und der Fill trägt `vorFenster: true`.
    */
   vorherKurs?: number | null
+  /** Actual remaining position from the event ledger, including manual trades. */
+  openQuantity?: number
 }): DemoFill[] {
   const { trade: t, candle: c } = args
   if (ENDZUSTAENDE.has(t.status)) return []
@@ -176,6 +158,8 @@ export function demoFills(args: {
   const fills: DemoFill[] = []
   const basis = Number.isFinite(t.positionSize ?? NaN) ? (t.positionSize as number) : 0
   let aktiv = t.status === 'aktiv'
+  let rest = args.openQuantity ?? offeneMenge(basis, args.targets)
+  if (!(basis > 0) || !Number.isFinite(rest) || (aktiv && rest <= 0)) return []
 
   // --- Einstieg -----------------------------------------------------------
   if (t.status === 'geplant') {
@@ -188,7 +172,7 @@ export function demoFills(args: {
       ? candleReachesLevel(seite, t.entryPrice, c)
       : beruehrt(t.entryPrice, c)
     if (!erreicht) return []
-    const preis = seite ? fillPreis(t.entryPrice, seite, c) : t.entryPrice
+    const preis = t.entryPrice
     fills.push({
       art: 'einstieg',
       preis,
@@ -197,12 +181,10 @@ export function demoFills(args: {
       targetId: null,
       schliesst: false,
       vorFenster: seite ? vorherJenseits(t.entryPrice, seite, args.vorherKurs) : false,
-      grund:
-        preis === t.entryPrice
-          ? 'Kurs hat den Einstieg berührt.'
-          : `Kurs eröffnete jenseits des Einstiegs — ausgeführt zur Eröffnung (${preis}).`,
+      grund: 'Automatischer Demo-Einstieg zum festgelegten Preis.',
     })
     aktiv = true
+    rest = basis
   }
 
   if (!aktiv) return fills
@@ -213,19 +195,16 @@ export function demoFills(args: {
   // zählt der Stop. Siehe Kopfkommentar — ohne Tickdaten ist die Reihenfolge
   // nicht feststellbar, und die günstige Annahme wäre eine Lüge.
   if (candleReachesLevel(stopSeite(t.direction), t.stopLoss, c)) {
-    const preis = fillPreis(t.stopLoss, stopSeite(t.direction), c)
+    const preis = t.stopLoss
     fills.push({
       art: 'stop',
       preis,
       zeit: c.time,
-      menge: offeneMenge(basis, args.targets),
+      menge: rest,
       targetId: null,
       schliesst: true,
       vorFenster: vorherJenseits(t.stopLoss, stopSeite(t.direction), args.vorherKurs),
-      grund:
-        preis === t.stopLoss
-          ? 'Kurs hat den Stop berührt.'
-          : `Kurs eröffnete jenseits des Stops — ausgeführt zur Eröffnung (${preis}).`,
+      grund: 'Automatischer Demo-Stop zum festgelegten Preis.',
     })
     return fills
   }
@@ -241,28 +220,30 @@ export function demoFills(args: {
   for (const stufe of offen) {
     if (!candleReachesLevel(zielSeite(t.direction), stufe.price, c)) continue
     const istLetzte = stufe === letzte
-    const preis = fillPreis(stufe.price, zielSeite(t.direction), c)
+    const preis = stufe.price
     // Die äußerste Stufe nimmt den REST der Position, nicht ihren Anteil:
     // Bleibt die Summe der Anteile unter 100, läuft der Rest bis hierher mit
     // (`remainderPct` in `lib/trade-targets.ts`). Sonst bliebe eine
     // Geisterposition offen, die niemand mehr schliesst.
     const menge = istLetzte
-      ? Math.max(0, offeneMenge(basis, args.targets) - verkauft)
-      : plannedQty(basis, stufe.sharePct)
+      ? Math.max(0, rest - verkauft)
+      : Math.min(plannedQty(basis, stufe.sharePct), Math.max(0, rest - verkauft))
+    if (!(menge > 0)) continue
     verkauft += menge
+    const schliesst = istLetzte || verkauft >= rest - 1e-9
     fills.push({
-      art: istLetzte ? 'ziel' : 'teilziel',
+      art: schliesst ? 'ziel' : 'teilziel',
       preis,
       zeit: c.time,
       menge,
       targetId: stufe.id,
-      schliesst: istLetzte,
+      schliesst,
       vorFenster: vorherJenseits(stufe.price, zielSeite(t.direction), args.vorherKurs),
-      grund: istLetzte
-        ? 'Kurs hat das Kursziel erreicht — Restposition geschlossen.'
-        : `Kurs hat Zielstufe ${stufe.sortOrder + 1} erreicht (${stufe.sharePct} % der Anfangsposition).`,
+      grund: schliesst
+        ? 'Automatisches Demo-Kursziel zum festgelegten Preis — Restposition geschlossen.'
+        : `Automatisches Demo-Teilziel ${stufe.sortOrder + 1} zum festgelegten Preis.`,
     })
-    if (istLetzte) break
+    if (schliesst) break
   }
 
   return fills

@@ -64,11 +64,8 @@ describe('Einstieg', () => {
     expect(f).toEqual([])
   })
 
-  it('führt bei einer Lücke zur ERÖFFNUNG aus, nicht zum Wunschlevel', () => {
-    // Long-Limit bei 100, zuletzt stand der Kurs bei 103 — der Einstieg wird
-    // also von OBEN angelaufen. Die Kerze eröffnet mit einer Abwärtslücke bei
-    // 96: Das Level 100 gab es an diesem Tag nie, der erste handelbare Kurs
-    // ist 96. Real wäre die Limit-Order gefüllt worden, sogar besser.
+  it('führt bei einer Lücke zum festgelegten Einstiegspreis aus', () => {
+    // The requested Demo simulation fills at the planned level even across a gap.
     const f = demoFills({
       trade: LONG,
       targets: ZIELE,
@@ -77,8 +74,8 @@ describe('Einstieg', () => {
     })
     expect(f).toHaveLength(1)
     expect(f[0].art).toBe('einstieg')
-    expect(f[0].preis).toBe(96)
-    expect(f[0].grund).toContain('Eröffnung')
+    expect(f[0].preis).toBe(100)
+    expect(f[0].grund).toContain('festgelegten Preis')
   })
 
   it('füllt einen Ausbruchskauf NICHT, wenn die Kerze unter dem Einstieg bleibt', () => {
@@ -224,14 +221,14 @@ describe('Zielstufen', () => {
     expect(f[0].menge + f[1].menge).toBe(100)
   })
 
-  it('führt ein übersprungenes Ziel zur Eröffnung aus', () => {
+  it('führt ein übersprungenes Ziel zum festgelegten TP aus', () => {
     const aktiv = { ...LONG, status: 'aktiv' }
     const f = demoFills({
       trade: aktiv,
       targets: [stufe({ id: 1, sortOrder: 0, price: 110, sharePct: 100 })],
       candle: kerze({ open: 115, high: 118, low: 114, close: 117 }),
     })
-    expect(f[0].preis).toBe(115)
+    expect(f[0].preis).toBe(110)
     expect(f[0].grund).toContain('Kursziel')
   })
 
@@ -350,5 +347,42 @@ describe('offeneMenge', () => {
   it('fällt nie unter null', () => {
     const targets = [stufe({ id: 1, price: 110, executedAt: new Date(), executedQty: 150 })]
     expect(offeneMenge(100, targets)).toBe(0)
+  })
+})
+
+describe('Feste Preise und manuelle Positionsänderungen', () => {
+  it.each(['long', 'short'])('bucht Stop 150 auch bei einer Lücke (%s)', (direction) => {
+    const long = direction === 'long'
+    const f = demoFills({
+      trade: { status: 'aktiv', direction, entryPrice: long ? 160 : 140, stopLoss: 150, positionSize: 100 },
+      targets: [], openQuantity: 65,
+      candle: kerze({ open: long ? 145 : 155, high: long ? 149 : 157, low: long ? 140 : 152 }),
+    })
+    expect(f[0]).toMatchObject({ art: 'stop', preis: 150, menge: 65, schliesst: true })
+  })
+
+  it('erkennt eine TP-Berührung auch bei anschließender Kursumkehr', () => {
+    const f = demoFills({ trade: { ...LONG, status: 'aktiv' }, targets: ZIELE,
+      candle: kerze({ open: 105, high: 112, low: 101, close: 102 }) })
+    expect(f[0]).toMatchObject({ art: 'teilziel', preis: 110, menge: 40 })
+  })
+
+  it('verkauft nach einem manuellen Teilverkauf höchstens den verbleibenden Rest', () => {
+    const f = demoFills({ trade: { ...LONG, status: 'aktiv' }, targets: ZIELE,
+      openQuantity: 25, candle: kerze({ open: 105, high: 112, low: 104 }) })
+    expect(f).toHaveLength(1)
+    expect(f[0]).toMatchObject({ art: 'ziel', menge: 25, preis: 110, schliesst: true })
+  })
+
+  it('verkauft beim letzten Ziel auch manuelle Nachkäufe', () => {
+    const f = demoFills({ trade: { ...LONG, status: 'aktiv' }, targets: ZIELE,
+      openQuantity: 140, candle: kerze({ open: 105, high: 125, low: 104 }) })
+    expect(f.map((fill) => fill.menge)).toEqual([40, 100])
+    expect(f.map((fill) => fill.preis)).toEqual([110, 120])
+  })
+
+  it('bucht ohne positive Positionsgröße keine erfundene Ausführung', () => {
+    expect(demoFills({ trade: { ...LONG, status: 'aktiv', positionSize: null }, targets: ZIELE,
+      candle: kerze({ high: 125, low: 90 }) })).toEqual([])
   })
 })

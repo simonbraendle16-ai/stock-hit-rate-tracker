@@ -166,6 +166,8 @@ export function EditTradeDialog({
       onDone()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Fehler')
+      // Earlier automatic fills may already have committed.
+      onDone()
     } finally {
       setBusy(false)
     }
