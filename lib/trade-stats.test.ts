@@ -31,6 +31,7 @@ import type { TradeEventRow } from './trade-events'
 /** Minimaler abgeschlossener Trade; einzelne Felder je Test überschreiben. */
 function makeTrade(over: Partial<TradeRow> = {}): TradeRow {
   return {
+    quoteCurrency: 'EUR', accountCurrency: 'EUR', quoteToAccountRate: 1, fxRateAt: null,
     id: 1,
     userId: 'u1',
     stockId: null,
@@ -283,7 +284,7 @@ describe('computeDisciplineStats', () => {
     ]
     const s = computeDisciplineStats(rows, 10000)
     expect(s.incomplete).toBe(1)
-    expect(s.totalPnL).toBe(182) // der unvollständige Trade zieht nichts ab
+    expect(s.totalPnL).toBeNaN() // eine Teilbilanz ist keine vollständige Kontobilanz
   })
 
   it('zählt Regelbrüche über alle Trades', () => {

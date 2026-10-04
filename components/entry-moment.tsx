@@ -62,6 +62,7 @@ export function EntryMoment({
   const quote = useTradeQuote(trade.ticker, trade.market, trade.stockId)
   const stufen = effectiveTargets(trade, targets)
   const risiko = tradeRisk(trade)
+  currency = trade.accountCurrency ?? currency
   const long = trade.direction !== 'short'
 
   // Abstand zum geplanten Einstieg — die eine Zahl, die sagt, ob der Moment
@@ -141,7 +142,7 @@ export function EntryMoment({
           />
           <PlanRow
             label="Risiko"
-            value={trade.tradedWithMoney ? formatMoney(risiko, currency) : `${fmt(risiko)} (Papier)`}
+            value={Number.isFinite(risiko) ? `${formatMoney(risiko, currency)}${trade.tradedWithMoney ? '' : ' (Papier)'}` : 'Währungs-/Größenangaben fehlen'}
             tone="neg"
           />
           {trade.positionSize != null && (

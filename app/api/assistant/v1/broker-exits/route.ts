@@ -3,11 +3,13 @@ import { brokerExit, brokerOrder, portfolio, trade, tradeEvent } from '@/lib/db/
 import { ApiError, apiResponseError, onlyKeys, positiveId, readJsonObject, requireApiScope } from '@/lib/assistant-api'
 import { settlePosition } from '@/lib/trade-events'
 import { classifyBrokerExit, hasConfirmedBrokerEntry } from '@/lib/broker-exit-guard'
+import { normalizeSettlementReceipt, receiptSignature } from '@/lib/settlement-receipt'
+import { saveSettlementReceipt } from '@/lib/settlement-service'
 import { and, desc, eq, sql } from 'drizzle-orm'
 import { NextRequest, NextResponse } from 'next/server'
 
 const keys = ['portfolioId', 'brokerAccountId', 'brokerPositionId', 'brokerExitId',
-  'quantity', 'price', 'exitedAt', 'observedAt'] as const
+  'quantity', 'price', 'exitedAt', 'observedAt', 'settlementReceipt'] as const
 
 function requiredText(value: unknown, label: string) {
   if (typeof value !== 'string' || !value.trim() || value.length > 100) throw new ApiError(422, `${label} ist ungültig.`)
@@ -54,6 +56,12 @@ export async function POST(req: NextRequest) {
       exitedAt: requiredDate(raw.exitedAt, 'Ausstiegszeit'),
       observedAt: requiredDate(raw.observedAt, 'Beobachtungszeit'),
     }
+    let settlementReceipt = null
+    if (raw.settlementReceipt != null) {
+      try { settlementReceipt = normalizeSettlementReceipt(raw.settlementReceipt) }
+      catch (e) { throw new ApiError(422, e instanceof Error ? e.message : 'Abrechnung ist ungültig.') }
+      if (settlementReceipt.source !== 'avatrade_history') throw new ApiError(422, 'Collector-Belegquelle ist ungültig.')
+    }
     if (input.exitedAt > input.observedAt) throw new ApiError(422, 'Ausstieg liegt nach der Beobachtung.')
     if (!process.env.AVATRADE_DEMO_ACCOUNT_ID || input.brokerAccountId !== process.env.AVATRADE_DEMO_ACCOUNT_ID) {
       throw new ApiError(403, 'Brokerkonto nicht freigegeben.')
@@ -74,7 +82,21 @@ export async function POST(req: NextRequest) {
             existing.exitedAt.getTime() !== input.exitedAt.getTime()) {
           throw new ApiError(409, 'Ausstiegs-ID widerspricht dem gespeicherten Beleg.')
         }
-        if (existing.processedAt) return { ...existing, outcome: 'processed' as const }
+        if (settlementReceipt && existing.settlementReceipt &&
+            receiptSignature(existing.settlementReceipt) !== receiptSignature(settlementReceipt)) {
+          throw new ApiError(409, 'Abrechnungsbeleg widerspricht dem gespeicherten Beleg. Explizite Korrektur erforderlich.')
+        }
+        if (existing.processedAt) {
+          if (settlementReceipt) {
+            const linkedEvents = await tx.select().from(tradeEvent).where(and(eq(tradeEvent.userId, userId),
+              eq(tradeEvent.tradeId, existing.linkedTradeId!),
+              sql`${tradeEvent.payload}::jsonb ->> 'brokerExitId' = ${String(existing.id)}`)).limit(2)
+            if (linkedEvents.length !== 1) throw new ApiError(409, 'Ausstiegsereignis ist nicht eindeutig zugeordnet.')
+            await saveSettlementReceipt(tx, userId, linkedEvents[0].id, settlementReceipt, null)
+            await tx.update(brokerExit).set({ settlementReceipt }).where(eq(brokerExit.id, existing.id))
+          }
+          return { ...existing, settlementReceipt: settlementReceipt ?? existing.settlementReceipt, outcome: 'processed' as const }
+        }
       }
       const orders = await tx.select().from(brokerOrder).where(and(eq(brokerOrder.userId, userId),
         eq(brokerOrder.portfolioId, input.portfolioId), eq(brokerOrder.broker, 'avatrade'),
@@ -100,30 +122,35 @@ export async function POST(req: NextRequest) {
             const full = classification === 'closed'
             eventType = full ? 'geschlossen' : 'teilverkauf'
             outcome = full ? 'closed' : 'partial'
-            if (full) {
-              const gross = settlement.realizedGross +
-                (input.price - settlement.avgEntry) * (t.direction === 'short' ? -1 : 1) * remaining
-              result = Math.abs(gross) < 1e-8 ? 'breakeven' : gross > 0 ? 'gewinn' : 'verlust'
-            }
           }
         }
       }
       const [saved] = existing ? await tx.update(brokerExit).set({
         brokerOrderId: order?.id ?? null, linkedTradeId,
+        settlementReceipt: settlementReceipt ?? existing.settlementReceipt,
         processedAt: eventType ? new Date() : null,
       }).where(eq(brokerExit.id, existing.id)).returning()
-        : await tx.insert(brokerExit).values({ ...input, userId, broker: 'avatrade',
+        : await tx.insert(brokerExit).values({ ...input, settlementReceipt, userId, broker: 'avatrade',
           brokerOrderId: order?.id ?? null, linkedTradeId, processedAt: eventType ? new Date() : null,
         }).returning()
       if (eventType && linkedTradeId) {
-        await tx.insert(tradeEvent).values({ tradeId: linkedTradeId, userId, type: eventType,
+        const [event] = await tx.insert(tradeEvent).values({ tradeId: linkedTradeId, userId, type: eventType,
           at: input.exitedAt, quantity: input.quantity, price: input.price,
           note: `Broker-Ausstieg: AvaTrade ${input.brokerExitId}`,
           payload: JSON.stringify({ source: 'broker', brokerExitId: saved.id }),
-        })
+        }).returning()
+        const receipt = settlementReceipt ?? saved.settlementReceipt
+        if (receipt) await saveSettlementReceipt(tx, userId, event.id, receipt, null)
         if (eventType === 'geschlossen') {
+          const [t] = await tx.select().from(trade).where(eq(trade.id, linkedTradeId))
+          const events = await tx.select().from(tradeEvent).where(and(eq(tradeEvent.tradeId, linkedTradeId), eq(tradeEvent.userId, userId)))
+          const settlement = settlePosition(t, events)
+          if (settlement.moneyComplete && Number.isFinite(settlement.totalNet)) {
+            result = Math.abs(settlement.totalNet) < 1e-8 ? 'breakeven' : settlement.totalNet > 0 ? 'gewinn' : 'verlust'
+          }
           const [changed] = await tx.update(trade).set({ status: 'abgeschlossen', result,
             actualExitPrice: input.price, closedAt: input.exitedAt,
+            version: sql`${trade.version} + 1`,
           }).where(and(eq(trade.id, linkedTradeId), eq(trade.userId, userId), eq(trade.status, 'aktiv')))
             .returning({ id: trade.id })
           if (!changed) throw new ApiError(409, 'Trade wurde gleichzeitig geändert.')

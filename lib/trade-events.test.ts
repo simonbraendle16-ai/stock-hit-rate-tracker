@@ -11,6 +11,7 @@ import {
 /** Minimaler aktiver Trade; einzelne Felder je Test überschreiben. */
 function makeTrade(over: Partial<TradeRow> = {}): TradeRow {
   return {
+    quoteCurrency: 'EUR', accountCurrency: 'EUR', quoteToAccountRate: 1, fxRateAt: null,
     id: 1,
     userId: 'u1',
     stockId: null,

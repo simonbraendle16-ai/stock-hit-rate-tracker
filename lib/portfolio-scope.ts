@@ -21,13 +21,14 @@
 // liegt in `app/actions/portfolios.ts`.
 
 import type { portfolio } from '@/lib/db/schema'
+import { portfolioCurrency } from './money-currency'
 
 export const PORTFOLIO_KINDS = ['echtgeld', 'demo'] as const
 
 export type PortfolioKind = (typeof PORTFOLIO_KINDS)[number]
 
 /** Eine Depot-Zeile, wie sie aus der Datenbank kommt. */
-export type PortfolioRow = typeof portfolio.$inferSelect
+export type PortfolioRow = Omit<typeof portfolio.$inferSelect, 'currency'> & { currency?: string | null }
 
 /**
  * Das Depot, wie es ein Formular braucht — nur die Felder, die die Eingabe
@@ -39,6 +40,9 @@ export type PortfolioRow = typeof portfolio.$inferSelect
  * Gebühren-Vorbelegung wechseln mit der Auswahl).
  */
 export type PortfolioOption = {
+  currency?: string
+  fxRates?: string | null
+  fxRatesAt?: Date | null
   id: number
   name: string
   kind: PortfolioKind
@@ -48,13 +52,16 @@ export type PortfolioOption = {
 }
 
 /** Zeilen aus der Datenbank in die Formularsicht bringen — an einer Stelle. */
-export function toPortfolioOptions(rows: PortfolioRow[]): PortfolioOption[] {
+export function toPortfolioOptions(rows: PortfolioRow[], fallbackCurrency = 'EUR'): PortfolioOption[] {
   return rows
     // In ein archiviertes Depot wird nicht gebucht (siehe `checkMove`), deshalb
     // erscheint es in der Erfassung gar nicht erst.
     .filter((p) => p.archivedAt == null)
     .map((p) => ({
       id: p.id,
+      currency: portfolioCurrency(p, fallbackCurrency),
+      fxRates: p.fxRates,
+      fxRatesAt: p.fxRatesAt,
       name: p.name,
       kind: normalizePortfolioKind(p.kind),
       startCapital: p.startCapital,

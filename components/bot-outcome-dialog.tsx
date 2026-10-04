@@ -9,7 +9,7 @@
 // gekennzeichnet.
 //
 // Bei „Ziel erreicht" und „Stop erreicht" wird bewusst KEIN Kurs abgefragt: der
-// ergibt sich aus dem Plan. Nachgetragen wird eine Aussage über den Verlauf,
+// ergibt sich aus den gespeicherten Szenariowerten. Nachgetragen wird eine Aussage über den Verlauf,
 // kein frei gewählter Betrag — sonst wäre die Differenz verhandelbar.
 
 import { useEffect, useState } from 'react'
@@ -32,8 +32,8 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 
 const CHOICES: { key: BotOutcome; label: string; hint: string }[] = [
-  { key: 'ziel', label: 'Ziel erreicht', hint: 'Der Kurs hat das Ziel aus dem Plan berührt.' },
-  { key: 'stop', label: 'Stop erreicht', hint: 'Der Kurs hat den Stop aus dem Plan berührt.' },
+  { key: 'ziel', label: 'Ziel erreicht', hint: 'Der Kurs hat das Ziel aus den gespeicherten Szenariowerten berührt.' },
+  { key: 'stop', label: 'Stop erreicht', hint: 'Der Kurs hat den Stop aus den gespeicherten Szenariowerten berührt.' },
   {
     key: 'offen',
     label: 'Weder noch',
@@ -120,13 +120,13 @@ export function BotOutcomeDialog({
         <DialogContent className="max-h-[85svh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-heading tracking-wide">
-              {ticker} — was wäre daraus geworden?
+              {ticker} — Szenario-Ausgang nachtragen
             </DialogTitle>
             <DialogDescription className="font-mono text-xs">
-              Für diesen Trade gibt es keine Kursdaten mehr. Trag ein, wie der Plan geendet hätte,
-              wenn du ihn mechanisch durchgezogen hättest. Der Eintrag zählt in die Auswertung und
+              Trag den hypothetischen Ausgang mit festem Stop und Ziel aus den gespeicherten
+              Werten ein. Teilverkäufe und Trailing sind nicht abgebildet. Der Eintrag zählt in die Auswertung und
               ist dort als Nachtrag gekennzeichnet — sobald doch Kursdaten vorliegen, gilt wieder
-              die Messung.
+              das kursbasierte Szenario.
             </DialogDescription>
           </DialogHeader>
 
@@ -160,7 +160,7 @@ export function BotOutcomeDialog({
               <p className="min-h-4 font-mono text-[10px] text-muted-foreground">
                 {hasTarget
                   ? CHOICES.find((c) => c.key === outcome)?.hint
-                  : 'Dieser Trade hat kein Ziel im Plan — „Ziel erreicht" ist deshalb nicht wählbar.'}
+                  : 'Dieser Trade hat kein gespeichertes Ziel — „Ziel erreicht" ist deshalb nicht wählbar.'}
               </p>
             </div>
 

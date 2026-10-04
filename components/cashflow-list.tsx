@@ -12,6 +12,7 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { PaperBadge } from '@/components/paper-badge'
 import { normalizePortfolioKind, type PortfolioRow } from '@/lib/portfolio-scope'
+import { portfolioCurrency } from '@/lib/money-currency'
 
 function isoDate(d: Date | string): string {
   return new Date(d).toISOString().slice(0, 10)
@@ -46,6 +47,9 @@ export function CashflowList({
 
   const waehlbar = portfolios.filter((p) => p.archivedAt == null)
   const depotName = new Map(portfolios.map((p) => [p.id, p.name]))
+  const flowCurrency = (id: number) => portfolioCurrency(portfolios.find(p => p.id === id) ?? {}, currency)
+  const inputCurrency = portfolioId == null ? currency : flowCurrency(portfolioId)
+  const mixed = new Set(items.map(c => flowCurrency(c.portfolioId))).size > 1
   const istDemoDepot = (id: number) =>
     normalizePortfolioKind(portfolios.find((p) => p.id === id)?.kind ?? '') === 'demo'
 
@@ -104,7 +108,7 @@ export function CashflowList({
         tatsächlich eingesetztes Kapital."
       right={
         items.length > 0 ? (
-          <span className="note">Netto {formatMoney(net, currency)}</span>
+          <span className="note">{mixed ? 'Verschiedene Depotwährungen · keine gemeinsame Summe' : `Netto ${formatMoney(net, items.length ? flowCurrency(items[0].portfolioId) : currency)}`}</span>
         ) : undefined
       }
       delay="rise-in-3"
@@ -153,7 +157,7 @@ export function CashflowList({
         </div>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="Betrag">
+          <Field label={`Betrag (${inputCurrency})`}>
             <Input
               type="number"
               step="any"
@@ -211,7 +215,7 @@ export function CashflowList({
                   )}
                 >
                   {c.kind === 'auszahlung' ? '−' : '+'}
-                  {formatMoney(c.amount, currency)}
+                  {formatMoney(c.amount, flowCurrency(c.portfolioId))}
                 </span>
                 <span className="text-muted-foreground">
                   {new Date(c.occurredAt).toLocaleDateString('de-DE')}

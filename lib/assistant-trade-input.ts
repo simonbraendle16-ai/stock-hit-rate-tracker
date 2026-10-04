@@ -1,10 +1,12 @@
 import { ApiError, onlyKeys, positiveId } from '@/lib/assistant-api'
 import type { TradeInput } from '@/app/actions/trades'
+import { validatePreTradeAnswers } from './pre-trade-questions'
 
 const markets = ['aktien', 'krypto', 'forex', 'rohstoffe', 'etf', 'optionen', 'sonstiges']
 const fields = ['portfolioId', 'ticker', 'market', 'tradeKind', 'direction', 'entryPrice',
   'stopLoss', 'takeProfit', 'strategy', 'setupTags', 'investedAmount', 'leverage',
-  'contracts', 'feeEntry', 'feeExit', 'broker', 'notes', 'source']
+  'contracts', 'feeEntry', 'feeExit', 'broker', 'notes', 'source', 'quoteCurrency',
+  'preTradeAnswers', 'elliottWaveCount', 'waveDegree', 'elliottInvalidation']
 
 function textValue(value: unknown, label: string, max: number, required = false) {
   if (value == null && !required) return undefined
@@ -42,7 +44,15 @@ export function normalizeAssistantTradeInput(raw: Record<string, unknown>) {
   if (tags != null && (!Array.isArray(tags) || tags.length > 3 || tags.some((tag) => typeof tag !== 'string' || tag.length > 80))) {
     throw new ApiError(422, 'Setup-Tags sind ungültig.')
   }
+  let preTradeAnswers
+  try { preTradeAnswers = validatePreTradeAnswers(raw.preTradeAnswers) }
+  catch { throw new ApiError(422, 'Vorabantworten sind ungültig oder doppelt.') }
   const input: TradeInput = {
+    preTradeAnswers,
+    elliottWaveCount: textValue(raw.elliottWaveCount, 'Count', 4000),
+    waveDegree: textValue(raw.waveDegree, 'Wellengrad', 200),
+    elliottInvalidation: numberValue(raw.elliottInvalidation, 'Count-Invalidierung'),
+    quoteCurrency: textValue(raw.quoteCurrency, 'Kurswährung', 3),
     portfolioId,
     ticker,
     market: String(raw.market),

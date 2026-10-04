@@ -53,10 +53,12 @@ import {
   projectTakeProfit,
   ticksBetween,
 } from '@/lib/trade-math'
-import { getContractSpecFor } from '@/app/actions/stocks'
+import { getContractSpecFor, getTradeInstrumentCurrencyFor } from '@/app/actions/stocks'
 import { contractTradeFelder } from '@/lib/contract-trade'
 import type { ContractSpec } from '@/lib/contract-specs'
 import { currencySymbol, formatMoney } from '@/lib/format'
+import { parseFxRates } from '@/lib/margin'
+import { resolveMoneyCurrency } from '@/lib/money-currency'
 import {
   DEFAULT_TRADE_KIND,
   TRADE_KIND_HINT,
@@ -112,6 +114,8 @@ export function TradeForm({
   const [loading, setLoading] = useState(false)
   const [setupTags, setSetupTags] = useState<string[]>([])
   const [questionsOpen, setQuestionsOpen] = useState(false)
+  const [spec, setSpec] = useState<ContractSpec | null>(null)
+  const [instrumentCurrency, setInstrumentCurrency] = useState<{ ticker: string; market: string; currency: string | null } | null>(null)
 
   // Das DEPOT ist die Wahl — nicht mehr die Handelsart.
   //
@@ -126,6 +130,7 @@ export function TradeForm({
   // eine Vorbelegung, die man übersieht.
   const [portfolioId, setPortfolioId] = useState<number | null>(defaultPortfolioId)
   const depot = portfolios.find((p) => p.id === portfolioId) ?? null
+  currency = depot?.currency ?? currency
   const tradedWithMoney = depot == null || depot.kind !== 'demo'
   const startCapital = depot?.startCapital ?? 0
   const defaultFeeEntry = depot?.defaultFeeEntry ?? 0
@@ -137,6 +142,7 @@ export function TradeForm({
   const quick = tradeKind === 'schnell'
   const money$ = (n: number | null | undefined) => formatMoney(n, currency)
   const [form, setForm] = useState({
+    quoteCurrency: '',
     ticker: '',
     direction: 'long' as 'long' | 'short',
     entryPrice: '',
@@ -199,7 +205,21 @@ export function TradeForm({
   // Übung, wenn Positionswert und Stückzahl dieselben sind wie später mit
   // echtem Geld. Der Unterschied bleibt, dass auf Papier keine Gebühren
   // anfallen — dieselbe Regel wie in `tradeFees`.
+  const conversion = useMemo(() => {
+    try {
+      return { value: resolveMoneyCurrency({
+        accountCurrency: currency, quoteCurrency: form.quoteCurrency,
+        resolvedCurrency: instrumentCurrency?.ticker === form.ticker.trim().toUpperCase() && instrumentCurrency.market === form.market ? instrumentCurrency.currency : null,
+        rates: parseFxRates(depot?.fxRates),
+        ratesAt: depot?.fxRatesAt ? new Date(depot.fxRatesAt) : null,
+      }), error: null }
+    } catch (err) {
+      return { value: null, error: err instanceof Error ? err.message : 'Umrechnung fehlt.' }
+    }
+  }, [currency, form.quoteCurrency, form.ticker, form.market, instrumentCurrency, depot?.fxRates, depot?.fxRatesAt])
   const money = useMemo(() => {
+    if (!conversion.value || spec) return null
+    const quoteToAccountRate = conversion.value.quoteToAccountRate
     const invested = parseFloat(form.investedAmount)
     const entry = parseFloat(form.entryPrice)
     if (!invested || !entry) return null
@@ -219,19 +239,21 @@ export function TradeForm({
       ? { entry: feeEntry, exit: feeExit }
       : { entry: 0, exit: 0 }
     return {
-      shares: computeShares(invested, entry, leverage),
+      shares: computeShares(invested, entry, leverage, quoteToAccountRate),
       positionValue: computePositionValue(invested, leverage),
       leverage,
       tp:
         tp > 0
-          ? projectTakeProfit({ invested, entry, tp, direction: form.direction, sellPct, leverage, fees })
+          ? projectTakeProfit({ invested, entry, tp, direction: form.direction, sellPct, leverage, fees, quoteToAccountRate })
           : null,
       sl:
         sl > 0
-          ? projectStopLoss({ invested, entry, sl, direction: form.direction, leverage, fees })
+          ? projectStopLoss({ invested, entry, sl, direction: form.direction, leverage, fees, quoteToAccountRate })
           : null,
     }
   }, [
+    spec,
+    conversion,
     tradedWithMoney,
     form.investedAmount,
     form.entryPrice,
@@ -256,7 +278,6 @@ export function TradeForm({
   //
   // Der Abruf ist entprellt: Wer „ES1!" tippt, soll nicht bei jedem Buchstaben
   // eine Anfrage auslösen.
-  const [spec, setSpec] = useState<ContractSpec | null>(null)
   useEffect(() => {
     const ticker = form.ticker.trim()
     if (!ticker) {
@@ -265,9 +286,9 @@ export function TradeForm({
     }
     let abgebrochen = false
     const timer = setTimeout(() => {
-      void getContractSpecFor({ ticker, market: form.market })
-        .then((s) => {
-          if (!abgebrochen) setSpec(s)
+      void Promise.all([getContractSpecFor({ ticker, market: form.market }), getTradeInstrumentCurrencyFor(ticker, form.market)])
+        .then(([s, currency]) => {
+          if (!abgebrochen) { setSpec(s); setInstrumentCurrency({ ticker: ticker.toUpperCase(), market: form.market, currency: s?.currency ?? currency }) }
         })
         // Fehlschlag heisst „keine Spezifikation" — dann bemisst das Formular
         // wie bisher über den Kapitaleinsatz. Nie eine geraten.
@@ -313,11 +334,14 @@ export function TradeForm({
   // Trade" ist eine Regel über das eigene Verhalten, keine Eigenschaft eines
   // Kontos — und sie soll in der Übung genauso gelten.
   const risk = useMemo(() => {
-    if (!money?.sl || !startCapital) return null
-    const riskEur = Math.abs(money.sl.grossLoss)
+    if (!Number.isFinite(startCapital) || !startCapital) return null
+    const riskEur = kontrakt && conversion.value
+      ? kontrakt.risiko * conversion.value.quoteToAccountRate
+      : money?.sl ? Math.abs(money.sl.grossLoss) : null
+    if (riskEur === null) return null
     const pct = (riskEur / startCapital) * 100
     return { riskEur, pct, over: pct > maxRiskPct }
-  }, [money, startCapital, maxRiskPct])
+  }, [money, kontrakt, conversion, startCapital, maxRiskPct])
 
   // Schritt 1: Pflichtfelder prüfen. Auf dem vollen Weg öffnet das den
   // Fragen-Dialog; der schnelle Trade legt direkt an — genau das ist sein Zweck.
@@ -327,6 +351,7 @@ export function TradeForm({
   // gar kein Plan.
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    if (!conversion.value) { toast.error(conversion.error ?? 'Währungsprüfung fehlt.'); return }
     // Das Depot zuerst: Ohne es wäre nicht bestimmt, ob echtes Geld im Spiel ist.
     // Der Server lehnt es ebenfalls ab (`resolveZielDepot`) — hier steht die
     // Prüfung nur, damit der Hinweis beim Feld erscheint und nicht als Fehler
@@ -365,6 +390,7 @@ export function TradeForm({
     setLoading(true)
     try {
       const payload: TradeInput = {
+        quoteCurrency: form.quoteCurrency,
         ticker: form.ticker,
         direction: form.direction,
         market: form.market,
@@ -543,6 +569,13 @@ export function TradeForm({
         </Field>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <Field label="Kurswährung *">
+            <select className={selectCls} value={form.quoteCurrency} onChange={e => set('quoteCurrency', e.target.value)}>
+              <option value="">Währung des Instrumentkurses wählen</option>
+              {['USD', 'EUR', 'CHF', 'GBP', 'JPY', 'CAD', 'AUD'].map(code => <option key={code} value={code}>{code}</option>)}
+            </select>
+            <p className="note">Depot: {currency}. {conversion.error ?? `Plankurs: 1 ${form.quoteCurrency} = ${conversion.value?.quoteToAccountRate} ${currency}.`}</p>
+          </Field>
           <Field label="Ticker / Symbol *">
             <Input
               value={form.ticker}
@@ -789,8 +822,8 @@ export function TradeForm({
                 <ResultRow label="Stückzahl" value={num(money.shares)} />
               </dl>
               <p className="note mt-2">
-                Der Hebel vergrößert die Position, nicht dein Risiko — das bestimmt weiterhin
-                allein dein Stop.{' '}
+                Bei gleichem Einsatz erhöht der Hebel die Positionsgröße und das Stop-Risiko.
+                Das Risiko hängt von der Stückzahl und dem Abstand zum Stop ab.{' '}
                 {tradedWithMoney
                   ? 'Prüfe die Risikoschwelle oben.'
                   : 'Prüfe die Risikoschwelle oben — sie gilt auf Papier genauso. Wer die Positionsgröße ohne Bremse übt, übt ein, wovor die Bremse später schützen soll.'}
@@ -868,7 +901,7 @@ export function TradeForm({
                     <ResultRow label="Stückzahl gesamt" value={num(money.tp.shares)} />
                     <ResultRow label="Davon verkauft" value={num(money.tp.soldShares)} />
                     <ResultRow label="Restposition" value={num(money.tp.remainingShares)} />
-                    <ResultRow label="Verkaufserlös" value={money$(money.tp.proceeds)} />
+                    <ResultRow label="Kurswert verkaufter Menge" value={money$(money.tp.proceeds)} />
                     <ResultRow label="Brutto-Gewinn" value={money$(money.tp.grossProfit)} />
                     {/* Auf Papier wären das immer 0 € — eine Zeile, die nichts sagt. */}
                     {tradedWithMoney && (

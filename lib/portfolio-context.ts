@@ -28,6 +28,7 @@ import {
   type Scope,
 } from '@/lib/portfolio-scope'
 import type { CashflowRow } from '@/lib/trade-stats'
+import { portfolioCurrency, scopeCurrency } from '@/lib/money-currency'
 
 /** Vorgabewerte eines neu angelegten Kontos — dieselben wie in Migration 0022. */
 const NEUES_KONTO = {
@@ -44,6 +45,9 @@ const NEUES_KONTO = {
  * rechnen (dieselbe Begründung wie bei `getInstrumentCards`, Etappe 10).
  */
 export type ScopeContext = {
+  currency: string
+  moneyAvailable: boolean
+  moneyIssue: string | null
   scope: Scope
   /** Alle Depots des Nutzers, auch archivierte — sortiert wie im Umschalter. */
   portfolios: PortfolioRow[]
@@ -153,13 +157,21 @@ export async function loadScopeContext(userId: string): Promise<ScopeContext> {
   // die Rendite muss gegen das Geld messen, das tatsächlich in DIESER Auswahl
   // steckt, nicht gegen einen kontoweiten Wert.
   const beteiligt = portfolios.filter((p) => portfolioIds.includes(p.id))
-  const startCapital = beteiligt.reduce((acc, p) => acc + p.startCapital, 0)
+  const [moneySettings] = await db.select({ currency: userSettings.currency }).from(userSettings)
+    .where(eq(userSettings.userId, userId)).limit(1)
+  const fallback = moneySettings?.currency ?? 'EUR'
+  const moneyAvailable = new Set(beteiligt.map(p => portfolioCurrency(p, fallback))).size <= 1
+  const currency = moneyAvailable ? scopeCurrency(beteiligt, fallback) : fallback
+  const startCapital = moneyAvailable ? beteiligt.reduce((acc, p) => acc + p.startCapital, 0) : NaN
 
   // Gebühren: bei einem einzelnen Depot dessen Vorbelegung, beim Aggregat die des
   // ersten beteiligten Depots (nur eine Formular-Vorbelegung, keine Kennzahl).
   const gebuehrenQuelle = active ?? beteiligt[0] ?? null
 
   return {
+    currency,
+    moneyAvailable,
+    moneyIssue: moneyAvailable ? null : 'Verschiedene Depotwährungen: Für Geldsummen bitte ein einzelnes Depot wählen.',
     scope,
     portfolios,
     portfolioIds,

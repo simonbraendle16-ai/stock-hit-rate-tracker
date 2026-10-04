@@ -354,26 +354,24 @@ describe('manualOutcomeRun', () => {
 // ---------------------------------------------------------------------------
 
 describe('classifyDifference', () => {
-  it('nennt eine Differenz unter der Schwelle plan-konform', () => {
-    expect(classifyDifference(BUCKET_EPS / 2, 'ziel', [])).toBe('wie_geplant')
-    expect(classifyDifference(-BUCKET_EPS / 2, 'stop', [])).toBe('wie_geplant')
+  it('beschreibt nur die Differenz mit der bestehenden Toleranz', () => {
+    expect(classifyDifference(0)).toBe('annaehernd_gleich')
+    expect(classifyDifference(BUCKET_EPS / 2)).toBe('annaehernd_gleich')
+    expect(classifyDifference(-BUCKET_EPS / 2)).toBe('annaehernd_gleich')
+    expect(classifyDifference(BUCKET_EPS)).toBe('ueber_szenario')
+    expect(classifyDifference(-BUCKET_EPS)).toBe('unter_szenario')
   })
-
-  it('erkennt ein besseres Ergebnis als der Plan', () => {
-    expect(classifyDifference(1.4, 'stop', [])).toBe('besser_als_plan')
-  })
-
-  it('erklärt eine Differenz vorrangig mit dem dokumentierten Regelbruch', () => {
-    expect(classifyDifference(-1.2, 'ziel', ['stop_moved'])).toBe('stop_verschoben')
-  })
-
-  it('nennt es „zu spät", wenn der Bot am Stop raus wäre und du mehr verloren hast', () => {
-    expect(classifyDifference(-0.9, 'stop', [])).toBe('zu_spaet')
-  })
-
-  it('nennt es „zu früh", wenn der Plan weitergelaufen wäre', () => {
-    expect(classifyDifference(-1.8, 'ziel', [])).toBe('zu_frueh')
-    expect(classifyDifference(-0.4, 'offen', [])).toBe('zu_frueh')
+  it('leitet aus Gewinn, Verlust oder gleichem Ergebnis keine Handlung ab', () => {
+    for (const outcome of ['ziel', 'stop', 'offen'] as const) {
+      for (const violations of [[], ['stop_moved'], ['revenge']]) {
+        const stats = compareBotAndTrader([
+          entry({ tradeId: 1, realR: 1, run: run(2, outcome), violations }),
+          entry({ tradeId: 2, realR: -1, run: run(-2, outcome), violations }),
+          entry({ tradeId: 3, realR: -1, run: run(-1, outcome), violations }),
+        ])
+        expect(stats.rows.map(r => r.bucket)).toEqual(['unter_szenario', 'ueber_szenario', 'annaehernd_gleich'])
+      }
+    }
   })
 })
 
@@ -424,34 +422,32 @@ describe('compareBotAndTrader', () => {
     expect(stats.compared).toBe(3)
     expect(stats.botTotalR).toBeCloseTo(4, 10)
     expect(stats.realTotalR).toBeCloseTo(0.5, 10)
-    // Deine Seite minus Bot: das Eingreifen hat 3,5 R gekostet.
+    // Deine Seite minus Bot: das Ergebnis liegt 3,5 R unter dem Szenario.
     expect(stats.differenceR).toBeCloseTo(-3.5, 10)
   })
 
-  it('lässt die Differenz auch positiv werden — besser als der Plan ist ein Befund', () => {
+  it('lässt die Differenz auch positiv werden — über dem Szenario', () => {
     const stats = compareBotAndTrader([
       entry({ tradeId: 1, realR: 3, run: run(-1, 'stop') }),
     ])
     expect(stats.differenceR).toBeCloseTo(4, 10)
-    expect(stats.buckets).toEqual([{ bucket: 'besser_als_plan', trades: 1, r: 4 }])
+    expect(stats.buckets).toEqual([{ bucket: 'ueber_szenario', trades: 1, r: 4 }])
   })
 
   it('verteilt jeden Trade in genau einen Eimer, dessen Summe die Differenz ergibt', () => {
     const stats = compareBotAndTrader([
-      entry({ tradeId: 1, realR: 0.4, run: run(2) }), // zu früh: −1,6
-      entry({ tradeId: 2, realR: -2, run: run(-1, 'stop') }), // zu spät: −1
+      entry({ tradeId: 1, realR: 0.4, run: run(2) }), // unter Szenario: −1,6
+      entry({ tradeId: 2, realR: -2, run: run(-1, 'stop') }), // unter Szenario: −1
       entry({ tradeId: 3, realR: 0, run: run(1.5), violations: ['stop_moved'] }), // −1,5
-      entry({ tradeId: 4, realR: 2, run: run(2) }), // wie geplant: 0
+      entry({ tradeId: 4, realR: 2, run: run(2) }), // annähernd gleich: 0
       entry({ tradeId: 5, realR: 1, run: run(-1, 'stop') }), // besser: +2
     ])
 
     const byBucket = Object.fromEntries(stats.buckets.map((b) => [b.bucket, b]))
-    expect(byBucket.zu_frueh).toMatchObject({ trades: 1 })
-    expect(byBucket.zu_frueh.r).toBeCloseTo(-1.6, 10)
-    expect(byBucket.zu_spaet.r).toBeCloseTo(-1, 10)
-    expect(byBucket.stop_verschoben.r).toBeCloseTo(-1.5, 10)
-    expect(byBucket.wie_geplant.r).toBeCloseTo(0, 10)
-    expect(byBucket.besser_als_plan.r).toBeCloseTo(2, 10)
+    expect(byBucket.unter_szenario).toMatchObject({ trades: 3 })
+    expect(byBucket.unter_szenario.r).toBeCloseTo(-4.1, 10)
+    expect(byBucket.annaehernd_gleich.r).toBeCloseTo(0, 10)
+    expect(byBucket.ueber_szenario.r).toBeCloseTo(2, 10)
 
     const bucketSum = stats.buckets.reduce((a, b) => a + b.r, 0)
     expect(bucketSum).toBeCloseTo(stats.differenceR, 10)

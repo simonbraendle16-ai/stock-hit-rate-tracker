@@ -11,8 +11,10 @@
 
 import type { trade, tradeEvent } from '@/lib/db/schema'
 import { directionalDiff, parseViolations } from '@/lib/trade-stats'
+import { frozenFxRate, settledFxRate } from './money-currency'
+import { receiptFromPayload } from './settlement-receipt'
 
-export type TradeRow = typeof trade.$inferSelect
+export type TradeRow = import('./trade-stats').TradeRow
 export type TradeEventRow = typeof tradeEvent.$inferSelect
 
 /** Geschlossene Liste der Ereignis-Arten — gemeinsame Quelle für Server-Gate,
@@ -70,6 +72,7 @@ export function isRiskReducingStop(
 }
 
 export type PositionSettlement = {
+  moneyComplete: boolean
   /** Noch offene Stückzahl (0 = vollständig geschlossen). */
   openQty: number
   /** Gewichteter Durchschnittseinstieg über alle Ein-/Nachkäufe. */
@@ -125,13 +128,19 @@ export function settlePosition(t: TradeRow, events: TradeEventRow[]): PositionSe
     : t.stopLoss
   const initialEntry = opened?.price ?? t.entryPrice
   const initialQty = opened?.quantity ?? t.positionSize ?? 0
-  const plannedRiskMoney = Math.abs(initialEntry - initialStop) * initialQty
+  const rate = frozenFxRate(t)
+  const realizedRate = settledFxRate(t)
+  let moneyComplete = initialQty > 0 && Number.isFinite(initialQty) && Number.isFinite(initialEntry)
+  const plannedRiskMoney = rate === null || initialQty <= 0 ? NaN : Math.abs(initialEntry - initialStop) * initialQty * rate
 
   let openQty = initialQty
   let avgEntry = initialEntry
   let totalEntered = initialQty
   let totalExited = 0
   let realizedGross = 0
+  let settledNet = 0
+  const entryFeeTreatments = new Set<'included' | 'excluded'>()
+  const settlementCurrencies = new Set<string>()
   let realizedExitFees = 0
   // Ohne eroeffnet-Event trägt die Trade-Zeile die (bei Abschluss eingefrorene)
   // Einstiegsgebühr; mit Event steckt sie im Event.
@@ -141,6 +150,7 @@ export function settlePosition(t: TradeRow, events: TradeEventRow[]): PositionSe
     const q = ev.quantity ?? 0
     const price = ev.price ?? avgEntry
     if (ev.type === 'nachkauf') {
+      if (ev.price == null || !Number.isFinite(ev.price) || !Number.isFinite(q) || q <= 0) moneyComplete = false
       const next = openQty + q
       if (next > EPS) avgEntry = (openQty * avgEntry + q * price) / next
       openQty = next
@@ -149,9 +159,25 @@ export function settlePosition(t: TradeRow, events: TradeEventRow[]): PositionSe
     } else if (EXIT_TYPES.has(ev.type as TradeEventType)) {
       // Beim Abschluss ohne ausdrückliche Menge wird der gesamte Rest geschlossen.
       const sellQty = ev.type === 'geschlossen' && q <= 0 ? openQty : q
+      if (ev.price == null || !Number.isFinite(ev.price) || !Number.isFinite(sellQty) || sellQty <= 0 || sellQty > openQty + EPS) moneyComplete = false
       const perShare = directionalDiff(price, avgEntry, t.direction)
-      realizedGross += perShare * sellQty
-      realizedExitFees += fee(ev.fee)
+      const receipt = receiptFromPayload(ev.payload)
+      if (receipt) {
+        settlementCurrencies.add(receipt.currency)
+        if (t.accountCurrency && receipt.currency !== t.accountCurrency) moneyComplete = false
+        entryFeeTreatments.add(receipt.entryFeesTreatment)
+        realizedGross += receipt.grossAmount ?? NaN
+        settledNet += receipt.netAmount
+        // A broker net already includes the documented exit costs.
+        realizedExitFees += receipt.grossAmount == null ? NaN : receipt.grossAmount - receipt.netAmount
+      } else {
+        entryFeeTreatments.add('excluded')
+        if (realizedRate === null) moneyComplete = false
+        const gross = realizedRate === null ? NaN : perShare * sellQty * realizedRate
+        realizedGross += gross
+        realizedExitFees += fee(ev.fee)
+        settledNet += gross - fee(ev.fee)
+      }
       openQty -= sellQty
       totalExited += sellQty
     }
@@ -159,11 +185,15 @@ export function settlePosition(t: TradeRow, events: TradeEventRow[]): PositionSe
     // verändern die Menge nicht.
   }
 
-  const realizedNet = realizedGross - realizedExitFees
-  const totalNet = realizedGross - realizedExitFees - entryFees
-  const realizedR = plannedRiskMoney > EPS ? realizedGross / plannedRiskMoney : 0
+  if (entryFeeTreatments.size > 1 || settlementCurrencies.size > 1) moneyComplete = false
+  // No realized amount without an exit; unknown foreign metadata remains open.
+  if (!entryFeeTreatments.size && realizedRate === null) moneyComplete = false
+  const realizedNet = moneyComplete ? settledNet : NaN
+  const totalNet = moneyComplete ? settledNet - (entryFeeTreatments.has('included') ? 0 : entryFees) : NaN
+  const realizedR = moneyComplete && plannedRiskMoney > EPS ? realizedGross / plannedRiskMoney : NaN
 
   return {
+    moneyComplete,
     openQty,
     avgEntry,
     totalEntered,

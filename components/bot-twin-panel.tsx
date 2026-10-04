@@ -3,16 +3,11 @@
 // Reine Anzeige: gerechnet wird in `lib/bot-twin.ts` (rein, getestet), geladen in
 // `app/actions/bot-twin.ts`. Hier steht nur, was gezeigt wird.
 //
-// Der Ton ist bewusst eine Messung, kein Urteil. Die Differenz kann in beide
-// Richtungen zeigen: kostet dein Eingreifen, ist das ein Befund über dein
-// Verhalten — bringt es etwas, ist es ein Befund über deinen Plan. Beides steht
-// hier gleichwertig, und beides ohne moralischen Zeigefinger.
-//
-// Was der Block NICHT tut: eine Prognose abgeben. Er rechnet ausschließlich über
-// Kurse, die bereits gelaufen sind.
+// Ergebnisvergleich ohne persönliche Fehlerdiagnose.
 
 import {
   BUCKET_LABELS,
+  BUCKET_EPS,
   SKIP_LABELS,
   intervalLabel,
   type BotTwinGap,
@@ -30,8 +25,8 @@ const num = (v: number, digits = 1) =>
 /** R-Wert mit erzwungenem Vorzeichen — das Vorzeichen ist hier die Aussage. */
 const rValue = (v: number, digits = 1) => `${v >= 0 ? '+' : '−'}${num(Math.abs(v), digits)} R`
 
-/** Ab hier gilt eine Differenz als echte Abweichung und nicht als Rauschen. */
-const NOTEWORTHY = 0.05
+/** Numerische Toleranz für die Ergebnisanzeige. */
+const NOTEWORTHY = BUCKET_EPS
 
 export function BotTwinPanel({ stats }: { stats: BotTwinStats }) {
   const { compared, closed, differenceR } = stats
@@ -43,7 +38,7 @@ export function BotTwinPanel({ stats }: { stats: BotTwinStats }) {
         <div className="flex items-center gap-2">
           <Bot className="size-4 text-primary" />
           <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-            Bot-Zwilling
+            Vereinfachtes Vergleichsszenario
           </p>
         </div>
         <p className="font-mono text-[10px] text-muted-foreground">
@@ -59,7 +54,7 @@ export function BotTwinPanel({ stats }: { stats: BotTwinStats }) {
           <Ledger stats={stats} />
           <div>
             <p className="mb-2 font-mono text-[10px] font-bold uppercase tracking-widest text-primary/70">
-              Plan gegen Wirklichkeit
+              Szenario und tatsächliches Ergebnis
             </p>
             <BotTwinCurve points={stats.points} />
           </div>
@@ -92,7 +87,7 @@ function Empty({ stats }: { stats: BotTwinStats }) {
         title={nothingClosed ? 'Noch kein abgeschlossener Trade' : 'Noch kein Vergleich möglich'}
         hint={
           nothingClosed
-            ? 'Sobald du den ersten Trade abschließt, rechnet der Bot denselben Plan mechanisch nach — und zeigt die Differenz.'
+            ? 'Nach dem ersten abgeschlossenen Trade wird ein Szenario mit festem Stop und Ziel berechnet.'
             : 'Deine abgeschlossenen Trades lassen sich noch nicht nachrechnen. Die Gründe stehen unten; du kannst dort auch von Hand nachtragen.'
         }
       />
@@ -105,91 +100,30 @@ function Empty({ stats }: { stats: BotTwinStats }) {
 // ---------------------------------------------------------------------------
 
 function Statement({ compared, differenceR }: { compared: number; differenceR: number }) {
-  const cost = differenceR < -NOTEWORTHY
-  const better = differenceR > NOTEWORTHY
-
+  const bucket = Math.abs(differenceR) < NOTEWORTHY
+    ? 'annaehernd_gleich'
+    : differenceR > 0 ? 'ueber_szenario' : 'unter_szenario'
   return (
     <div className="panel-sunken rise-in p-4">
       <p className="font-heading text-lg leading-snug text-foreground sm:text-xl">
-        {cost && (
-          <>
-            Dein Eingreifen hat dich über {compared} Trades{' '}
-            <span className="font-bold text-destructive">{num(Math.abs(differenceR), 1)} R</span>{' '}
-            gekostet.
-          </>
-        )}
-        {better && (
-          <>
-            Du warst über {compared} Trades{' '}
-            <span className="font-bold text-positive">{num(differenceR, 1)} R</span> besser als dein
-            eigener Plan.
-          </>
-        )}
-        {!cost && !better && (
-          <>
-            Über {compared} Trades hast du{' '}
-            <span className="font-bold text-primary">deinen Plan gehandelt</span>.
-          </>
-        )}
+        {BUCKET_LABELS[bucket]} · {compared} {compared === 1 ? 'Trade' : 'Trades'}: <strong>{rValue(differenceR, 2)}</strong>
       </p>
       <p className="mt-2 font-mono text-[11px] leading-relaxed text-muted-foreground">
-        {cost && (
-          <>
-            So viel liegt zwischen dem, was der Plan mechanisch ergeben hätte, und dem, was du
-            daraus gemacht hast. Das ist kein Urteil über dich, sondern eine Messung: die Zahl
-            sagt, was Zögern, vorzeitiges Aussteigen und verschobene Stops zusammen kosten.
-          </>
-        )}
-        {better && (
-          <>
-            Das ist ein Befund über deinen <strong className="text-foreground">Plan</strong>, nicht
-            über deine Disziplin: deine Ausstiege waren besser als die geplanten. Bevor du daraus
-            eine Erlaubnis zum Improvisieren machst — prüfe erst, ob sich das über mehr Trades
-            hält, und schreibe dann den besseren Ausstieg in den Plan.
-          </>
-        )}
-        {!cost && !better && (
-          <>
-            Zwischen mechanischer Ausführung und deiner tatsächlichen liegt praktisch nichts. Genau
-            das ist das Ziel: das Ergebnis entsteht aus dem Plan, nicht aus der Tagesform.
-          </>
-        )}
+        Die Differenz beschreibt Ergebnisse. Sie belegt weder eine Regelabweichung noch
+        Planbefolgung oder einen emotionalen Auslöser. Für eine Bewertung braucht es den damaligen
+        Plan und die tatsächliche Handlung.
       </p>
     </div>
   )
 }
 
-/** Die drei Zahlen, um die es geht — bewusst als Abrechnung gesetzt. */
 function Ledger({ stats }: { stats: BotTwinStats }) {
-  const { botTotalR, realTotalR, differenceR } = stats
-  const tone =
-    differenceR < -NOTEWORTHY
-      ? 'text-destructive'
-      : differenceR > NOTEWORTHY
-        ? 'text-positive'
-        : 'text-muted-foreground'
-
-  // Zwei Nachkommastellen, weil hier eine Subtraktion sichtbar dasteht: mit nur
-  // einer Stelle ergäbe −1,0 und +2,0 optisch +3,0, während die echte Differenz
-  // +3,1 wäre. Eine Abrechnung, die nicht aufgeht, kostet mehr Vertrauen als
-  // eine Stelle mehr.
   return (
     <div className="rise-in-1 font-mono text-sm">
-      <Line label="Bot (Plan mechanisch)" value={rValue(botTotalR, 2)} />
-      <Line label="Du (tatsächlich)" value={rValue(realTotalR, 2)} />
+      <Line label="Szenario (fester Stop und Ziel)" value={rValue(stats.botTotalR, 2)} />
+      <Line label="Tatsächliches Ergebnis" value={rValue(stats.realTotalR, 2)} />
       <div className="my-1 border-t border-border" />
-      <Line
-        label="Differenz"
-        value={rValue(differenceR, 2)}
-        className={cn('font-bold', tone)}
-        hint={
-          differenceR < -NOTEWORTHY
-            ? 'der Preis deiner Eingriffe'
-            : differenceR > NOTEWORTHY
-              ? 'dein Vorsprung auf den Plan'
-              : 'plan-konform'
-        }
-      />
+      <Line label="Tatsächlich minus Szenario" value={rValue(stats.differenceR, 2)} className="font-bold" />
     </div>
   )
 }
@@ -227,12 +161,10 @@ function Breakdown({ stats }: { stats: BotTwinStats }) {
   return (
     <div>
       <p className="mb-2 font-mono text-[10px] font-bold uppercase tracking-widest text-primary/70">
-        Wo die Differenz entsteht
+        Ergebnisgruppen
       </p>
       <div className="space-y-2">
         {stats.buckets.map((b) => {
-          const positive = b.r > NOTEWORTHY
-          const negative = b.r < -NOTEWORTHY
           return (
             <div key={b.bucket}>
               <div className="flex items-baseline justify-between gap-3">
@@ -243,20 +175,14 @@ function Breakdown({ stats }: { stats: BotTwinStats }) {
                   </span>
                 </span>
                 <span
-                  className={cn(
-                    'font-mono text-xs tabular-nums',
-                    negative ? 'text-destructive' : positive ? 'text-positive' : 'text-muted-foreground',
-                  )}
+                  className="font-mono text-xs tabular-nums text-muted-foreground"
                 >
                   {rValue(b.r)}
                 </span>
               </div>
               <div className="bar-track mt-1 h-1.5">
                 <div
-                  className={cn(
-                    'bar-fill h-full rounded-full',
-                    negative ? 'bg-destructive' : positive ? 'bg-positive' : 'bg-muted-foreground/40',
-                  )}
+                  className="bar-fill h-full rounded-full bg-muted-foreground/40"
                   style={{ width: `${(Math.abs(b.r) / max) * 100}%` }}
                 />
               </div>
@@ -265,10 +191,8 @@ function Breakdown({ stats }: { stats: BotTwinStats }) {
         })}
       </div>
       <p className="mt-2 font-mono text-[10px] leading-relaxed text-muted-foreground">
-        Jeder Trade liegt in genau einem Feld; die Felder summieren sich auf die Differenz (die
-        Anzeige ist auf eine Nachkommastelle gerundet). Ein dokumentierter Regelbruch (Stop
-        verschoben) erklärt die Abweichung dabei vorrangig — er ist belegt, alles andere wäre eine
-        Vermutung über den Ausstiegszeitpunkt.
+        Die Gruppen beschreiben ausschließlich die Ergebnisdifferenz; ihre Summen ergeben die
+        Gesamtdifferenz. Gleiche Ergebnisse beweisen keine gleiche Handlung. Die Anzeige ist gerundet.
       </p>
     </div>
   )
@@ -288,8 +212,8 @@ function Gaps({ gaps }: { gaps: BotTwinGap[] }) {
       </p>
       <p className="mb-3 font-mono text-[10px] leading-relaxed text-muted-foreground">
         Diese Trades stehen in keiner Summe oben. Wo Kursdaten fehlen, kannst du selbst nachtragen,
-        was aus dem Handel geworden wäre — der Eintrag zählt dann mit und bleibt als Nachtrag
-        gekennzeichnet. Sobald doch Kerzen vorliegen, gilt wieder die Messung.
+        welchen Ausgang das Szenario gehabt hätte — der Eintrag zählt dann mit und bleibt als Nachtrag
+        gekennzeichnet. Sobald doch Kerzen vorliegen, gilt wieder das kursbasierte Szenario.
       </p>
       <ul className="space-y-1.5">
         {gaps.map((g) => (
@@ -344,7 +268,7 @@ function Manual({ stats }: { stats: BotTwinStats }) {
       <p className="mb-3 font-mono text-[10px] leading-relaxed text-muted-foreground">
         Diese Ergebnisse zählen oben mit, stammen aber aus deiner Eingabe und nicht aus Kursdaten.
         Sie bleiben hier änderbar — und sobald für einen dieser Trades doch Kerzen vorliegen, gilt
-        wieder die Messung und der Nachtrag tritt zurück.
+        wieder das kursbasierte Szenario und der Nachtrag tritt zurück.
       </p>
       <ul className="space-y-1.5">
         {rows.map((r) => (
@@ -403,8 +327,8 @@ function Missed({ stats }: { stats: BotTwinStats }) {
         <>
           <p className="font-mono text-xs leading-relaxed text-foreground">
             {missed.evaluated === 1
-              ? 'Ein geplanter Trade, den du nicht eingegangen bist, hätte nach Plan '
-              : `${missed.evaluated} geplante Trades, die du nicht eingegangen bist, hätten nach Plan `}
+              ? 'Ein geplanter Trade, den du nicht eingegangen bist, hätte im vereinfachten Szenario '
+              : `${missed.evaluated} geplante Trades, die du nicht eingegangen bist, hätten im vereinfachten Szenario `}
             <span
               className={cn(
                 'font-bold tabular-nums',
@@ -416,11 +340,9 @@ function Missed({ stats }: { stats: BotTwinStats }) {
             ergeben.
           </p>
           <p className="mt-1.5 font-mono text-[10px] leading-relaxed text-muted-foreground">
-            Diese Zahl steht bewusst <strong className="text-foreground">außerhalb</strong> der
-            Differenz oben: nicht eingegangen zu sein ist eine andere Fehlerart als falsch
-            auszusteigen, und beides zu vermischen würde beide Aussagen unbrauchbar machen.
-            {gain && ' Ein Plus hier heißt nicht, dass du jeden Plan hättest handeln müssen — es heißt, dass dein Zögern messbar ist.'}
-            {loss && ' Ein Minus hier heißt: das Aussitzen hat dich vor Verlusten bewahrt. Auch das ist ein Befund.'}
+            Diese hypothetischen Ergebnisse stehen getrennt vom Vergleich abgeschlossener Trades.
+            Ob ein Einstieg damals vorgesehen, möglich oder regelkonform war, lässt sich daraus
+            nicht ableiten. Auch der Grund für den unterlassenen Einstieg bleibt offen.
           </p>
 
           <ul className="mt-2 space-y-1">
@@ -455,7 +377,7 @@ function Missed({ stats }: { stats: BotTwinStats }) {
         <p className="mt-2 font-mono text-[10px] leading-relaxed text-muted-foreground">
           Bei {missed.neverTriggered}{' '}
           {missed.neverTriggered === 1 ? 'Plan' : 'Plänen'} wurde der Einstieg nie erreicht — dort
-          gab es nichts zu verpassen.
+          wird kein ausgelöster Einstieg simuliert.
         </p>
       )}
 
@@ -502,8 +424,15 @@ function Limits({ stats }: { stats: BotTwinStats }) {
   return (
     <div className="mt-5 space-y-1.5 border-t border-border pt-3 font-mono text-[10px] leading-relaxed text-muted-foreground">
       <p>
-        <strong className="text-foreground">Slippage und Spread</strong> sind nicht abgebildet — der
-        Bot steigt exakt am Stop und exakt am Ziel aus und ist dadurch leicht zu optimistisch.
+        <strong className="text-foreground">Vereinfachtes Szenario:</strong> gerechnet wird mit
+        einem festen Stop und Ziel aus den aktuell gespeicherten Werten. Diese können nachträglich
+        geändert worden sein und sind kein gesicherter ursprünglicher Plan. Teilverkäufe und
+        erlaubtes Trailing werden nicht simuliert. Eine Bewertung der Planbefolgung ist damit
+        nicht möglich.
+      </p>
+      <p>
+        <strong className="text-foreground">Slippage und Spread</strong> sind nicht abgebildet — das
+        Szenario verwendet den exakten Stop- oder Zielkurs.
         Gerechnet wird mit denselben eingefrorenen Gebühren wie beim echten Trade.
       </p>
       <p>
@@ -515,8 +444,7 @@ function Limits({ stats }: { stats: BotTwinStats }) {
         {ambiguousCount > 0 ? (
           <>
             Bei <strong className="text-foreground">{ambiguousCount}</strong> von {compared} Trades
-            lagen Stop und Ziel in derselben Kerze — dort wurde konservativ der Stop gewertet, der
-            Bot ist dadurch eher zu schlecht als zu gut.
+            lagen Stop und Ziel in derselben Kerze — als Szenarioannahme wurde der Stop zuerst gewertet. Die tatsächliche Reihenfolge bleibt unbekannt.
           </>
         ) : (
           'Bei keinem Trade lagen Stop und Ziel in derselben Kerze.'
@@ -525,14 +453,13 @@ function Limits({ stats }: { stats: BotTwinStats }) {
       </p>
       <p>
         <strong className="text-foreground">Nur Trades mit Ziel</strong> lassen sich simulieren —
-        ohne Ziel gibt es keinen mechanischen Ausstieg. Der Bot hält bewusst über deinen echten
-        Ausstieg hinaus, bis Stop oder Ziel berührt sind; ohne das wäre ein vorzeitiger Ausstieg
-        gar nicht messbar.
+        ohne Ziel gibt es keinen mechanischen Ausstieg. Das Szenario kann über den tatsächlichen
+        Ausstieg hinauslaufen, bis Stop oder Ziel berührt sind.
       </p>
       <p>
         <strong className="text-foreground">Begrenzte Historie:</strong> das Gratis-Tier liefert nur
         eine begrenzte Zahl Kerzen, und bei zu vielen Abrufen greift das Minutenlimit. Fehlende
-        Reihen kommen beim nächsten Aufruf nach — die Auswertung füllt sich von selbst auf.
+        Reihen werden bei späteren Aufrufen erneut angefragt; ihre Verfügbarkeit ist nicht garantiert.
         {manualCount > 0 && (
           <>
             {' '}

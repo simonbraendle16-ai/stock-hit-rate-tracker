@@ -139,7 +139,7 @@ export default async function TradesPage() {
               <TradeCard
                 key={t.id}
                 t={t}
-                currency={settings.currency}
+                currency={t.accountCurrency ?? kontext.currency}
                 targets={stufenJeTrade.get(t.id)}
                 events={ereignisseJeTrade.get(t.id)}
                 triggeredTargetPrices={beruehrt.get(t.id)}

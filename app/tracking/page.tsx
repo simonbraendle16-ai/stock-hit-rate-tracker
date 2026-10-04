@@ -175,7 +175,7 @@ export default async function TrackingPage() {
         {/* Equity-Kurve + Risiko-Kennzahlen */}
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
           <div className="lg:col-span-2">
-            <EquityChart stats={equity} currency={settings.currency} />
+            <EquityChart stats={equity} currency={kontext.currency} />
           </div>
           <div className="grid grid-cols-2 gap-4 lg:col-span-1 lg:grid-cols-1">
             <div className="panel sheen p-4">
@@ -183,7 +183,7 @@ export default async function TrackingPage() {
                 Max. Drawdown
               </p>
               <p className="mt-1 font-heading text-3xl font-bold text-destructive">
-                {formatMoney(equity.maxDrawdown, settings.currency, {
+                {formatMoney(equity.maxDrawdown, kontext.currency, {
                   maximumFractionDigits: 0,
                 })}
               </p>
@@ -370,7 +370,7 @@ export default async function TrackingPage() {
           <InstrumentCardGrid
             cards={instruments.cards}
             quotes={instruments.quotes}
-            currency={settings.currency}
+            currency={kontext.currency}
             emptyHint="Sobald Prognosen oder Trades zu einem Instrument vorliegen, steht es hier."
           />
         </div>

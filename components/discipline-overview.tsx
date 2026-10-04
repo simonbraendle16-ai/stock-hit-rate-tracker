@@ -111,7 +111,7 @@ export function CockpitStats({ stats }: { stats: DisciplineStats }) {
       label: 'Bilanz',
       num: stats.totalPnL,
       signed: true,
-      sub: `${stats.returnPct >= 0 ? '+' : ''}${stats.returnPct.toFixed(1)}%`,
+      sub: Number.isFinite(stats.returnPct) ? `${stats.returnPct >= 0 ? '+' : ''}${stats.returnPct.toFixed(1)}%` : 'Währungsabrechnung unvollständig',
       tone: stats.totalPnL >= 0 ? 'text-positive' : 'text-destructive',
     },
   ]
@@ -129,13 +129,13 @@ export function CockpitStats({ stats }: { stats: DisciplineStats }) {
         >
           <p className="eyebrow">{r.label}</p>
           <p className={cn('metric metric-lg mt-2', r.tone)}>
-            <CountUp
+            {Number.isFinite(r.num) ? <CountUp
               value={r.num}
               decimals={r.decimals ?? 0}
               prefix={r.prefix ?? ''}
               suffix={r.suffix ?? ''}
               signed={r.signed ?? false}
-            />
+            /> : '—'}
           </p>
           {r.sub && <p className="note mt-1">{r.sub}</p>}
           <span

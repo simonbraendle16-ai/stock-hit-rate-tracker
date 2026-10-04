@@ -14,7 +14,7 @@ import { getScopeContext } from '@/app/actions/portfolios'
  * welche Zahlen man sieht, sondern auch, wohin ein neuer Trade gebucht wird.
  */
 export async function CockpitHeader({ userLabel }: { userLabel?: string | null }) {
-  const { portfolios, scope } = await getScopeContext()
+  const { portfolios, scope, moneyIssue } = await getScopeContext()
   return (
     // Deckendes Panel statt `backdrop-blur`: Weichzeichnen ist ein Glas-Signal,
     // das der Designbrief („kein Glas, kein Glow") ausschließt.
@@ -53,6 +53,7 @@ export async function CockpitHeader({ userLabel }: { userLabel?: string | null }
           <SignOutButton />
         </div>
       </div>
+      {moneyIssue && <p className="mx-auto max-w-6xl px-4 pb-3 text-sm text-amber-600">{moneyIssue}</p>}
     </header>
   )
 }

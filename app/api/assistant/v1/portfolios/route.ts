@@ -8,7 +8,8 @@ export async function GET(req: NextRequest) {
   try {
     const userId = await requireApiScope(req, 'trades:read')
     const rows = await db.select({ id: portfolio.id, name: portfolio.name,
-      kind: portfolio.kind, archivedAt: portfolio.archivedAt })
+      kind: portfolio.kind, currency: portfolio.currency, fxRates: portfolio.fxRates,
+      fxRatesAt: portfolio.fxRatesAt, archivedAt: portfolio.archivedAt })
       .from(portfolio).where(eq(portfolio.userId, userId)).orderBy(portfolio.id)
     return NextResponse.json({ items: rows })
   } catch (cause) { return apiResponseError(cause) }

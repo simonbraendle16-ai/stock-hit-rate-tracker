@@ -32,7 +32,7 @@ export default async function NewTradePage() {
         <TradeForm
           maxRiskPct={settings.maxRiskPct}
           currency={settings.currency}
-          portfolios={toPortfolioOptions(kontext.portfolios)}
+          portfolios={toPortfolioOptions(kontext.portfolios, settings.currency)}
           defaultPortfolioId={kontext.active?.id ?? null}
         />
       </main>

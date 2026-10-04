@@ -23,6 +23,7 @@ import {
 /** Ein abgeschlossener Gewinn-Trade: Einstieg 400, Stop 380, Ausstieg 450 → 2,5 R. */
 function trade(over: Partial<TradeRow> = {}): TradeRow {
   return {
+    quoteCurrency: 'USD', accountCurrency: 'USD', quoteToAccountRate: 1, fxRateAt: null,
     id: 1,
     userId: 'u',
     stockId: null,
@@ -33,7 +34,7 @@ function trade(over: Partial<TradeRow> = {}): TradeRow {
     entryPrice: 400,
     stopLoss: 380,
     takeProfit: 450,
-    positionSize: null,
+    positionSize: 1,
     investedAmount: null,
     leverage: 1,
     feeEntry: 0,

@@ -2,9 +2,8 @@
 //
 // Warum es das braucht: Die beiden Welten lagen bisher auf getrennten Seiten —
 // `/analysis` kannte nur Prognosen, `/tracking` nur Trades ohne Instrumentbezug.
-// Dadurch war die eigentliche Frage nirgends zu beantworten: Liegt es an meiner
-// Analyse oder an meiner Umsetzung? Genau diese Differenz steht hier unten in
-// der Karte.
+// Die Karte beschreibt beide Gruppen und ihre Quoten. Die ungepaarte Differenz
+// erlaubt keine Ursachenbestimmung für Analyse oder Umsetzung.
 //
 // Zwei Festlegungen, die man der Karte ansehen soll:
 //   * Echtgeld und Demo stehen IMMER getrennt. Eine schöne Quote, die aus
@@ -214,7 +213,7 @@ export function InstrumentCard({
                     t.money.netPnl >= 0 ? 'text-positive' : 'text-destructive'
                   }
                 >
-                  {formatMoney(t.money.netPnl, currency, { signed: true })}
+                  {formatMoney(t.money.netPnl, t.money.currency ?? currency, { signed: true })}
                 </span>
               </div>
             )}
@@ -232,7 +231,7 @@ export function InstrumentCard({
                     PAPIERGELD-Abzeichen. */}
                 {t.demo.decided > 0 && (
                   <span className="text-[var(--warning)]">
-                    {formatMoney(t.demo.netPnl, currency, { signed: true })}
+                    {formatMoney(t.demo.netPnl, t.demo.currency ?? currency, { signed: true })}
                   </span>
                 )}
                 <span className="text-muted-foreground">
@@ -247,18 +246,15 @@ export function InstrumentCard({
       {stats.gap !== null && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border/50 pt-2 font-mono text-[10px]">
           <span className="text-muted-foreground">
-            Prognose {pct(a.hitRate)} → Umsetzung {pct(t.core.winRate)}
+            Prognosen {pct(a.hitRate)} ({a.decided} entschieden) / Trades {pct(t.core.winRate)} ({t.decided} entschieden)
           </span>
-          <span
-            className={stats.gap > 0 ? 'text-destructive' : 'text-positive'}
-            title={
-              stats.gap > 0
-                ? 'Die Analyse trifft besser als die Umsetzung — die Differenz liegt im Verhalten, nicht in der Prognose.'
-                : 'Die Umsetzung hält, was die Analyse verspricht.'
-            }
-          >
-            {stats.gap > 0 ? '−' : '+'}
-            {Math.abs(stats.gap).toFixed(0)} Punkte
+          <span className="text-muted-foreground">
+            {stats.gap > 0 ? '+' : stats.gap < 0 ? '−' : ''}
+            {Math.abs(stats.gap).toFixed(0)} Prozentpunkte · Prognosen minus Trades
+          </span>
+          <span className="basis-full text-muted-foreground">
+            Ungepaarte Gruppen mit unterschiedlichen Erfolgsdefinitionen; Auswahl und Zeiträume können
+            abweichen. Keine Aussage über Verhalten oder Planbefolgung. Kleine Fallzahlen begrenzen die Aussagekraft.
           </span>
           {t.core.trades > 0 && (
             <span className="ml-auto text-muted-foreground">

@@ -15,6 +15,7 @@ import { ExcursionCard } from '@/components/excursion-card'
 import { TradePortfolioCard } from '@/components/trade-portfolio-card'
 import { TradeTargetsCard } from '@/components/trade-targets-card'
 import { TradeAlertsToggle } from '@/components/trade-alerts-toggle'
+import { SettlementReceipts } from '@/components/settlement-receipts'
 import { getScopeContext } from '@/app/actions/portfolios'
 import { listAlerts } from '@/app/actions/alerts'
 import { triggeredTargetPricesByTrade } from '@/lib/alerts'
@@ -83,7 +84,7 @@ export default async function TradeDetailPage({
         <div className="grid grid-cols-1 gap-4">
           <TradeCard
             t={t}
-            currency={settings.currency}
+            currency={t.accountCurrency ?? kontext.portfolios.find(p => p.id === t.portfolioId)?.currency ?? settings.currency}
             events={events}
             targets={targets}
             triggeredTargetPrices={beruehrt}
@@ -111,6 +112,7 @@ export default async function TradeDetailPage({
           <TradeReplay t={t} />
 
           <TradeTimeline trade={t} events={events} />
+          <SettlementReceipts events={events} currency={t.accountCurrency ?? kontext.portfolios.find(p => p.id === t.portfolioId)?.currency ?? null} />
 
           {/* Gegenlauf/Mitlauf (Etappe 7c) — nur bei entschiedenen Trades. */}
           {excursion && <ExcursionCard entry={excursion} />}

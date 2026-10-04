@@ -21,6 +21,7 @@ function prognose(stockId: number, isCorrect: boolean, zoneNotReached = false): 
 /** Minimaler abgeschlossener Trade; einzelne Felder je Test überschreiben. */
 function makeTrade(over: Partial<TradeRow> = {}): TradeRow {
   return {
+    quoteCurrency: 'EUR', accountCurrency: 'EUR', quoteToAccountRate: 1, fxRateAt: null,
     id: 1,
     userId: 'u1',
     stockId: 1,
@@ -198,5 +199,18 @@ describe('overallGap', () => {
   it('bleibt leer, solange eine Seite fehlt', () => {
     const rows = computeInstrumentStats(instruments, [prognose(1, true)], [])
     expect(overallGap(rows)).toBeNull()
+    expect(overallGap(computeInstrumentStats(instruments, [], [makeTrade()]))).toBeNull()
+    expect(overallGap([])).toBeNull()
+  })
+
+  it('erhält stark unterschiedliche Fallzahlen ohne Verhaltensdiagnose', () => {
+    const rows = computeInstrumentStats(instruments,
+      Array.from({ length: 100 }, () => prognose(1, true)),
+      [makeTrade({ result: 'verlust', actualExitPrice: 90, followedPlan: true })],
+    )
+    expect(overallGap(rows)).toEqual({
+      assessmentHitRate: 100, tradeHitRate: 0, gap: 100,
+      assessmentsDecided: 100, tradesDecided: 1,
+    })
   })
 })

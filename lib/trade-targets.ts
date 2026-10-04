@@ -15,7 +15,7 @@ import type { trade, tradeTarget } from '@/lib/db/schema'
 // Kurs-Marker setzt — zwei Formeln für dieselbe Skala wären zwei Skalen.
 import { pricePositionFraction } from '@/lib/trade-stats'
 
-export type TradeRow = typeof trade.$inferSelect
+export type TradeRow = import('./trade-stats').TradeRow
 export type TradeTargetRow = typeof tradeTarget.$inferSelect
 
 /** Höchstzahl der Stufen je Trade — Teilziele UND Kursziel zusammen. Vier decken

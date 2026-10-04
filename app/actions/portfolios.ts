@@ -1,5 +1,7 @@
 'use server'
 
+import { currencyAssignment } from '@/lib/money-currency'
+
 // Depot-Aktionen (Etappe 12) — die anrufbare Oberfläche zu `lib/portfolio-*.ts`.
 //
 // Diese Datei hält bewusst KEINE Logik: Die Regeln stehen rein und getestet in
@@ -17,6 +19,7 @@ import { and, eq, sql } from 'drizzle-orm'
 import { headers } from 'next/headers'
 import { revalidatePath } from 'next/cache'
 import { parseFxRates } from '@/lib/margin'
+import { currencyCode, portfolioCurrency } from '@/lib/money-currency'
 import {
   checkArchivable,
   checkDeletable,
@@ -290,6 +293,9 @@ export async function moveTrade(
   if (!pruefung.ok) throw new Error(pruefung.reason)
 
   const quelle = await loadOwnedPortfolio(userId, t.portfolioId)
+  if (!quelle.currency || !ziel.currency || portfolioCurrency(quelle) !== portfolioCurrency(ziel)) {
+    throw new Error('Umbuchen zwischen verschiedenen Depotwährungen benötigt eine belegte Umrechnung und ist hier nicht erlaubt.')
+  }
   const effekt = moveEffect(kindOf(quelle), kindOf(ziel))
 
   await db
@@ -378,5 +384,16 @@ export async function updatePortfolioFxRates(
     })
     .where(and(eq(portfolio.id, portfolioId), eq(portfolio.userId, userId)))
 
+  revalidateAll()
+}
+
+/** Assign the actual account currency; changing an assigned one needs a separate audited conversion. */
+export async function assignPortfolioCurrency(id: number, raw: string): Promise<void> {
+  const userId = await getUserId()
+  const p = await loadOwnedPortfolio(userId, id)
+  const assignment = currencyAssignment(p.currency, raw)
+  if (!assignment) return
+  await db.update(portfolio).set(assignment)
+    .where(and(eq(portfolio.id, id), eq(portfolio.userId, userId)))
   revalidateAll()
 }

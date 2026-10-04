@@ -62,11 +62,12 @@ export function SettingsForm({ initial }: { initial: UserSettings }) {
       <FormSection
         icon={Wallet}
         title="Währung"
-        hint="Gilt für alle Depots gemeinsam — nur so bleibt eine Summe über Depots gültig."
+        hint="Währungen werden je Depot in der Depotverwaltung bestätigt. Der bisherige globale Wert bleibt nur für unzugeordnete Altbestände erhalten."
       >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="Kontowährung">
             <select
+              disabled
               value={currency}
               onChange={(e) => setCurrency(e.target.value)}
               className="input-ocean h-11 w-full rounded-lg px-2.5 font-mono text-sm"

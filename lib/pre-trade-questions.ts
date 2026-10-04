@@ -19,3 +19,21 @@ export type PreTradeAnswer = {
   answer: 'ja' | 'nein'
   note: string
 }
+
+/** Preserve actual answers; never infer consent from a boolean or duplicate keys. */
+export function validatePreTradeAnswers(raw: unknown): PreTradeAnswer[] {
+  if (raw == null) return []
+  if (!Array.isArray(raw) || raw.length > PRE_TRADE_QUESTIONS.length) throw new Error('Vorabantworten sind ungültig.')
+  const keys = new Set<string>()
+  return raw.map(value => {
+    if (!value || typeof value !== 'object') throw new Error('Vorabantworten sind ungültig.')
+    const a = value as Record<string, unknown>
+    const question = PRE_TRADE_QUESTIONS.find(q => q.key === a.key)
+    if (!question || keys.has(question.key) || !['ja', 'nein'].includes(String(a.answer)) ||
+        (a.question != null && a.question !== question.question) ||
+        (a.note != null && (typeof a.note !== 'string' || a.note.length > 4000)) ||
+        Object.keys(a).some(k => !['key', 'question', 'answer', 'note'].includes(k))) throw new Error('Vorabantworten sind ungültig oder doppelt.')
+    keys.add(question.key)
+    return { key: question.key, question: question.question, answer: a.answer as 'ja' | 'nein', note: (a.note as string | undefined) ?? '' }
+  })
+}

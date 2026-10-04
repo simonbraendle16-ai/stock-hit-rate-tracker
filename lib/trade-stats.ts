@@ -6,6 +6,7 @@
 // keine zweite Rechenlogik daneben.
 
 import type { trade } from '@/lib/db/schema'
+import { frozenFxRate, settledFxRate } from './money-currency'
 import {
   EMOTION_TAGS,
   MIN_GROUP_SIZE,
@@ -26,7 +27,12 @@ import {
 // und Funktionsdeklarationen sind gehoistet — dadurch ist der Zyklus unkritisch.
 import { settlePosition, type TradeEventRow } from '@/lib/trade-events'
 
-export type TradeRow = typeof trade.$inferSelect
+export type TradeRow = Omit<typeof trade.$inferSelect, 'quoteCurrency' | 'accountCurrency' | 'quoteToAccountRate' | 'fxRateAt'> & {
+  quoteCurrency?: string | null
+  accountCurrency?: string | null
+  quoteToAccountRate?: number | null
+  fxRateAt?: Date | null
+}
 
 /** Events eines Nutzers, gruppiert nach Trade-Id — von den Actions gefüllt. */
 export type TradeEventsByTrade = Map<number, TradeEventRow[]>
@@ -66,10 +72,12 @@ export function tradeFees(t: TradeRow): number {
  * Erwartungswert heraus, statt sie zu verfälschen.
  */
 export function tradeGrossPnl(t: TradeRow): number | null {
+  const rate = settledFxRate(t)
+  if (rate === null || t.positionSize == null || t.positionSize <= 0) return null
   if (t.result === 'breakeven' || !t.result) return 0
   if (t.actualExitPrice == null || t.entryPrice == null) return null
-  const size = t.positionSize ?? 1
-  return (t.actualExitPrice - t.entryPrice) * (t.direction === 'short' ? -size : size)
+  const size = t.positionSize
+  return (t.actualExitPrice - t.entryPrice) * (t.direction === 'short' ? -size : size) * rate
 }
 
 /** Netto-P&L: Brutto minus eingefrorene Gebühren. `null`, wenn nicht berechenbar. */
@@ -88,9 +96,10 @@ export function hasPnl(t: TradeRow): boolean {
  * Der Hebel steckt bereits in `positionSize` und wirkt daher automatisch mit.
  */
 export function tradeRisk(t: TradeRow): number {
-  const size = t.positionSize ?? 1
-  const r = Math.abs(t.entryPrice - t.stopLoss) * size
-  return r > 0 ? r : size * 10
+  const rate = frozenFxRate(t)
+  if (rate === null || t.positionSize == null || t.positionSize <= 0) return NaN
+  const r = Math.abs(t.entryPrice - t.stopLoss) * t.positionSize * rate
+  return r > 0 ? r : NaN
 }
 
 /** Kursgewinn pro Stück in Richtung des Trades (Long: kauf→verkauf, Short: umgekehrt). */
@@ -105,10 +114,12 @@ export function directionalDiff(price: number, entry: number, direction: string)
  * Ausstiegskurs. `null`, wenn keine Stückzahl oder kein gültiger Kurs vorliegt.
  */
 export function unrealizedPnl(t: TradeRow, price: number): number | null {
+  const rate = frozenFxRate(t)
+  if (rate === null) return null
   if (!Number.isFinite(price) || t.entryPrice == null) return null
   const size = t.positionSize ?? null
   if (size == null) return null
-  return directionalDiff(price, t.entryPrice, t.direction) * size
+  return directionalDiff(price, t.entryPrice, t.direction) * size * rate
 }
 
 /**
@@ -187,13 +198,16 @@ function eventsOf(map: TradeEventsByTrade | undefined, id: number): TradeEventRo
 
 /** Netto-P&L eines Trades — event-aware. `null`, wenn nicht berechenbar (nur Row-Pfad). */
 export function tradeNetPnl(t: TradeRow, events: TradeEventRow[] = []): number | null {
-  if (events.length > 0) return settlePosition(t, events).totalNet
+  if (events.length > 0) {
+    const net = settlePosition(t, events).totalNet
+    return Number.isFinite(net) ? net : null
+  }
   return tradePnl(t)
 }
 
 /** Hat der Trade einen verwertbaren P&L? Event-Trades sind bei Abschluss stets abgerechnet. */
 function hasNetPnl(t: TradeRow, events: TradeEventRow[]): boolean {
-  return events.length > 0 ? true : hasPnl(t)
+  return tradeNetPnl(t, events) !== null && Number.isFinite(tradePlannedRisk(t, events)) && tradePlannedRisk(t, events) > 0
 }
 
 function netOrZero(t: TradeRow, events: TradeEventRow[]): number {
@@ -320,7 +334,9 @@ export function computeDisciplineStats(
 
   // Kontobilanz NUR aus Echtgeld-Trades — Demo darf das reale Kapital nicht verfälschen.
   const money = rows.filter((t) => t.tradedWithMoney)
-  const totalPnL = money.reduce((acc, t) => acc + netOrZero(t, eventsOf(eventsByTrade, t.id)), 0)
+  const moneyComplete = Number.isFinite(startCapital) && money.every(t => tradeNetPnl(t, eventsOf(eventsByTrade, t.id)) !== null) &&
+    new Set(money.map(t => t.accountCurrency)).size <= 1
+  const totalPnL = moneyComplete ? money.reduce((acc, t) => acc + netOrZero(t, eventsOf(eventsByTrade, t.id)), 0) : NaN
 
   // Eingezahltes Kapital = Startkapital + Netto-Cashflows. Die Rendite misst
   // gegen das tatsächlich eingesetzte Geld, nicht gegen einen fixen Startwert.
@@ -377,6 +393,10 @@ export function computeEquityStats(
   eventsByTrade?: TradeEventsByTrade,
 ): EquityStats {
   const money = rows.filter((t) => t.tradedWithMoney && hasNetPnl(t, eventsOf(eventsByTrade, t.id)))
+  if (!Number.isFinite(startCapital) || rows.some(t => t.tradedWithMoney && tradeNetPnl(t, eventsOf(eventsByTrade, t.id)) === null) ||
+      new Set(money.map(t => t.accountCurrency)).size > 1) {
+    return { startCapital, points: [], maxDrawdown: NaN, maxDrawdownPct: NaN, worstLossStreak: 0, currentLossStreak: 0 }
+  }
 
   type Event =
     | { at: Date; kind: 'trade'; delta: number }

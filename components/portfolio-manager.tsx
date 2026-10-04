@@ -21,6 +21,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { currencySymbol } from '@/lib/format'
+import { assignPortfolioCurrency } from '@/app/actions/portfolios'
 import {
   archivePortfolio,
   createPortfolio,
@@ -81,14 +82,14 @@ export function PortfolioManager({
     >
       <div className="flex flex-col gap-3">
         {aktiv.map((p) => (
-          <DepotZeile key={p.id} p={p} trades={anzahl(p.id)} sym={sym} alle={portfolios} />
+          <DepotZeile key={p.id} p={p} trades={anzahl(p.id)} sym={currencySymbol(p.currency ?? currency)} alle={portfolios} />
         ))}
 
         {archiviert.length > 0 && (
           <>
             <p className="eyebrow mt-2">Archiv</p>
             {archiviert.map((p) => (
-              <DepotZeile key={p.id} p={p} trades={anzahl(p.id)} sym={sym} alle={portfolios} />
+              <DepotZeile key={p.id} p={p} trades={anzahl(p.id)} sym={currencySymbol(p.currency ?? currency)} alle={portfolios} />
             ))}
           </>
         )}
@@ -134,6 +135,7 @@ function DepotZeile({
   const [startCapital, setStartCapital] = useState(String(p.startCapital))
   const [feeEntry, setFeeEntry] = useState(String(p.defaultFeeEntry))
   const [feeExit, setFeeExit] = useState(String(p.defaultFeeExit))
+  const [accountCurrency, setAccountCurrency] = useState(p.currency ?? '')
 
   const kind = normalizePortfolioKind(p.kind)
   const demo = kind === 'demo'
@@ -277,6 +279,16 @@ function DepotZeile({
         </div>
       </div>
 
+      <Field label="Tatsächliche Depotwährung">
+        <select value={accountCurrency} disabled={busy || !!p.currency} onChange={e => setAccountCurrency(e.target.value)} className="input-ocean h-11 rounded-lg px-2.5 font-mono text-sm">
+          <option value="">Noch nicht bestätigt</option>
+          {['EUR', 'USD', 'CHF', 'GBP'].map(code => <option key={code} value={code}>{code}</option>)}
+        </select>
+        {!p.currency && <>
+          <p className="note">Ordnet bestehende Zahlen ihrer tatsächlichen Währung zu. Keine Umrechnung; erst nach Abgleich mit dem Broker bestätigen.</p>
+          <Button type="button" disabled={busy || !accountCurrency} onClick={() => lauf(() => assignPortfolioCurrency(p.id, accountCurrency), 'Depotwährung bestätigt.')} variant="outline">Depotwährung bestätigen</Button>
+        </>}
+      </Field>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Field label={demo ? `Papier-Startkapital (${sym})` : `Startkapital (${sym})`}>
           <Input

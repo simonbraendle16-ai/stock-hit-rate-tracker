@@ -1,5 +1,7 @@
 'use server'
 
+import { requireFrozenFxRate, portfolioCurrency } from '@/lib/money-currency'
+
 import { createTradeForUser } from '@/lib/create-trade-service'
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
@@ -99,6 +101,7 @@ async function getUserId() {
 // reine Typ-Re-Exports, was den Build bricht.
 
 export type TradeInput = {
+  quoteCurrency?: string | null
   ticker: string
   market?: string
   direction: 'long' | 'short'
@@ -216,11 +219,14 @@ async function ladeDeckung(userId: string, portfolioId: number, exceptTradeId?: 
   const eventsByTrade = await loadEventsByTrade(userId)
   let realisiertePnl = 0
   for (const t of abgeschlossen) {
-    realisiertePnl += tradeNetPnl(t, eventsByTrade.get(t.id) ?? []) ?? 0
+    const pnl = tradeNetPnl(t, eventsByTrade.get(t.id) ?? [])
+    if (pnl === null) throw new Error('Deckung nicht prüfbar: Bestands-P&L oder Währungsabrechnung unvollständig.')
+    realisiertePnl += pnl
   }
 
   const flows = await loadScopedCashflows(userId, [portfolioId])
   const offene = rows.filter((r) => r.id !== exceptTradeId)
+  if (offene.some(r => r.contracts != null && ['aktiv', 'geplant'].includes(r.status) && r.investedAmount == null)) throw new Error('Gebundener Kontrakteinschuss unbekannt.')
 
   return {
     depot,
@@ -243,6 +249,7 @@ async function ladeDeckung(userId: string, portfolioId: number, exceptTradeId?: 
  * Broker die Position zwangsweise schließt.
  */
 async function verlangeDeckung(args: {
+  snapshotRate?: number
   userId: string
   portfolioId: number
   felder: ContractTradeFelder
@@ -255,13 +262,14 @@ async function verlangeDeckung(args: {
     args.exceptTradeId,
   )
   const settings = await getSettings()
-  const kontowaehrung = settings.currency ?? 'EUR'
+  const kontowaehrung = portfolioCurrency(depot, settings.currency)
+  const checkedRates = args.snapshotRate == null ? rates : { ...rates, [args.felder.contractCurrency]: args.snapshotRate }
 
   const pruefung = pruefeDeckung({
     einschuss: args.felder.contractInitialMargin,
     waehrung: args.felder.contractCurrency,
     kontowaehrung,
-    rates,
+    rates: checkedRates,
     deckung,
     label: `${args.ticker} · ${args.felder.contracts} Kontrakte`,
   })
@@ -282,7 +290,7 @@ async function verlangeDeckung(args: {
     einschussJeKontrakt: args.felder.contractInitialMargin / args.felder.contracts,
     waehrung: args.felder.contractCurrency,
     kontowaehrung,
-    rates,
+    rates: checkedRates,
     frei: deckung.frei,
   })
   const zusatz =
@@ -595,6 +603,7 @@ export async function activateTrade(
   let deckungsHinweis: string | null = null
   if (t.contracts != null && t.contractInitialMargin != null && t.contractCurrency) {
     const ergebnis = await verlangeDeckung({
+      snapshotRate: requireFrozenFxRate(t),
       userId,
       portfolioId: t.portfolioId,
       felder: {
@@ -867,8 +876,10 @@ export async function updateTradePlan(
     patch.investedAmount !== undefined ? patch.investedAmount : t.investedAmount
   const nextLeverage =
     patch.leverage !== undefined ? normalizeLeverage(patch.leverage) : (t.leverage ?? 1)
-  const derivedSize =
-    nextInvested != null ? computeShares(nextInvested, nextEntry, nextLeverage) : undefined
+  const changesSize = patch.investedAmount !== undefined || patch.entryPrice !== undefined || patch.leverage !== undefined
+  if (changesSize && t.contracts != null) throw new Error('Kontraktgröße und Einschuss bleiben eingefroren. Größenänderungen brauchen eine neue geprüfte Kontraktspezifikation.')
+  const derivedSize = changesSize && nextInvested != null
+    ? computeShares(nextInvested, nextEntry, nextLeverage, requireFrozenFxRate(t)) : undefined
 
   await db.transaction(async (tx) => {
     await tx
@@ -1556,7 +1567,7 @@ async function loadScopedStats(
     rows,
     eventsByTrade: await loadEventsByTrade(userId),
     cashflows: await loadScopedCashflows(userId, portfolioIds),
-    startCapital: opts.startCapitalOverride ?? startCapital,
+    startCapital: Number.isFinite(startCapital) ? opts.startCapitalOverride ?? startCapital : NaN,
   }
 }
 
@@ -1624,6 +1635,7 @@ export type GroupStats = {
 
 /** Eine Zeile des Depot-Vergleichs. */
 export type PortfolioGroup = {
+  currency: string
   portfolioId: number
   name: string
   /** 'echtgeld' | 'demo' — steuert die PAPIERGELD-Kennzeichnung. */
@@ -1648,6 +1660,7 @@ export type PortfolioGroup = {
 export async function getPortfolioComparison(): Promise<PortfolioGroup[]> {
   const userId = await getUserId()
   const portfolios = await ensurePortfolios(userId)
+  const settings = await getSettings()
 
   const rows = await db
     .select()
@@ -1662,9 +1675,10 @@ export async function getPortfolioComparison(): Promise<PortfolioGroup[]> {
     const decisive = wins + losses
     // Trades ohne Ausstiegskurs haben keinen berechenbaren P&L und zählen nicht mit.
     // Event-aware: Teilverkäufe/Nachkäufe fließen über tradeNetPnl korrekt ein.
-    const totalPnL = list
+    const complete = list.every(t => tradeNetPnl(t, evs(t)) !== null)
+    const totalPnL = complete ? list
       .filter((t) => tradeNetPnl(t, evs(t)) !== null)
-      .reduce((acc, t) => acc + (tradeNetPnl(t, evs(t)) ?? 0), 0)
+      .reduce((acc, t) => acc + (tradeNetPnl(t, evs(t)) ?? 0), 0) : NaN
     return {
       completed: list.length,
       wins,
@@ -1677,6 +1691,7 @@ export async function getPortfolioComparison(): Promise<PortfolioGroup[]> {
 
   return portfolios.map((p) => ({
     portfolioId: p.id,
+    currency: portfolioCurrency(p, settings.currency),
     name: p.name,
     kind: p.kind,
     archived: p.archivedAt != null,

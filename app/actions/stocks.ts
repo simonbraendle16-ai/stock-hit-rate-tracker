@@ -1,5 +1,7 @@
 'use server'
 
+import type { Market } from '@/lib/market-data/types'
+
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { stock, assessment, trade } from '@/lib/db/schema'
@@ -737,4 +739,15 @@ export async function getContractSpecFor(args: {
     .where(and(eq(stock.userId, userId), eq(stock.ticker, ticker.toUpperCase())))
   if (row) return specFromStock(row)
   return specFromStock({ ticker, market: args.market ?? 'aktien' })
+}
+
+/** Owner-filtered currency for the form; the create service checks again. */
+export async function getTradeInstrumentCurrencyFor(ticker: string, market: string): Promise<string | null> {
+  const userId = await getUserId()
+  const rows = await db.select().from(stock).where(eq(stock.userId, userId))
+  const exact = rows.find(s => s.ticker === ticker.trim().toUpperCase())
+  const { findInstrumentFor } = await import('@/lib/link-trades')
+  const id = exact?.id ?? (await findInstrumentFor(ticker, market as Market, rows)).stockId
+  const row = rows.find(s => s.id === id)
+  return row?.resolutionStatus === 'ok' ? row.resolvedCurrency : null
 }

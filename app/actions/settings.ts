@@ -2,8 +2,8 @@
 
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
-import { cashflow, portfolio, trade, userSettings } from '@/lib/db/schema'
-import { eq, sql } from 'drizzle-orm'
+import { userSettings } from '@/lib/db/schema'
+import { eq } from 'drizzle-orm'
 import { headers } from 'next/headers'
 import { revalidatePath } from 'next/cache'
 import { DEFAULT_ORDER_FEE } from '@/lib/trade-math'
@@ -125,12 +125,15 @@ export async function updateSettings(input: {
 }): Promise<void> {
   const userId = await getUserId()
   const current = await getSettings()
+  if (input.currency && clampCurrency(input.currency, current.currency) !== current.currency) {
+    throw new Error('Die globale Währungsanzeige darf Bestandsdepots nicht umetikettieren. Bitte Depotwährung einzeln zuordnen.')
+  }
   const values = {
     defaultRiskPct: clampPct(input.defaultRiskPct, DEFAULTS.defaultRiskPct),
     maxRiskPct: clampPct(input.maxRiskPct, DEFAULTS.maxRiskPct),
     // Die Währung ändert NUR die Anzeige. Bestehende Beträge werden hier nicht
     // angefasst — dafür gibt es den ausdrücklichen Umrechnungs-Vorgang.
-    currency: clampCurrency(input.currency, current.currency),
+    currency: current.currency,
   }
 
   await db
@@ -158,72 +161,8 @@ export async function changeCurrency(input: {
   defaultRiskPct: number
   maxRiskPct: number
 }): Promise<{ converted: number }> {
-  const userId = await getUserId()
-  const current = await getSettings()
-  const target = clampCurrency(input.currency, current.currency)
-
-  if (input.rate != null && (!Number.isFinite(input.rate) || input.rate <= 0)) {
-    throw new Error('Der Umrechnungskurs muss größer als 0 sein.')
-  }
-  const rate = input.rate
-
-  let converted = 0
-  if (rate != null && rate !== 1) {
-    // Trades: nur Kontowährungs-Beträge. entryPrice/stopLoss/takeProfit/
-    // actualExitPrice bleiben bewusst unberührt.
-    const tradeResult = await db
-      .update(trade)
-      .set({
-        investedAmount: sql`${trade.investedAmount} * ${rate}`,
-        feeEntry: sql`${trade.feeEntry} * ${rate}`,
-        feeExit: sql`${trade.feeExit} * ${rate}`,
-      })
-      .where(eq(trade.userId, userId))
-      .returning({ id: trade.id })
-    converted += tradeResult.length
-
-    try {
-      const flowResult = await db
-        .update(cashflow)
-        .set({ amount: sql`${cashflow.amount} * ${rate}` })
-        .where(eq(cashflow.userId, userId))
-        .returning({ id: cashflow.id })
-      converted += flowResult.length
-    } catch {
-      // Migration 0010 noch nicht angewendet → es gibt schlicht keine Cashflows.
-    }
-
-    // Seit Etappe 12 stehen Startkapital und Gebühren an den DEPOTS — sie müssen
-    // deshalb hier mit umgerechnet werden. Ohne das stünde nach einem
-    // Währungswechsel ein Startkapital in der alten Währung neben Trades in der
-    // neuen, und jede Rendite wäre still falsch. Umgerechnet werden ALLE Depots,
-    // auch archivierte und das Demo-Depot: Das Papier-Startkapital ist zwar
-    // Übungsgeld, notiert aber in derselben Kontowährung.
-    const depotResult = await db
-      .update(portfolio)
-      .set({
-        startCapital: sql`${portfolio.startCapital} * ${rate}`,
-        defaultFeeEntry: sql`${portfolio.defaultFeeEntry} * ${rate}`,
-        defaultFeeExit: sql`${portfolio.defaultFeeExit} * ${rate}`,
-      })
-      .where(eq(portfolio.userId, userId))
-      .returning({ id: portfolio.id })
-    converted += depotResult.length
-  }
-
-  const values = {
-    defaultRiskPct: clampPct(input.defaultRiskPct, DEFAULTS.defaultRiskPct),
-    maxRiskPct: clampPct(input.maxRiskPct, DEFAULTS.maxRiskPct),
-    currency: target,
-  }
-
-  await db
-    .insert(userSettings)
-    .values({ userId, ...values })
-    .onConflictDoUpdate({ target: userSettings.userId, set: values })
-
-  revalidateAll()
-  return { converted }
+  await getUserId()
+  throw new Error('Der globale Währungswechsel ist gesperrt. Depotwährungen werden einzeln in der Depotverwaltung bestätigt; bestehende Beträge und Historien bleiben erhalten.')
 }
 
 function revalidateAll(): void {

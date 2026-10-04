@@ -1,16 +1,6 @@
 // Prognosen und Trades je Instrument in einer Zeile.
 //
-// Bisher lebten die beiden Welten getrennt: `/analysis` kannte nur Prognosen,
-// `/tracking` nur Trades ohne Instrumentenbezug. Damit war die eigentliche
-// Douglas-Frage nirgends beantwortbar — nicht „lag ich richtig?" und nicht
-// „habe ich verdient?", sondern die LÜCKE dazwischen. Wer bei einem Wert zu
-// 70 % richtig liegt und trotzdem verliert, hat kein Analyse-, sondern ein
-// Umsetzungsproblem. Diese Zahl steht hier.
-//
-// Nicht neu gerechnet wird nichts: Trefferquote, Erwartungswert und Plan-Treue
-// kommen aus `baseBucket` in `lib/trade-stats.ts` — demselben Kern, auf dem
-// Zustand, Setup und Zeit-Heatmap sitzen. Zwei Wege zur selben Kennzahl wären
-// zwei Wahrheiten.
+// Beschreibender Vergleich ungepaarter Gruppen; keine kausale Diagnose.
 
 import {
   baseBucket,
@@ -63,6 +53,7 @@ export type AssessmentSide = {
 }
 
 export type MoneySide = {
+  currency?: string | null
   trades: number
   decided: number
   /** Summe des Netto-P&L in Kontowährung. Nur Echtgeld. */
@@ -97,8 +88,7 @@ export type InstrumentStats = {
    * `null`, wenn eine der beiden Seiten keine entschiedene Zeile hat — eine
    * Lücke gegen nichts ist keine Aussage.
    *
-   * Positiv heißt: Die Analyse trifft besser als die Umsetzung — dort sitzt das
-   * Verhalten, nicht die Prognose.
+   * Positiv heißt nur: höhere Prognosequote in einer ungepaarten Gruppe.
    */
   gap: number | null
   /** Prognosen + Trades — der Sortierschlüssel „nach Aktivität". */
@@ -116,12 +106,14 @@ function moneySide(rows: TradeRow[], eventsByTrade?: TradeEventsByTrade): MoneyS
   if (rows.length === 0) return emptyMoneySide()
   const decided = rows.filter((t) => t.result && DECIDED.has(t.result))
   const core = baseBucket(decided, 1, eventsByTrade)
-  const netPnl = decided.reduce(
+  const complete = decided.every(t => tradeNetPnl(t, eventsByTrade?.get(t.id) ?? []) !== null) && new Set(decided.map(t => t.accountCurrency)).size <= 1
+  const netPnl = complete ? decided.reduce(
     (acc, t) => acc + (tradeNetPnl(t, eventsByTrade?.get(t.id) ?? []) ?? 0),
     0,
-  )
+  ) : NaN
   return {
     trades: rows.length,
+    currency: complete ? decided[0]?.accountCurrency ?? null : null,
     decided: decided.length,
     netPnl,
     expectancy: core.expectancy,

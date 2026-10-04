@@ -1,12 +1,8 @@
 // Bot-Zwilling (Etappe 5) — die reine Rechenlogik.
 //
-// Die App kennt den Plan (Einstieg, Stop, Ziel) und den tatsächlichen Kursverlauf.
-// Daraus lässt sich ausrechnen, was passiert WÄRE, wenn der Plan mechanisch
-// ausgeführt worden wäre: ohne Zögern, ohne vorzeitigen Ausstieg, ohne
-// verschobenen Stop. Die Differenz zum echten Ergebnis ist der Preis des eigenen
-// Eingreifens — und sie darf ausdrücklich auch positiv sein. Dann ist nicht der
-// Trader das Problem, sondern der Plan. Beide Richtungen sind ein Befund, keine
-// Bewertung.
+// Vereinfachtes Szenario mit festem Stop und Ziel aus gespeicherten Werten.
+// Ergebnisunterschiede belegen weder Planbefolgung noch eine Verhaltensursache.
+// Teilverkäufe und erlaubtes Trailing werden nicht simuliert.
 //
 // Hier steht ausschließlich Mathematik: keine Datenbank, kein Netz, kein React.
 // Die Kerzen kommen von außen (`app/actions/bot-twin.ts`), damit diese Datei
@@ -24,7 +20,7 @@ import type { Candle, Interval } from '@/lib/market-data/types'
 // Typen
 // ---------------------------------------------------------------------------
 
-/** Wie der mechanisch ausgeführte Plan geendet hätte. */
+/** Ausgang des vereinfachten Szenarios. */
 export type BotOutcome = 'ziel' | 'stop' | 'offen'
 
 /**
@@ -89,25 +85,21 @@ export type BotSource = 'kurse' | 'nachgetragen'
 export type ManualOutcome = { outcome: BotOutcome; exitPrice: number | null }
 
 /**
- * Wo die Differenz entsteht. Ein Trade landet in genau einem Eimer, die Eimer
+ * Neutrale Ergebnisgruppen. Ein Trade landet in genau einem Eimer, die Eimer
  * summieren sich exakt auf die Gesamtdifferenz.
  */
 export type BotBucket =
-  | 'wie_geplant' // Abweichung unter der Schwelle — der Plan wurde gehandelt
-  | 'zu_frueh' // Bot lief weiter (Ziel oder noch offen), du warst vorher raus
-  | 'zu_spaet' // Bot wäre am Stop raus, du bist darüber hinaus geblieben
-  | 'stop_verschoben' // dokumentierter Regelbruch erklärt die Differenz
-  | 'besser_als_plan' // du warst besser als der mechanische Plan
+  | 'annaehernd_gleich'
+  | 'unter_szenario'
+  | 'ueber_szenario'
 
-/** Unterhalb dieser Differenz in R gilt ein Trade als plan-konform ausgeführt. */
+/** Numerische Toleranz in R; kein Maß für Planbefolgung. */
 export const BUCKET_EPS = 0.05
 
 export const BUCKET_LABELS: Record<BotBucket, string> = {
-  wie_geplant: 'Wie geplant gehandelt',
-  zu_frueh: 'Zu früh ausgestiegen',
-  zu_spaet: 'Zu spät ausgestiegen',
-  stop_verschoben: 'Stop verschoben',
-  besser_als_plan: 'Besser als der Plan',
+  annaehernd_gleich: 'Annähernd gleiches Ergebnis',
+  unter_szenario: 'Ergebnis unter Szenario',
+  ueber_szenario: 'Ergebnis über Szenario',
 }
 
 export const SKIP_LABELS: Record<BotSkipReason, string> = {
@@ -130,7 +122,7 @@ type Editable = {
   manual: ManualOutcome | null
 }
 
-/** Eine Zeile der Auswertung: echter Trade gegen mechanischen Plan. */
+/** Eine Zeile der Auswertung: tatsächliches Ergebnis gegen Szenario. */
 export type BotTwinRow = Editable & {
   tradeId: number
   ticker: string
@@ -186,8 +178,7 @@ export type BotTwinStats = {
   realTotalR: number
   /**
    * realTotalR − botTotalR, also **deine Seite minus Bot**.
-   * Negativ = dein Eingreifen hat gekostet. Positiv = du warst besser als dein
-   * Plan; dann gehört der Plan überarbeitet, nicht das Verhalten.
+   * Das Vorzeichen beschreibt nur den Ergebnisunterschied, keine Ursache.
    */
   differenceR: number
   buckets: { bucket: BotBucket; trades: number; r: number }[]
@@ -226,7 +217,7 @@ function usableCandles(candles: readonly Candle[]): Candle[] {
 }
 
 /**
- * Der mechanisch ausgeführte Plan, Kerze für Kerze.
+ * Das vereinfachte Szenario, Kerze für Kerze.
  *
  * 1. Stop berührt → Verlust exakt am Stop
  * 2. Ziel berührt → Gewinn exakt am Ziel
@@ -236,8 +227,7 @@ function usableCandles(candles: readonly Candle[]): Candle[] {
  * 4. keins von beidem → offen, bewertet zum letzten verfügbaren Kurs
  *
  * Der Bot hält bewusst **über den echten Ausstieg hinaus**, bis Stop oder Ziel
- * berührt sind. Genau darin steckt die Differenz: ein vorzeitiger Ausstieg wäre
- * sonst per Konstruktion gleichwertig mit dem Plan und nie messbar.
+ * berührt sind. Diese hypothetische Differenz beurteilt keine Ausstiegshandlung.
  *
  * Gerechnet wird mit denselben eingefrorenen Gebühren wie beim echten Trade —
  * sonst vergleicht man Äpfel mit Birnen.
@@ -368,25 +358,12 @@ function settle(
 // Zuordnung: wo entsteht die Differenz?
 // ---------------------------------------------------------------------------
 
-/**
- * Ein Trade, ein Eimer. Die Reihenfolge der Prüfungen ist die Aussage:
- * ein dokumentierter Regelbruch erklärt die Differenz besser als jede Vermutung
- * über den Ausstiegszeitpunkt.
- *
- * `diffR` ist immer **deine Seite minus Bot** — negativ heißt: das Eingreifen hat
- * gekostet, positiv heißt: du warst besser als der Plan.
- */
+/** Gruppiert nur das Ergebnis: tatsächlich minus Szenario. */
 export function classifyDifference(
   diffR: number,
-  outcome: BotOutcome,
-  violations: readonly string[],
 ): BotBucket {
-  if (Math.abs(diffR) < BUCKET_EPS) return 'wie_geplant'
-  if (diffR > 0) return 'besser_als_plan'
-  if (violations.includes('stop_moved')) return 'stop_verschoben'
-  // Der Bot wäre am Stop raus, du hast mehr verloren → du bist darüber hinaus
-  // geblieben. In allen anderen Fällen lief der Plan weiter als du.
-  return outcome === 'stop' ? 'zu_spaet' : 'zu_frueh'
+  if (Math.abs(diffR) < BUCKET_EPS) return 'annaehernd_gleich'
+  return diffR > 0 ? 'ueber_szenario' : 'unter_szenario'
 }
 
 // ---------------------------------------------------------------------------
@@ -419,11 +396,9 @@ export type MissedEntry = Editable & {
 }
 
 const BUCKET_ORDER: BotBucket[] = [
-  'zu_frueh',
-  'zu_spaet',
-  'stop_verschoben',
-  'besser_als_plan',
-  'wie_geplant',
+  'unter_szenario',
+  'ueber_szenario',
+  'annaehernd_gleich',
 ]
 
 /**
@@ -464,7 +439,7 @@ export function compareBotAndTrader(
       botR,
       diffR,
       outcome: e.run.outcome,
-      bucket: classifyDifference(diffR, e.run.outcome, e.violations),
+      bucket: classifyDifference(diffR),
       source: e.source,
       ambiguous: e.run.ambiguous,
       resolution: e.resolution,

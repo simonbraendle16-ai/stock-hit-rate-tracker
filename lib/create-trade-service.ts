@@ -1,7 +1,7 @@
 import { db } from '@/lib/db'
 import { priceAlert, trade, tradeEvent, tradeTarget, assessment, stock } from '@/lib/db/schema'
 import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm'
-import { PRE_TRADE_QUESTIONS, type PreTradeAnswer } from '@/lib/pre-trade-questions'
+import { PRE_TRADE_QUESTIONS, validatePreTradeAnswers, type PreTradeAnswer } from '@/lib/pre-trade-questions'
 import {
   normalizeMoodCheck,
   serializeMoodTags,
@@ -11,6 +11,7 @@ import {
 } from '@/lib/emotions'
 import type { Market } from '@/lib/market-data/types'
 import { computeRiskReward, computeShares } from '@/lib/trade-math'
+import { portfolioCurrency, resolveMoneyCurrency } from '@/lib/money-currency'
 import {
   contractTradeFelder,
   gebundeneMargin,
@@ -131,11 +132,14 @@ async function ladeDeckung(userId: string, portfolioId: number, exceptTradeId?: 
   const eventsByTrade = await loadEventsByTrade(userId)
   let realisiertePnl = 0
   for (const t of abgeschlossen) {
-    realisiertePnl += tradeNetPnl(t, eventsByTrade.get(t.id) ?? []) ?? 0
+    const pnl = tradeNetPnl(t, eventsByTrade.get(t.id) ?? [])
+    if (pnl === null) throw new Error('Deckung nicht prüfbar: Bestands-P&L oder Währungsabrechnung unvollständig.')
+    realisiertePnl += pnl
   }
 
   const flows = await loadScopedCashflows(userId, [portfolioId])
   const offene = rows.filter((r) => r.id !== exceptTradeId)
+  if (offene.some(r => r.contracts != null && ['aktiv', 'geplant'].includes(r.status) && r.investedAmount == null)) throw new Error('Gebundener Kontrakteinschuss unbekannt.')
 
   return {
     depot,
@@ -171,7 +175,7 @@ async function verlangeDeckung(args: {
   )
   const [settings] = await db.select({ currency: userSettings.currency }).from(userSettings)
     .where(eq(userSettings.userId, args.userId)).limit(1)
-  const kontowaehrung = settings?.currency ?? 'EUR'
+  const kontowaehrung = portfolioCurrency(depot, settings?.currency ?? 'EUR')
 
   const pruefung = pruefeDeckung({
     einschuss: args.felder.contractInitialMargin,
@@ -477,7 +481,7 @@ export async function createTradeForUser(
   // beantwortet. Dass der Trade trotzdem aktivierbar ist, entscheidet allein
   // `requiresPreTradeGate(tradeKind)` beim Aktivieren. So bleibt in den Daten
   // sichtbar, was tatsächlich passiert ist.
-  const answers = input.preTradeAnswers ?? []
+  const answers = validatePreTradeAnswers(input.preTradeAnswers)
   const preTradeAnswered =
     answers.length === PRE_TRADE_QUESTIONS.length &&
     answers.every((a) => a.answer === 'ja')
@@ -508,9 +512,14 @@ export async function createTradeForUser(
   // `loadOwnedPortfolio` wirft bei fremdem oder unbekanntem Depot: Eine
   // `portfolioId` aus dem Browser ist eine Behauptung, keine Tatsache.
   const zielDepot = await resolveZielDepot(userId, input.portfolioId)
+  if (!zielDepot.currency) throw new Error('Die tatsächliche Depotwährung muss zuerst in der Depotverwaltung bestätigt werden.')
   const withMoney = kindOf(zielDepot) === 'echtgeld'
 
   const leverage = normalizeLeverage(input.leverage)
+  const [moneySettings] = await db.select({ currency: userSettings.currency }).from(userSettings)
+    .where(eq(userSettings.userId, userId)).limit(1)
+  const [instrumentCurrency] = stockId == null ? [] : await db
+    .select({ currency: stock.resolvedCurrency, status: stock.resolutionStatus }).from(stock).where(and(eq(stock.id, stockId), eq(stock.userId, userId))).limit(1)
 
   // --- Kontrakte (Teil 3) ---------------------------------------------------
   //
@@ -529,6 +538,15 @@ export async function createTradeForUser(
     stopLoss: input.stopLoss,
     leverage,
   })
+  if (input.contracts != null && !kontraktFelder) throw new Error('Kontrakte benötigen eine gültige Instrumentspezifikation.')
+  if (kontraktFelder && instrumentCurrency?.currency && instrumentCurrency.currency !== kontraktFelder.contractCurrency) throw new Error('Instrument- und Kontraktwährung widersprechen sich.')
+  const moneyCurrency = resolveMoneyCurrency({
+    accountCurrency: portfolioCurrency(zielDepot, moneySettings?.currency),
+    quoteCurrency: input.quoteCurrency,
+    resolvedCurrency: kontraktFelder?.contractCurrency ?? (instrumentCurrency?.status === 'ok' ? instrumentCurrency.currency : null),
+    rates: parseFxRates(zielDepot.fxRates),
+    ratesAt: zielDepot.fxRatesAt,
+  })
 
   // Der Einschuss in KONTOWÄHRUNG — das ist, was in `investedAmount` gehört,
   // denn diese Spalte ist überall die Kontowährungs-Größe. Ohne hinterlegten
@@ -545,12 +563,12 @@ export async function createTradeForUser(
     : null
 
   const investedAmount = kontraktFelder
-    ? (deckungsErgebnis?.einschussKonto ?? null)
+    ? (kontraktFelder.contractInitialMargin * moneyCurrency.quoteToAccountRate)
     : (input.investedAmount ?? null)
   const positionSize = kontraktFelder
     ? kontraktFelder.positionSize
     : investedAmount != null
-      ? computeShares(investedAmount, input.entryPrice, leverage)
+      ? computeShares(investedAmount, input.entryPrice, leverage, moneyCurrency.quoteToAccountRate)
       : (input.positionSize ?? null)
   const takeProfitPct = zielPlan.takeProfitPct
 
@@ -578,6 +596,7 @@ export async function createTradeForUser(
         // Abgeleitet: bei Teilzielen der Kurs der ersten Stufe (siehe `resolveTargetPlan`).
         takeProfit: zielPlan.takeProfit,
         positionSize,
+        ...moneyCurrency,
         investedAmount,
         leverage,
         // Die Spezifikation wird EINGEFROREN — dieselbe Haltung wie bei den

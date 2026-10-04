@@ -31,10 +31,11 @@ function resolveFees(fees?: Partial<Fees> | null): Fees {
  * bleibt am Stop verankert — es steigt mit der Stückzahl, nicht mit dem Faktor
  * an sich.
  */
-export function computeShares(invested: number, entry: number, leverage = 1): number {
+export function computeShares(invested: number, entry: number, leverage = 1, quoteToAccountRate = 1): number {
   if (!invested || !entry || entry <= 0) return 0
+  if (!Number.isFinite(quoteToAccountRate) || quoteToAccountRate <= 0) return 0
   const lev = Number.isFinite(leverage) && leverage > 0 ? leverage : 1
-  return (invested * lev) / entry
+  return (invested * lev) / (entry * quoteToAccountRate)
 }
 
 /** Positionswert = Kapitaleinsatz × Hebel. Das gebundene Kapital bleibt der Einsatz. */
@@ -75,21 +76,26 @@ export type TakeProfitProjection = {
  * Gebühren = Einstieg + Ausstieg; ohne Angabe die Standardgebühr.
  */
 export function projectTakeProfit(args: {
+  positionSize?: number | null
   invested: number
   entry: number
   tp: number
   direction: Direction
   sellPct: number // 0..100
+  quoteToAccountRate?: number
   leverage?: number
   fees?: Partial<Fees> | null
 }): TakeProfitProjection | null {
   const { invested, entry, tp, direction } = args
   if (!invested || !entry || !tp) return null
   const pct = clampPct(args.sellPct)
-  const shares = computeShares(invested, entry, args.leverage ?? 1)
+  const rate = args.quoteToAccountRate ?? 1
+  if (!Number.isFinite(rate) || rate <= 0) return null
+  const shares = args.positionSize ?? computeShares(invested, entry, args.leverage ?? 1, rate)
+  if (!Number.isFinite(shares) || shares <= 0) return null
   const soldShares = shares * (pct / 100)
-  const proceeds = soldShares * tp
-  const grossProfit = directionalDiff(tp, entry, direction) * soldShares
+  const proceeds = soldShares * tp * rate
+  const grossProfit = directionalDiff(tp, entry, direction) * soldShares * rate
   const f = resolveFees(args.fees)
   const fees = f.entry + f.exit
   return {
@@ -115,18 +121,23 @@ export type StopLossProjection = {
  * Gebühren = Einstieg + Ausstieg; ohne Angabe die Standardgebühr.
  */
 export function projectStopLoss(args: {
+  positionSize?: number | null
   invested: number
   entry: number
   sl: number
+  quoteToAccountRate?: number
   direction: Direction
   leverage?: number
   fees?: Partial<Fees> | null
 }): StopLossProjection | null {
   const { invested, entry, sl, direction } = args
   if (!invested || !entry || !sl) return null
-  const shares = computeShares(invested, entry, args.leverage ?? 1)
+  const rate = args.quoteToAccountRate ?? 1
+  if (!Number.isFinite(rate) || rate <= 0) return null
+  const shares = args.positionSize ?? computeShares(invested, entry, args.leverage ?? 1, rate)
+  if (!Number.isFinite(shares) || shares <= 0) return null
   // directionalDiff ist bei einem SL negativ (long: sl<entry, short: sl>entry).
-  const grossLoss = directionalDiff(sl, entry, direction) * shares
+  const grossLoss = directionalDiff(sl, entry, direction) * shares * rate
   const f = resolveFees(args.fees)
   const fees = f.entry + f.exit
   return {

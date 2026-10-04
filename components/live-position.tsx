@@ -1,5 +1,7 @@
 'use client'
 
+import { frozenFxRate } from '@/lib/money-currency'
+
 // Live-Stand einer OFFENEN Position (Etappe 3). Zeigt den aktuellen Kurs (aus
 // der letzten Kerze, sichtbar mit Zeitstempel), den unrealisierten P&L in
 // Kontowährung UND in R, die Abstände zu Stop und Ziel sowie einen Balken, der
@@ -61,7 +63,7 @@ const labelPos = (fraction: number): { left: number; transform: string } => {
   return { left: f, transform: 'translateX(-50%)' }
 }
 const rMultiple = (n: number) =>
-  `${n >= 0 ? '+' : ''}${n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} R`
+  Number.isFinite(n) ? `${n >= 0 ? '+' : ''}${n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} R` : '—'
 
 export function LivePosition({
   t,
@@ -99,6 +101,8 @@ export function LivePosition({
   // Durchschnittseinstieg — plus ein realisierter Anteil oben. Ohne Teilverkauf
   // bleibt alles exakt wie in Etappe 3.
   const settle = events && events.length ? settlePosition(t, events) : null
+  currency = t.accountCurrency ?? currency
+  const rate = frozenFxRate(t)
   const partial = settle != null && settle.totalExited > 0
   const openQty = partial ? settle!.openQty : t.positionSize ?? null
   const avgEntry = partial ? settle!.avgEntry : t.entryPrice
@@ -107,13 +111,13 @@ export function LivePosition({
     price == null
       ? null
       : partial
-        ? directionalDiff(price, avgEntry, t.direction) * (openQty ?? 0)
+        ? rate === null ? null : directionalDiff(price, avgEntry, t.direction) * (openQty ?? 0) * rate
         : unrealizedPnl(t, price)
   const r =
     price == null
       ? null
       : partial && settle!.plannedRiskMoney > 0
-        ? (directionalDiff(price, avgEntry, t.direction) * (openQty ?? 0)) / settle!.plannedRiskMoney
+        ? (directionalDiff(price, avgEntry, t.direction) * (openQty ?? 0) * (rate ?? NaN)) / settle!.plannedRiskMoney
         : unrealizedR(t, price)
   const positive = (r ?? money ?? 0) >= 0
 
@@ -205,7 +209,7 @@ export function LivePosition({
           />
           {t.tradedWithMoney && (
             <LP
-              label="Realisiert (Geld)"
+            label={settle!.moneyComplete ? 'Realisiert (Geld)' : 'Währungsabrechnung fehlt'}
               value={formatMoney(settle!.realizedNet, currency, { signed: true })}
               tone={settle!.realizedNet >= 0 ? 'pos' : 'neg'}
             />
@@ -246,7 +250,7 @@ export function LivePosition({
             )}
             {money != null && t.tradedWithMoney && (
               <LP
-                label="in Geld (brutto)"
+                label={t.quoteCurrency === t.accountCurrency ? 'in Geld (brutto)' : 'Planbewertung (brutto)'}
                 value={formatMoney(money, currency, { signed: true })}
                 tone={positive ? 'pos' : 'neg'}
               />

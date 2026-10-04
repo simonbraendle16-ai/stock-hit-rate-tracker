@@ -38,7 +38,7 @@ export function CountUp({
 
   useEffect(() => {
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    if (reduced || durationMs <= 0) {
+    if (!Number.isFinite(value) || reduced || durationMs <= 0) {
       setDisplay(value)
       return
     }
@@ -59,6 +59,7 @@ export function CountUp({
     }
   }, [value, durationMs])
 
+  if (!Number.isFinite(value) || !Number.isFinite(display)) return <>—</>
   if (format) return <>{format(display)}</>
 
   const sign = signed && display >= 0 ? '+' : ''

@@ -7,6 +7,7 @@ import { Bar, BarChart, Cell, LabelList, ReferenceLine, XAxis, YAxis } from 'rec
 import { Target, TrendingUp } from 'lucide-react'
 import type { PortfolioGroup } from '@/app/actions/trades'
 import { normalizePortfolioKind } from '@/lib/portfolio-scope'
+import { formatMoney } from '@/lib/format'
 
 // Nachfolger von `money-hitrate-chart` und `money-profit-chart` (Etappe 12).
 //
@@ -106,9 +107,12 @@ const fmt = (v: number) =>
   `${v >= 0 ? '+' : ''}${v.toLocaleString('de-DE', { maximumFractionDigits: 0 })}`
 
 export function PortfolioProfitChart({ groups }: { groups: PortfolioGroup[] }) {
+  if (new Set(groups.map(g => g.currency)).size > 1) {
+    return <div className="panel p-5"><h3>Gewinn je Depot</h3><p className="note">Verschiedene Währungen: keine gemeinsame Geldachse oder Rangfolge.</p>{groups.map(g => <p key={g.portfolioId}>{g.name} · {g.currency}: {formatMoney(g.stats.totalPnL, g.currency)}</p>)}</div>
+  }
   const rows = mitDaten(groups)
 
-  const data = rows.map(({ g, decisive }) => ({
+  const data = rows.filter(({g}) => Number.isFinite(g.stats.avgPnL)).map(({ g, decisive }) => ({
     name: g.archived ? `${g.name} (Archiv)` : g.name,
     value: g.stats.avgPnL,
     total: g.stats.totalPnL,
@@ -124,7 +128,8 @@ export function PortfolioProfitChart({ groups }: { groups: PortfolioGroup[] }) {
 
   return (
     <div className="panel sheen flex h-full flex-col p-4 sm:p-6">
-      <ChartHeader icon={TrendingUp} title="Ø Gewinn pro Trade" subtitle="Je Depot" />
+      <ChartHeader icon={TrendingUp} title="Ø Gewinn pro Trade" subtitle={`Je Depot · ${groups[0]?.currency ?? ''}`} />
+      {rows.some(({g}) => !Number.isFinite(g.stats.avgPnL)) && <p className="note">Unvollständige Währungsabrechnungen werden nicht als Geldbalken dargestellt.</p>}
 
       {data.length === 0 ? (
         <ChartEmpty

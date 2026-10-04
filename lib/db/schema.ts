@@ -86,6 +86,8 @@ export const portfolio = pgTable('portfolio', {
   // echtgeld | demo — unveränderlich, sobald Trades daranhängen (das würde die
   // Bilanz rückwirkend umschreiben). Regel in `lib/portfolio-scope.ts`.
   kind: text('kind').notNull().default('echtgeld'),
+  // NULL preserves legacy settings until the owner assigns the actual currency.
+  currency: text('currency'),
   // Eigenes Startkapital je Depot; beim Demo-Depot das Papier-Startkapital.
   // Nur damit hat die Übung eine eigene Bilanz — und nur dann sind
   // Prozentzahlen zwischen Übung und Ernst vergleichbar.
@@ -341,6 +343,11 @@ export const trade = pgTable('trade', {
   // über `buildTargetPlan` (`lib/trade-targets.ts`).
   takeProfit: doublePrecision('takeProfit').notNull(),
   positionSize: doublePrecision('positionSize'),
+  // Frozen planning conversion: 1 quote currency unit = rate account units.
+  quoteCurrency: text('quoteCurrency'),
+  accountCurrency: text('accountCurrency'),
+  quoteToAccountRate: doublePrecision('quoteToAccountRate'),
+  fxRateAt: timestamp('fxRateAt'),
   // Kapitaleinsatz in Kontowährung (Echtgeld); die Stückzahl in positionSize
   // wird daraus abgeleitet — bei Hebel aus Einsatz × Hebel.
   investedAmount: doublePrecision('investedAmount'),
@@ -569,6 +576,7 @@ export const brokerExit = pgTable('broker_exit', {
   brokerAccountId: text('brokerAccountId').notNull(),
   brokerPositionId: text('brokerPositionId').notNull(),
   brokerExitId: text('brokerExitId').notNull(),
+  settlementReceipt: jsonb('settlementReceipt').$type<import('../settlement-receipt').SettlementReceipt>(),
   brokerOrderId: integer('brokerOrderId').references(() => brokerOrder.id, { onDelete: 'set null' }),
   linkedTradeId: integer('linkedTradeId').references(() => trade.id, { onDelete: 'set null' }),
   quantity: doublePrecision('quantity').notNull(),
@@ -663,6 +671,18 @@ export const tradeEvent = pgTable('trade_event', {
   note: text('note'),
   createdAt: timestamp('createdAt').notNull().defaultNow(),
 })
+
+export const tradeSettlementReceipt = pgTable('trade_settlement_receipt', {
+  id: serial('id').primaryKey(),
+  userId: text('userId').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  tradeId: integer('tradeId').notNull().references(() => trade.id, { onDelete: 'restrict' }),
+  eventId: integer('eventId').notNull().references(() => tradeEvent.id, { onDelete: 'restrict' }),
+  version: integer('version').notNull(),
+  receipt: jsonb('receipt').$type<import('../settlement-receipt').SettlementReceipt>().notNull(),
+  correctionReason: text('correctionReason'),
+  createdAt: timestamp('createdAt').notNull().defaultNow(),
+}, table => [uniqueIndex('trade_settlement_receipt_event_version_idx').on(table.eventId, table.version),
+  index('settlement_owner_trade_idx').on(table.userId, table.tradeId)])
 
 // Teilziele (Etappe 13): die geplanten Ausstiegsstufen eines Trades. Ein Trade
 // darf mehrere Take-Profits tragen — „die halbe Position bei 1 R, der Rest

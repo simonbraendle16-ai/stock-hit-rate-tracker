@@ -1,6 +1,6 @@
 'use client'
 
-// Die Doppelkurve des Bot-Zwillings (Etappe 5): mechanischer Plan gegen
+// Die Doppelkurve des Bot-Zwillings (Etappe 5): vereinfachtes Szenario gegen
 // tatsächliches Handeln, beide kumuliert in R über dieselben Trades.
 //
 // Beide Kurven starten bei 0 R — nur dann ist die Schere zwischen ihnen exakt
@@ -28,7 +28,7 @@ export function BotTwinCurve({
         // Neutrales Grau für den Bot: er ist die Referenzlinie, nicht das
         // Ergebnis. Gold (--chart-4) wäre hier falsch — dieselbe Farbe trägt in
         // der App die Warnung.
-        bot: { label: 'Plan mechanisch', color: 'var(--chart-5)' },
+        bot: { label: 'Szenario', color: 'var(--chart-5)' },
         real: { label: 'Tatsächlich', color: 'var(--chart-1)' },
       }}
       className="h-[240px] w-full"
@@ -43,7 +43,7 @@ export function BotTwinCurve({
             <ChartTooltipContent
               formatter={(value, name) => [
                 rTick(Number(value)),
-                name === 'bot' ? ' Plan mechanisch' : ' Tatsächlich',
+                name === 'bot' ? ' Szenario' : ' Tatsächlich',
               ]}
               labelFormatter={(label) => `Abschluss: ${label}`}
             />

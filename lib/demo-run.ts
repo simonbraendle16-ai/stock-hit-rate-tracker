@@ -353,7 +353,9 @@ async function deckungReicht(
   let realisiertePnl = 0
   for (const alt of abgeschlossen) {
     const evs = await ladeEreignisse(alt.userId, alt.id)
-    realisiertePnl += tradeNetPnl(alt, evs) ?? 0
+    const pnl = tradeNetPnl(alt, evs)
+    if (pnl === null) return { ok: false, grund: 'Deckung nicht prüfbar: Währungsabrechnung unvollständig.' }
+    realisiertePnl += pnl
   }
 
   const flows = await loadScopedCashflows(t.userId, [t.portfolioId])
@@ -371,7 +373,7 @@ async function deckungReicht(
     .select({ currency: userSettings.currency })
     .from(userSettings)
     .where(eq(userSettings.userId, t.userId))
-  const kontowaehrung = einst?.currency ?? 'EUR'
+  const kontowaehrung = depot.currency ?? einst?.currency ?? 'EUR'
 
   // `investedAmount` steht bereits in Kontowährung (so schreibt es `createTrade`),
   // deshalb wird hier nicht noch einmal umgerechnet.
@@ -630,6 +632,7 @@ async function bucheFill(args: {
         .where(and(eq(tradeEvent.tradeId, t.id), eq(tradeEvent.userId, t.userId)))
         .orderBy(asc(tradeEvent.at), asc(tradeEvent.id))
       const settle = settlePosition(t, alle)
+      if (!Number.isFinite(settle.totalNet)) throw new Error('Demo-Abschluss nicht bewertbar: Währungsabrechnung unvollständig.')
 
       await tx
         .update(trade)

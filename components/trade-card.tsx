@@ -1,5 +1,7 @@
 'use client'
 
+import { frozenFxRate } from '@/lib/money-currency'
+
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
@@ -60,7 +62,7 @@ import {
   projectStopLoss,
   projectTakeProfit,
 } from '@/lib/trade-math'
-import { tradePnl } from '@/lib/trade-stats'
+import { tradeNetPnl } from '@/lib/trade-stats'
 import { parseSetupTags } from '@/lib/setups'
 import type { TradeEventRow } from '@/lib/trade-events'
 import type { TradeTargetRow } from '@/lib/trade-targets'
@@ -113,6 +115,7 @@ export function TradeCard({
   /** Versatz für den gestaffelten Aufbau in Listen. */
   delayMs?: number
 }) {
+  currency = t.accountCurrency ?? currency
   const router = useRouter()
   const [busy, setBusy] = useState(false)
   const [activateOpen, setActivateOpen] = useState(false)
@@ -255,7 +258,7 @@ export function TradeCard({
         </p>
       )}
 
-      <MoneyPanel t={t} currency={currency} />
+      <MoneyPanel t={t} currency={currency} events={events} />
 
       {/* Live-Stand nur für offene Positionen (Etappe 3); Events zeigen zusätzlich
           Restmenge und realisierten Anteil nach Teilverkäufen (Etappe 6). */}
@@ -425,11 +428,15 @@ export function TradeCard({
 // Demo-Trade mit Hebel hat dieselbe Positionsgröße wie sein Echtgeld-Zwilling;
 // verschwiegen würde der Hebel die Übung wertlos machen. Der Unterschied steht
 // in der Überschrift und darin, dass auf Papier keine Gebühren anfallen.
-function MoneyPanel({ t, currency = 'EUR' }: { t: TradeRow; currency?: string }) {
+export function MoneyPanel({ t, currency = 'EUR', events = [] }: { t: TradeRow; currency?: string; events?: TradeEventRow[] }) {
   if (t.investedAmount == null) return null
+  if (frozenFxRate(t) === null) {
+    return <div className="mt-3 rounded-lg border border-warning/30 p-3 text-xs text-warning">Altbestand: Depotwährung, Kurswährung und Umrechnung sind noch nicht bestätigt. Geldprojektionen werden deshalb nicht als geprüfte Beträge angezeigt.</div>
+  }
 
   const paper = !t.tradedWithMoney
-  const eur = (n: number | null | undefined) => formatMoney(n, currency)
+  const accountCurrency = t.accountCurrency ?? currency
+  const eur = (n: number | null | undefined) => formatMoney(n, accountCurrency)
   const invested = t.investedAmount
   const shares = t.positionSize ?? null
   const leverage = t.leverage ?? 1
@@ -437,7 +444,7 @@ function MoneyPanel({ t, currency = 'EUR' }: { t: TradeRow; currency?: string })
 
   // Realisiertes Netto-Ergebnis aus derselben Funktion wie Bilanz und Statistik —
   // keine zweite Rechenlogik in der Anzeige. `null` = kein Ausstiegskurs erfasst.
-  const realizedNet = closed ? tradePnl(t) : null
+  const realizedNet = closed ? tradeNetPnl(t, events) : null
 
   // Geplante Gebühren des Trades; bei Altbestand ohne Wert die Vorgabe. Auf
   // Papier kostet nichts — dieselbe Regel wie in `tradeFees`, sonst würde ein
@@ -455,6 +462,8 @@ function MoneyPanel({ t, currency = 'EUR' }: { t: TradeRow; currency?: string })
           direction: t.direction as 'long' | 'short',
           sellPct: t.takeProfitPct ?? 100,
           leverage,
+          positionSize: t.positionSize,
+          quoteToAccountRate: t.quoteToAccountRate ?? 1,
           fees,
         })
       : null
@@ -465,6 +474,8 @@ function MoneyPanel({ t, currency = 'EUR' }: { t: TradeRow; currency?: string })
         sl: t.stopLoss,
         direction: t.direction as 'long' | 'short',
         leverage,
+        positionSize: t.positionSize,
+        quoteToAccountRate: t.quoteToAccountRate ?? 1,
         fees,
       })
     : null
@@ -483,9 +494,14 @@ function MoneyPanel({ t, currency = 'EUR' }: { t: TradeRow; currency?: string })
         {paper ? 'Papier-Kapital · Übungsgeld' : 'Kapital & Gebühren'}
       </p>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 font-mono text-xs sm:grid-cols-3">
+        <MRow label="Depotwährung" value={accountCurrency} />
+        <MRow label="Kurswährung" value={t.quoteCurrency ?? 'Nicht dokumentiert'} />
+        {t.quoteCurrency && t.accountCurrency && t.quoteCurrency !== t.accountCurrency && (
+          <MRow label="Plankurs" value={`1 ${t.quoteCurrency} = ${num(t.quoteToAccountRate ?? 0)} ${t.accountCurrency}`} />
+        )}
         <MRow label={paper ? 'Papier-Einsatz' : 'Kapitaleinsatz'} value={eur(invested)} />
         {leverage > 1 && <MRow label="Hebel" value={`${num(leverage)}×`} />}
-        {leverage > 1 && <MRow label="Positionswert" value={eur(invested * leverage)} />}
+        {shares != null && <MRow label="Positionswert" value={eur(shares * t.entryPrice * (t.quoteToAccountRate ?? 0))} />}
         {shares != null && <MRow label="Stückzahl" value={num(shares)} />}
         {!paper && (
           <MRow label="Ordergebühr" value={`${eur(fees.entry + fees.exit)} (Kauf + Verkauf)`} />
@@ -501,7 +517,7 @@ function MoneyPanel({ t, currency = 'EUR' }: { t: TradeRow; currency?: string })
             />
           ) : (
             // Kein Ausstiegskurs erfasst — früher stand hier ein erfundener Betrag.
-            <MRow label="Netto-Ergebnis" value="Ausstiegskurs fehlt" tone="neg" />
+            <MRow label="Netto-Ergebnis" value="Ausstieg oder belegte Währungsabrechnung fehlt" tone="neg" />
           )
         ) : (
           <>
@@ -529,6 +545,7 @@ function MoneyPanel({ t, currency = 'EUR' }: { t: TradeRow; currency?: string })
           </>
         )}
       </dl>
+      {t.quoteCurrency !== t.accountCurrency && <p className="mt-2 text-xs text-warning">Planbewertung zum eingefrorenen FX-Kurs. Realisierte Kontowährungs-P&amp;L braucht eine belegte Abrechnung; der Plankurs ersetzt sie nicht.</p>}
     </div>
   )
 }
