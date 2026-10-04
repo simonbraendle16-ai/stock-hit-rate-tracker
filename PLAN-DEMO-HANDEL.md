@@ -411,3 +411,22 @@ und auf der bestätigten Produktionsdatenbank angewendet.
   und ruft alle fünf Minuten den stündlich begrenzten Lauf auf. GitHub kann geplante
   Ausführungen verzögern; Preise richten sich weiterhin nach den geplanten Levels.
 - Nach dem Abgleich: 1.080 Tests, separate Typprüfung und Produktionsbuild erfolgreich.
+
+- Live-Veröffentlichung: `dpl_BpKLm61DEqzck9XBGZuHrT3vvshg`, Vercel-Status READY,
+  Quellstand `96d9f05`, Alias https://stock-hit-rate-tracker-astra-quest.vercel.app.
+- Der eigene Demo-Workflow ist aktiv. Erster tatsächlicher GitHub-Lauf:
+  https://github.com/simonbraendle16-ai/stock-hit-rate-tracker/actions/runs/37204989208
+  (HTTP 200, acht Trades geprüft, ein Einstieg und ein Stop zum Planpreis verbucht).
+  Sechs ältere Trades haben keine vollständige 5-Minuten-Anfangsabdeckung;
+  sie bleiben mit Warnung offen und müssen manuell geprüft werden. Ihr Prüfstand
+  wurde nicht über fehlende Historie hinweg verschoben. Anbieter liefern die
+  benötigte alte Historie nicht vollständig; es wurden keine Kurse erfunden.
+- Zweiter Lauf:
+  https://github.com/simonbraendle16-ai/stock-hit-rate-tracker/actions/runs/37205185530
+  (HTTP 200, `ran: false`, keine Wiederholung bereits gespeicherter Buchungen).
+  Der nächste Termin und die Freigabe der Lauf-Sperre wurden in der Datenbank geprüft.
+- Live-Sichtprüfung: Handelsübersicht, neue Demo-Formularhinweise, vorhandene
+  manuelle Aktionen und Markierung automatischer Ereignisse in der Chronik geprüft.
+  Es wurden keine zusätzlichen Test-Trades in Produktion angelegt.
+- Die temporäre Neon-Testbranch und zusätzlich heruntergeladene Env-Dateien
+  wurden nach Abschluss entfernt. Der deaktivierte Alarm-Workflow bleibt deaktiviert.
