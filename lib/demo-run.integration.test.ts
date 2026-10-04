@@ -84,12 +84,14 @@ vi.mock('@/lib/market-data/cached', () => ({
   },
 }))
 vi.mock('@/lib/market-data/candle-store', () => ({
-  readStoredCandles: async (_symbol: string, _interval: string, options: { before: number }) =>
-    (state.candles as Candle[]).filter((c) => c.time < options.before).slice(-1),
+  readStoredCandles: async (_symbol: string, _interval: string, options: { before?: number; since?: number; ascending?: boolean; limit: number }) => {
+    const rows = (state.candles as Candle[]).filter((c) => c.time < (options.before ?? Infinity) && c.time >= (options.since ?? 0))
+    return options.ascending ? rows.slice(0, options.limit) : rows.slice(-options.limit)
+  },
   pruneStoredCandles: vi.fn(async () => 0),
 }))
 vi.mock('@/lib/portfolio-context', () => ({ loadScopedCashflows: async () => [] }))
-import { runDemoFills } from './demo-run'
+import { repairDemoArchive, runDemoFills } from './demo-run'
 import { pruneStoredCandles } from './market-data/candle-store'
 
 const at = (time: string) => new Date(`2026-10-02T${time}:00Z`)
@@ -127,6 +129,40 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers())
 
 describe('Demo-Ausführung mit gespeicherten Positionen', () => {
+  it('kennzeichnet echte Archivbuchungen mit gröberer Zeitauflösung und wiederholt sie nicht', async () => {
+    state.candles = [candle('09:45'), candle('10:00', { high: 112 }), candle('10:15', { high: 122 })]
+    const result = await repairDemoArchive('user', 1, at('10:30').getTime() / 1000, false)
+    expect(result.zeilen.map((z) => z.preis)).toEqual([110, 120])
+    const booked = state.events.slice(1) as TradeEventRow[]
+    expect(JSON.parse(booked[0].payload!)).toMatchObject({ interval: '15min', historisch: true, preisModus: 'plan' })
+    expect(booked[0].note).toContain('Auslösungsfensters')
+    expect((await repairDemoArchive('user', 1, at('10:30').getTime() / 1000, false)).skipped).toBe(true)
+    expect(state.events).toHaveLength(3)
+  })
+  it('überspringt bei fehlender Positionsgröße keine möglichen Archiv-Auslöser', async () => {
+    Object.assign(state.trades[0] as object, { positionSize: null })
+    await expect(repairDemoArchive('user', 1, at('10:30').getTime() / 1000, false)).rejects.toThrow('Positionsgröße')
+    expect(state.events).toHaveLength(1)
+  })
+  it('verbucht Auslöser aus einer teilweise bereits geprüften Archivkerze nicht rückwirkend', async () => {
+    Object.assign(state.trades[0] as object, { demoCheckedAt: at('10:05') })
+    state.candles = [candle('09:45'), candle('10:00', { high: 112 }), candle('10:15')]
+    await expect(repairDemoArchive('user', 1, at('10:30').getTime() / 1000, false)).rejects.toThrow('Teilweise bereits')
+    expect(state.events).toHaveLength(1)
+  })
+  it('verbucht keine teilweise belegte Archivhistorie', async () => {
+    state.candles = [candle('09:45'), candle('10:00', { high: 112 })]
+    await expect(repairDemoArchive('user', 1, at('10:30').getTime() / 1000, false)).rejects.toThrow('lückenlos')
+    expect(state.events).toHaveLength(1)
+  })
+  it('schließt einen aktiven Alt-Trade ohne bisherige Ereignisse zu seinem Planpreis', async () => {
+    state.events = []
+    const result = await runDemoFills()
+    expect(result.error).toBeNull()
+    expect((state.trades[0] as typeof trade.$inferSelect).status).toBe('abgeschlossen')
+    expect(result.zeilen.map((z) => z.preis)).toEqual([110, 120])
+  })
+
   it('simuliert keine Ausführungen für verknüpfte Brokerpositionen', async () => {
     state.brokerOrders = [{ id: 1, userId: 'user', portfolioId: 1, linkedTradeId: 1 }]
     const result = await runDemoFills({ refresh: false })

@@ -430,3 +430,45 @@ und auf der bestätigten Produktionsdatenbank angewendet.
   Es wurden keine zusätzlichen Test-Trades in Produktion angelegt.
 - Die temporäre Neon-Testbranch und zusätzlich heruntergeladene Env-Dateien
   wurden nach Abschluss entfernt. Der deaktivierte Alarm-Workflow bleibt deaktiviert.
+
+
+### Reparatur des Altbestands am 04.10.2026
+
+Die sechs anfangs blockierten Fälle wurden auf ausdrücklichen Nutzerwunsch
+repariert. Historische 5-Minuten-Kerzen der Aktien und von Bitcoin konnten über
+die bereits konfigurierte Twelve-Data-Archivquelle abgerufen und unter bestätigter
+Instrumentidentität ergänzt werden. Neue Zuordnungen schließen fehlende Trade-
+Instrument-Bezüge. Bestehende Kerzen werden durch das Reparaturskript nicht überschrieben.
+
+`since` wird jetzt auch von den alternativen Anbietern berücksichtigt. Für ältere
+Aktienhistorie wird eine Archivquelle genutzt, statt Yahoos auf 59 Tage gekürztes
+Fenster als vollständige Historie zu akzeptieren. Binance erhält den historischen
+`startTime`; USD-Kryptoschreibweisen werden korrekt auf das unterstützte Paar umgesetzt.
+Bekannte US-Aktienbörsen und COMEX haben definierte tägliche Schließzeiten
+(inklusive New-York-Sommerzeit). Unbekannte Börsen und echte Intraday-Lücken
+bleiben geschützt; Krypto bleibt kontinuierlich.
+
+Für Gold wurde ausdrücklich die Rekonstruktion aus echten 15-Minuten-Archivkerzen
+autorisiert. Fehlende Fenster sind damit geprüft, ohne daraus künstliche
+5-Minuten-Kerzen zu erzeugen. Grobere Buchungen tragen Intervalldauer und
+Auslösungsfenster in den Ereignisdaten; reine Abdeckungsprüfungen stehen als Notiz
+in der Chronik. Eine teilweise bereits geprüfte Archivkerze darf nur überbrückt
+werden, wenn sie keinen Auslöser berührt. Der spätere Gold-Einstieg wurde aus einer
+echten 5-Minuten-Kerze zum unveränderten Planlevel gebucht. Laufende Automatik
+bleibt bei fünf Minuten. AAPL ist auf Nutzerwunsch „kein Handel“; der ursprüngliche
+Plan bleibt erhalten.
+
+Werkzeug: `scripts/repair-demo-history.ts`, standardmäßig Vorschau, gezielt mit
+`--ids`, optional `--discard` und `--archive`; nur `--apply` schreibt. Der Lauf
+prüft Demo-Zugehörigkeit und Brokerverknüpfungen, verwendet die gemeinsamen Sperren
+und begrenzte Seiten. Quellen, Ausgangslage und Abschlussprüfung liegen lokal im
+ignorierten Ordner `.baseline-demo-repair`; persönliche Trades werden nicht ins
+Repository übernommen. Ein Wiederholungslauf bestätigte: keine neuen Ereignisse,
+keine Warnungen, keine Restpositionen bei abgeschlossenen Trades, unveränderte
+Planlevels und Ausführungspreise exakt an den jeweiligen Levels.
+
+Verifikation nach Reparatur: 1.093 Tests, separate Typprüfung, Produktionsbuild
+und Prüfung der gespeicherten Buchungen. Vier der fünf verbleibenden Pläne bzw.
+Positionen wurden historisch ausgeführt, ein Plan wartet auf seinen Einstieg;
+der sechste Datensatz ist ausdrücklich verworfen. Der historische Gold-Abgleich
+bewertet nur Zeitfenster nach dem Anlagezeitpunkt des Plans.

@@ -3,7 +3,7 @@
 // shares the same portfolio/trade lock as manual actions.
 import { and, asc, eq, inArray } from 'drizzle-orm'
 import { db } from '@/lib/db'
-import { brokerOrder, portfolio, trade, tradeEvent, tradeTarget, userSettings } from '@/lib/db/schema'
+import { brokerOrder, portfolio, stock, trade, tradeEvent, tradeTarget, userSettings } from '@/lib/db/schema'
 import { getCachedCandles } from '@/lib/market-data/cached'
 import { readStoredCandles, pruneStoredCandles } from '@/lib/market-data/candle-store'
 import { createSymbolResolver } from '@/lib/market-data/lookup'
@@ -119,7 +119,9 @@ export async function runDemoFills(
             }
             return null // Market closed, or only an unfinished candle is available.
           }
-          const coverage = demoCoveragePrefix(candles, previous[0] ?? null, beginn, t.market)
+          const [instrument] = t.stockId == null ? [] : await db.select({ exchange: stock.resolvedExchange }).from(stock)
+            .where(and(eq(stock.id, t.stockId), eq(stock.userId, t.userId))).limit(1)
+          const coverage = demoCoveragePrefix(candles, previous[0] ?? null, beginn, t.market, instrument?.exchange)
           if (coverage.gap && !coverage.usable.length) {
             await markIssue(t, 'Lücke in den 5-Minuten-Kursdaten. Bitte frühere Ausführungen manuell prüfen.', report.trocken)
             return { issue: 'coverage' as const }
@@ -192,7 +194,7 @@ async function markIssue(t: typeof trade.$inferSelect, issue: string, trocken: b
 
 async function verarbeiteTrade(args: {
   t: typeof trade.$inferSelect; events: TradeEventRow[]; targetRows: TradeTargetRow[]
-  kerzen: Candle[]; vorherKurs: number | null; trocken: boolean
+  kerzen: Candle[]; vorherKurs: number | null; trocken: boolean; archive?: boolean; interval?: Interval
 }) {
   const { t } = args
   let status = t.status
@@ -213,6 +215,7 @@ async function verarbeiteTrade(args: {
     })
     previous = candle.close
     for (const fill of fills) {
+      if (args.archive) fill.grund += ' Historische Rekonstruktion aus 15-Minuten-Archivkerzen; Zeitangabe ist der Beginn des Auslösungsfensters.'
       if (fill.art === 'einstieg') {
         const deckung = await deckungReicht(t)
         if (!deckung.ok) {
@@ -224,7 +227,7 @@ async function verarbeiteTrade(args: {
           break
         }
       }
-      const next = args.trocken ? trockenFolge({ fill, stufen, status }) : await bucheFill({ t: { ...t, status }, fill, stufen })
+      const next = args.trocken ? trockenFolge({ fill, stufen, status }) : await bucheFill({ t: { ...t, status }, fill, stufen, interval: args.interval, archive: args.archive })
       stufen = next.stufen
       status = next.status
       events.push({ id: (events[events.length - 1]?.id ?? 0) + 1, tradeId: t.id,
@@ -373,12 +376,15 @@ async function bucheFill(args: {
   t: typeof trade.$inferSelect
   fill: DemoFill
   stufen: TradeTargetRow[]
+  interval?: Interval
+  archive?: boolean
 }): Promise<{ stufen: TradeTargetRow[]; status: string }> {
   const { t, fill } = args
   const at = new Date(fill.zeit * 1000)
   // Die Herkunft steht im Ereignis, nicht in einer neuen Spalte: Daran erkennt
   // die Oberfläche, bei welchen Trades der Check-in noch nachzuholen ist.
-  const payload = JSON.stringify({ auto: true, quelle: 'demo-fill', interval: FILL_INTERVAL, preisModus: 'plan', art: fill.art })
+  const payload = JSON.stringify({ auto: true, quelle: 'demo-fill', interval: args.interval ?? FILL_INTERVAL, preisModus: 'plan', art: fill.art,
+    ...(args.archive ? { historisch: true, zeitGenauigkeit: args.interval, zeitFensterEnde: new Date((fill.zeit + 900) * 1000).toISOString() } : {}) })
   let status = t.status
 
   const eventTyp =
@@ -495,4 +501,51 @@ function trockenFolge(args: {
 function ergebnisAus(netto: number): 'gewinn' | 'verlust' | 'breakeven' {
   if (!Number.isFinite(netto) || Math.abs(netto) < 0.01) return 'breakeven'
   return netto > 0 ? 'gewinn' : 'verlust'
+}
+
+
+/** Explicit, one-off recovery from authentic stored archive bars. Live scheduling stays 5min. */
+export async function repairDemoArchive(userId: string, tradeId: number, until: number, trocken = true) {
+  return withTradeLock(userId, tradeId, async (t, depot) => {
+    if (normalizePortfolioKind(depot.kind) !== 'demo') throw new Error('Archiv-Reparatur ist nur für Demo erlaubt.')
+    if (!['geplant', 'aktiv'].includes(t.status)) return { skipped: true, gap: false, zeilen: [] }
+    if (!(t.positionSize != null && t.positionSize > 0)) throw new Error('Archiv-Reparatur erfordert eine bekannte Positionsgröße.')
+    const links = await db.select({ id: brokerOrder.id }).from(brokerOrder)
+      .where(and(eq(brokerOrder.userId, userId), eq(brokerOrder.linkedTradeId, tradeId))).limit(1)
+    if (links.length) throw new Error('Brokerbelege dürfen nicht historisch simuliert werden.')
+    const resolver = await createSymbolResolver(userId)
+    const symbol = resolver(t.ticker, t.stockId)
+    const events = await ladeEreignisse(userId, tradeId)
+    const targets = await ladeStufen(userId, tradeId)
+    const boundary = pruefBeginn(t, events).beginn
+    const since = Math.floor(boundary.getTime() / 900000) * 900
+    if (until <= since) return { skipped: true, gap: false, zeilen: [] }
+    const previous = await readStoredCandles(symbol, '15min', { before: since, limit: 1 })
+    const rows = await readStoredCandles(symbol, '15min', { since, before: until, ascending: true, limit: DEMO_BATCH_SIZE + 1 })
+    const archiveBoundary = new Date(since * 1000)
+    const candles = completedDemoCandles(rows, archiveBoundary, until * 1000, 900)
+    if (since * 1000 < boundary.getTime() && candles.length) {
+      const firstFills = demoFills({ trade: t, targets: effectiveTargets(t, targets), candle: candles[0],
+        vorherKurs: previous[0]?.close ?? null, openQuantity: t.status === 'aktiv' ? settlePosition(t, events).openQty : undefined })
+      if (firstFills.length) throw new Error('Teilweise bereits geprüfte Archivkerze berührt einen Auslöser; genaue Minutenhistorie erforderlich.')
+    }
+    const [instrument] = t.stockId == null ? [] : await db.select({ exchange: stock.resolvedExchange }).from(stock)
+      .where(and(eq(stock.id, t.stockId), eq(stock.userId, userId))).limit(1)
+    const coverage = demoCoveragePrefix(candles, previous[0] ?? null, archiveBoundary, t.market, instrument?.exchange, 900)
+    if (!candles.length || coverage.gap || coverage.usable.length > DEMO_BATCH_SIZE
+      || candles.at(-1)!.time + 900 !== until) {
+      throw new Error('Archiv belegt das fehlende Fenster nicht lückenlos; keine Buchung vorgenommen.')
+    }
+    const outcome = await verarbeiteTrade({ t, events, targetRows: targets, kerzen: candles,
+      vorherKurs: previous[0]?.close ?? null, trocken, archive: true, interval: '15min' })
+    if (!trocken) {
+      await db.update(trade).set({ demoCheckedAt: new Date(until * 1000), demoIssue: null })
+        .where(and(eq(trade.id, tradeId), eq(trade.userId, userId)))
+      if (!outcome.zeilen.length) await db.insert(tradeEvent).values({ tradeId, userId, type: 'notiz',
+        note: 'Fehlende Minutenhistorie anhand echter 15-Minuten-Archivkerzen geprüft: kein Auslöser im vollständigen Archivfenster.',
+        payload: JSON.stringify({ quelle: 'demo-history-repair', interval: '15min', coverageFrom: new Date(since * 1000).toISOString(), coverageUntil: new Date(until * 1000).toISOString() }),
+      })
+    }
+    return { ...outcome, skipped: false, gap: false }
+  })
 }

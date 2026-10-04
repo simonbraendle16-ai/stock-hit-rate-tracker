@@ -71,3 +71,32 @@ describe('Kurslücken', () => {
     expect(demoCoveragePrefix([candle(date('11:35'))], candle(date('11:00')), date('11:32'), 'aktien').gap).toBe(false)
   })
 })
+
+
+describe('Bestätigte Börsenöffnungszeiten', () => {
+  it('wartet bei US-Aktien vor Handelsbeginn auf 09:30 New York', () => {
+    const boundary = new Date('2026-08-07T09:06:36Z')
+    const opening = candle(new Date('2026-08-07T13:30:00Z'))
+    expect(demoCoveragePrefix([opening], null, boundary, 'aktien', 'NASDAQ').gap).toBe(false)
+    expect(demoCoveragePrefix([opening], null, boundary, 'aktien').gap).toBe(true)
+  })
+  it('überspringt keine fehlende Kerze nach der Börsenöffnung', () => {
+    const opening = new Date('2026-08-07T13:30:00Z')
+    expect(demoCoveragePrefix([candle(new Date('2026-08-07T13:35:00Z'))], null, opening, 'aktien', 'NASDAQ').gap).toBe(true)
+  })
+  it('berücksichtigt Sommer- und Winterzeit', () => {
+    const boundary = new Date('2026-12-01T13:00:00Z')
+    expect(demoCoveragePrefix([candle(new Date('2026-12-01T14:30:00Z'))], null, boundary, 'aktien', 'NYSE').gap).toBe(false)
+  })
+  it('erlaubt die tägliche COMEX-Wartung, aber keine Lücke während des Handels', () => {
+    const start = new Date('2026-08-05T21:00:00Z')
+    expect(demoCoveragePrefix([candle(new Date('2026-08-05T22:00:00Z'))], null, start, 'rohstoffe', 'CMX').gap).toBe(false)
+    expect(demoCoveragePrefix([candle(new Date('2026-08-05T22:05:00Z'))], null, start, 'rohstoffe', 'CMX').gap).toBe(true)
+  })
+})
+
+
+it('nimmt bei Krypto auch mit falscher Börsenmetadaten keine täglichen Schließzeiten an', () => {
+  const boundary = new Date('2026-08-07T09:05:00Z')
+  expect(demoCoveragePrefix([candle(new Date('2026-08-07T13:30:00Z'))], null, boundary, 'krypto', 'NASDAQ').gap).toBe(true)
+})

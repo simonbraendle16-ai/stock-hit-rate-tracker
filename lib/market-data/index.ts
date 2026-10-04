@@ -20,8 +20,8 @@ function normalizePair(symbol: string): string {
 
 /** Forex/Rohstoff-Paare laufen über Twelve Data (Gratis-Tier), nur normalisiert. */
 const pairProvider: MarketDataProvider = {
-  getCandles: (symbol, interval) =>
-    twelveDataProvider.getCandles(normalizePair(symbol), interval),
+  getCandles: (symbol, interval, since) =>
+    twelveDataProvider.getCandles(normalizePair(symbol), interval, since),
 }
 
 /** Ein Anbieter über seinen Namen — für Symbole mit hinterlegter Auflösung. */
@@ -84,6 +84,14 @@ export function resolveProvider(market: Market): MarketDataProvider {
 
   return {
     async getCandles(symbol, interval, since) {
+      // Yahoo cannot return older minute history. Request the actual beginning
+      // from an archive-capable source instead of accepting a clipped window.
+      if (interval === '5min' && since != null && since < Date.now() / 1000 - 59 * 86400) {
+        if (market === 'krypto') return binanceProvider.getCandles(symbol, interval, since)
+        if (['aktien', 'etf'].includes(market) && /^[A-Z][A-Z0-9-]*$/.test(symbol)) {
+          return twelveDataProvider.getCandles(symbol, interval, since)
+        }
+      }
       let lastError: unknown
       for (let i = 0; i < chain.length; i++) {
         try {
