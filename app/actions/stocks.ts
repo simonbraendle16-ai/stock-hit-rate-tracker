@@ -22,6 +22,15 @@ async function getUserId() {
 }
 
 type StockRow = typeof stock.$inferSelect
+// Form lookups need no watchlist-review columns. Preserve every contract override.
+const contractColumns = {
+  ticker: stock.ticker, market: stock.market,
+  contractTickSize: stock.contractTickSize, contractTickValue: stock.contractTickValue,
+  contractSize: stock.contractSize, contractCurrency: stock.contractCurrency,
+  contractMarginModel: stock.contractMarginModel, contractInitialMargin: stock.contractInitialMargin,
+  contractMaintenanceMargin: stock.contractMaintenanceMargin,
+  contractMaintenanceRate: stock.contractMaintenanceRate, contractsDisabled: stock.contractsDisabled,
+}
 
 /** Postgres „undefined column“ (42703) — Migration 0009, 0019 oder 0036 fehlt noch. */
 function isMissingColumn(err: unknown): boolean {
@@ -726,7 +735,7 @@ export async function getContractSpecFor(args: {
   const userId = await getUserId()
   if (args.stockId != null) {
     const [row] = await db
-      .select()
+      .select(contractColumns)
       .from(stock)
       .where(and(eq(stock.id, args.stockId), eq(stock.userId, userId)))
     if (row) return specFromStock(row)
@@ -734,7 +743,7 @@ export async function getContractSpecFor(args: {
   const ticker = args.ticker?.trim()
   if (!ticker) return null
   const [row] = await db
-    .select()
+    .select(contractColumns)
     .from(stock)
     .where(and(eq(stock.userId, userId), eq(stock.ticker, ticker.toUpperCase())))
   if (row) return specFromStock(row)
@@ -744,10 +753,21 @@ export async function getContractSpecFor(args: {
 /** Owner-filtered currency for the form; the create service checks again. */
 export async function getTradeInstrumentCurrencyFor(ticker: string, market: string): Promise<string | null> {
   const userId = await getUserId()
-  const rows = await db.select().from(stock).where(eq(stock.userId, userId))
+  const rows = await db.select({ id: stock.id, ticker: stock.ticker, providerSymbol: stock.providerSymbol,
+    resolutionStatus: stock.resolutionStatus, resolvedCurrency: stock.resolvedCurrency })
+    .from(stock).where(eq(stock.userId, userId))
   const exact = rows.find(s => s.ticker === ticker.trim().toUpperCase())
   const { findInstrumentFor } = await import('@/lib/link-trades')
   const id = exact?.id ?? (await findInstrumentFor(ticker, market as Market, rows)).stockId
   const row = rows.find(s => s.id === id)
   return row?.resolutionStatus === 'ok' ? row.resolvedCurrency : null
+}
+
+/** Resolve the contract before optional provider work; a known contract needs no network lookup. */
+export async function getTradeFormInstrumentFor(ticker: string, market: string) {
+  const { resolveTradeFormInstrument } = await import('@/lib/trade-form-instrument')
+  return resolveTradeFormInstrument(
+    () => getContractSpecFor({ ticker, market }),
+    () => getTradeInstrumentCurrencyFor(ticker, market),
+  )
 }

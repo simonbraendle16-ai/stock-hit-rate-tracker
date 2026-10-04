@@ -53,7 +53,7 @@ import {
   projectTakeProfit,
   ticksBetween,
 } from '@/lib/trade-math'
-import { getContractSpecFor, getTradeInstrumentCurrencyFor } from '@/app/actions/stocks'
+import { getTradeFormInstrumentFor } from '@/app/actions/stocks'
 import { contractTradeFelder } from '@/lib/contract-trade'
 import type { ContractSpec } from '@/lib/contract-specs'
 import { currencySymbol, formatMoney } from '@/lib/format'
@@ -115,6 +115,8 @@ export function TradeForm({
   const [setupTags, setSetupTags] = useState<string[]>([])
   const [questionsOpen, setQuestionsOpen] = useState(false)
   const [spec, setSpec] = useState<ContractSpec | null>(null)
+  const [instrumentStatus, setInstrumentStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  const [instrumentRetry, setInstrumentRetry] = useState(0)
   const [instrumentCurrency, setInstrumentCurrency] = useState<{ ticker: string; market: string; currency: string | null } | null>(null)
 
   // Das DEPOT ist die Wahl — nicht mehr die Handelsart.
@@ -218,7 +220,7 @@ export function TradeForm({
     }
   }, [currency, form.quoteCurrency, form.ticker, form.market, instrumentCurrency, depot?.fxRates, depot?.fxRatesAt])
   const money = useMemo(() => {
-    if (!conversion.value || spec) return null
+    if (instrumentStatus !== 'ready' || !conversion.value || spec) return null
     const quoteToAccountRate = conversion.value.quoteToAccountRate
     const invested = parseFloat(form.investedAmount)
     const entry = parseFloat(form.entryPrice)
@@ -253,6 +255,7 @@ export function TradeForm({
     }
   }, [
     spec,
+    instrumentStatus,
     conversion,
     tradedWithMoney,
     form.investedAmount,
@@ -282,25 +285,38 @@ export function TradeForm({
     const ticker = form.ticker.trim()
     if (!ticker) {
       setSpec(null)
+      setInstrumentCurrency(null)
+      setInstrumentStatus('idle')
       return
     }
+    setSpec(null)
+    setInstrumentCurrency(null)
+    setInstrumentStatus('loading')
     let abgebrochen = false
+    const deadline = setTimeout(() => {
+      if (!abgebrochen) { abgebrochen = true; setInstrumentStatus('error') }
+    }, 20000)
     const timer = setTimeout(() => {
-      void Promise.all([getContractSpecFor({ ticker, market: form.market }), getTradeInstrumentCurrencyFor(ticker, form.market)])
-        .then(([s, currency]) => {
-          if (!abgebrochen) { setSpec(s); setInstrumentCurrency({ ticker: ticker.toUpperCase(), market: form.market, currency: s?.currency ?? currency }) }
+      void getTradeFormInstrumentFor(ticker, form.market)
+        .then(({ spec: s, currency }) => {
+          if (!abgebrochen) {
+            clearTimeout(deadline)
+            setSpec(s)
+            setInstrumentCurrency({ ticker: ticker.toUpperCase(), market: form.market, currency })
+            setInstrumentStatus('ready')
+          }
         })
-        // Fehlschlag heisst „keine Spezifikation" — dann bemisst das Formular
-        // wie bisher über den Kapitaleinsatz. Nie eine geraten.
         .catch(() => {
-          if (!abgebrochen) setSpec(null)
+          clearTimeout(deadline)
+          if (!abgebrochen) { setSpec(null); setInstrumentStatus('error') }
         })
     }, 400)
     return () => {
       abgebrochen = true
       clearTimeout(timer)
+      clearTimeout(deadline)
     }
-  }, [form.ticker, form.market])
+  }, [form.ticker, form.market, instrumentRetry])
 
   /** Live-Werte des Kontrakt-Trades: Risiko, Einschuss, Positionsgröße. */
   const kontrakt = useMemo(() => {
@@ -351,6 +367,7 @@ export function TradeForm({
   // gar kein Plan.
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    if (instrumentStatus !== 'ready') { toast.error('Bitte warte auf die Instrumentprüfung oder wiederhole den Abruf.'); return }
     if (!conversion.value) { toast.error(conversion.error ?? 'Währungsprüfung fehlt.'); return }
     // Das Depot zuerst: Ohne es wäre nicht bestimmt, ob echtes Geld im Spiel ist.
     // Der Server lehnt es ebenfalls ab (`resolveZielDepot`) — hier steht die
@@ -387,6 +404,7 @@ export function TradeForm({
 
   // Schritt 2: Trade anlegen — mit den Antworten des vollen Wegs oder ohne.
   const submitTrade = async (answers: PreTradeAnswer[]) => {
+    if (instrumentStatus !== 'ready') { toast.error('Instrumentprüfung noch nicht abgeschlossen.'); return }
     setLoading(true)
     try {
       const payload: TradeInput = {
@@ -731,6 +749,13 @@ export function TradeForm({
               Ticks × Tick-Wert × Kontrakte, unabhängig davon, wie viel Kapital
               jemand einsetzt. Erscheint nur, wenn das Instrument eine gültige
               Spezifikation hat; sonst bleibt alles beim bisherigen Weg. */}
+          {instrumentStatus === 'loading' && <p role="status" className="text-sm text-muted-foreground">Instrument und Kontraktdaten werden geprüft …</p>}
+          {instrumentStatus === 'error' && (
+            <div role="alert" className="space-y-2 text-sm text-destructive">
+              <p>Instrumentdaten konnten nicht geladen werden. Die Berechnung und Speicherung bleiben bis zur Prüfung offen.</p>
+              <Button type="button" variant="outline" onClick={() => setInstrumentRetry(n => n + 1)}>Erneut prüfen</Button>
+            </div>
+          )}
           {spec && (
             <div className="space-y-3">
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -1100,7 +1125,7 @@ export function TradeForm({
       <div className="flex flex-col gap-3 pt-1 sm:flex-row">
         <Button
           type="submit"
-          disabled={loading}
+          disabled={loading || instrumentStatus !== 'ready'}
           className="btn-teal-glow h-11 flex-1 font-mono text-sm font-bold tracking-wider"
         >
           {loading
