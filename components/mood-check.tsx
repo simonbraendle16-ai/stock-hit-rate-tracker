@@ -34,7 +34,7 @@ export type MoodDraft = {
 export const emptyMoodDraft = (): MoodDraft => ({ score: null, tags: [], note: '' })
 
 /** Fertig zum Absenden, sobald ein Skalenwert gewählt ist — Tags sind freiwillig. */
-export const isMoodDraftComplete = (d: MoodDraft): boolean => d.score !== null
+export const isMoodDraftComplete = (d: MoodDraft): boolean => d.score !== null || !!d.note.trim() || d.tags.length > 0
 
 // Tailwind braucht statische Klassennamen — deshalb feste Maps statt Interpolation.
 const toneSelected: Record<MoodTone, string> = {
@@ -50,8 +50,8 @@ const tagSelected: Record<'belastend' | 'tragend', string> = {
 
 const phaseText = {
   entry: {
-    title: 'Wie ruhig bist du gerade?',
-    lead: 'Vor dem Einstieg — die Momentaufnahme wird mit dem Trade gespeichert und später gegen dein Ergebnis gerechnet.',
+    title: 'Wie fühlst du dich gerade?',
+    lead: 'Deine freie Antwort wird gespeichert. Skala und Tags sind freiwillig; Gefühle allein sind kein Regelverstoß.',
     tagLead: 'Was ist gerade da? (optional, Mehrfachauswahl)',
     notePlaceholder: 'Was geht dir kurz vor dem Einstieg durch den Kopf …',
   },
@@ -158,7 +158,7 @@ export function MoodCheck({
       </Field>
 
       {/* Notiz */}
-      <Field label="Notiz (optional)">
+      <Field label="Deine Antwort (Freitext reicht)">
         <Textarea
           value={value.note}
           disabled={disabled}
@@ -181,13 +181,15 @@ export function MoodBadge({
   score,
   tags,
   phase,
+  note,
 }: {
+  note?: string | null
   score: number | null
   tags: string | null
   phase: 'entry' | 'exit'
 }) {
   const value = normalizeMoodScore(score)
-  if (value === null) return null
+  if (value === null) return note ? <span className="text-sm text-muted-foreground">{phase === 'entry' ? 'Einstieg' : 'Ausstieg'}: {note}</span> : null
 
   const step = MOOD_SCALE[value - 1]
   const keys = parseMoodTags(tags)

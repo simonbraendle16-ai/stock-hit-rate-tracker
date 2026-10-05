@@ -1,7 +1,8 @@
+import { normalizePlanContext, planGaps } from '@/lib/plan-context'
 import { db } from '@/lib/db'
 import { priceAlert, trade, tradeEvent, tradeTarget, assessment, stock } from '@/lib/db/schema'
 import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm'
-import { PRE_TRADE_QUESTIONS, validatePreTradeAnswers, type PreTradeAnswer } from '@/lib/pre-trade-questions'
+import { validatePreTradeAnswers, type PreTradeAnswer } from '@/lib/pre-trade-questions'
 import {
   normalizeMoodCheck,
   serializeMoodTags,
@@ -360,7 +361,7 @@ export async function createTradeForUser(
   userId: string,
   input: TradeInput,
   apiRequest?: { key: string; hash: string; source: { kind: string; capturedAt: string } },
-): Promise<{ id: number; deckungsHinweis: string | null }> {
+): Promise<{ id: number; deckungsHinweis: string | null; planReady: boolean }> {
   const ticker = input.ticker.trim().toUpperCase()
   if (!ticker) throw new Error('Ticker ist erforderlich.')
   if (!input.entryPrice || !input.stopLoss) {
@@ -474,7 +475,7 @@ export async function createTradeForUser(
   // Erfassungsweg zuerst: er entscheidet, ob das Gate überhaupt gilt.
   const tradeKind = normalizeTradeKind(input.tradeKind)
 
-  // Gate: nur wenn ALLE Douglas-Fragen mit 'ja' beantwortet sind.
+  // Konkrete Planangaben prüfen; historische Vorabantworten bleiben unverändert.
   //
   // Beim schnellen Trade bleibt das Feld bewusst `false` — es wird nicht
   // stillschweigend auf `true` gesetzt, denn die Fragen wurden ja nicht
@@ -482,9 +483,7 @@ export async function createTradeForUser(
   // `requiresPreTradeGate(tradeKind)` beim Aktivieren. So bleibt in den Daten
   // sichtbar, was tatsächlich passiert ist.
   const answers = validatePreTradeAnswers(input.preTradeAnswers)
-  const preTradeAnswered =
-    answers.length === PRE_TRADE_QUESTIONS.length &&
-    answers.every((a) => a.answer === 'ja')
+  const planContext = normalizePlanContext(input.planContext)
 
   // Live-CRV — bei Teilzielen der nach Anteilen gewichtete Wert (siehe
   // `resolveTargetPlan`), sonst wie bisher das Verhältnis zum einen Ziel.
@@ -571,6 +570,7 @@ export async function createTradeForUser(
       ? computeShares(investedAmount, input.entryPrice, leverage, moneyCurrency.quoteToAccountRate)
       : (input.positionSize ?? null)
   const takeProfitPct = zielPlan.takeProfitPct
+  const preTradeAnswered = planGaps({ ...input, ...moneyCurrency, planContext, positionSize }).length === 0
 
   // Geplante Gebühren: Vorbelegung aus dem DEPOT (verschiedene Broker kosten
   // verschieden), im Formular überschreibbar. Bei Demo fallen keine an.
@@ -620,6 +620,7 @@ export async function createTradeForUser(
         elliottWaveCount: input.elliottWaveCount?.trim() || null,
         waveDegree: input.waveDegree?.trim() || null,
         elliottInvalidation: input.elliottInvalidation ?? null,
+        planContext,
         preTradeAnswered,
         preTradeAnswers: answers.length ? JSON.stringify(answers) : null,
         // Abgeleitet aus dem Depot, siehe oben. Einer von genau zwei Orten, an
@@ -640,5 +641,5 @@ export async function createTradeForUser(
   // geprueft werden konnte (Fremdwaehrung ohne hinterlegten Kurs). Der Trade
   // ist angelegt — aber das Formular sagt es, statt ihn wie einen geprüften
   // aussehen zu lassen.
-  return { id: row.id, deckungsHinweis: deckungsErgebnis?.hinweis ?? null }
+  return { id: row.id, planReady: preTradeAnswered, deckungsHinweis: deckungsErgebnis?.hinweis ?? null }
 }

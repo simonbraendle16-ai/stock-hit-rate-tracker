@@ -259,6 +259,16 @@ describe('hasPartialSale', () => {
 })
 
 describe('deriveTimeline — mit echten Events', () => {
+  it('zeigt offene Managementbewertungen ohne Regelbruch und erhält historische Markierungen', () => {
+    const items = deriveTimeline(makeTrade(), [
+      ev({ type: 'stop_verschoben', payload: JSON.stringify({ violation: null }), note: 'Planbewertung offen' }),
+      ev({ type: 'invalidation_ignoriert', payload: JSON.stringify({ violation: false }) }),
+      ev({ type: 'invalidation_ignoriert', payload: JSON.stringify({ violation: null }) }),
+      ev({ type: 'invalidation_ignoriert', payload: null }),
+    ])
+    expect(items.map(i => i.isViolation)).toEqual([false, false, false, true])
+    expect(items[0].note).toBe('Planbewertung offen')
+  })
   it('bildet Events chronologisch ab und markiert Regelbrüche aus dem Payload', () => {
     const t = makeTrade()
     const items = deriveTimeline(t, [

@@ -8,11 +8,12 @@ import * as schema from './db/schema'
 import { NextRequest } from 'next/server'
 import { PRE_TRADE_QUESTIONS } from './pre-trade-questions'
 import { hashToken } from './assistant-api'
+import { PATCH as patchPlan, GET as getPlan } from '../app/api/assistant/v1/trades/[id]/route'
 import { POST } from '../app/api/assistant/v1/trades/route'
 import { PATCH as declareCurrency } from '../app/api/assistant/v1/portfolios/[id]/route'
 import { assignPortfolioCurrency, updatePortfolioFxRates, moveTrade } from '../app/actions/portfolios'
 import { changeCurrency, updateSettings } from '../app/actions/settings'
-import { updateTradePlan } from '../app/actions/trades'
+import { activateTrade, updateTradePlan } from '../app/actions/trades'
 import { loadScopeContext, schreibeScope } from './portfolio-context'
 
 const state = vi.hoisted(() => ({ db: null as any }))
@@ -27,7 +28,9 @@ let pg: PGlite
 let demo: number, real: number, foreign: number, original: number
 let token: string
 const answers = PRE_TRADE_QUESTIONS.map(q => ({ ...q, answer: 'ja', note: 'Isolierte Testantwort' }))
-const body = () => ({ portfolioId: demo, ticker: 'META', market: 'aktien', tradeKind: 'langfristig',
+const context = { version: 1 as const, expectedMove: 'Uncertain corrective move lower', entryTrigger: 'At the confirmed zone',
+  stopManagement: 'No trailing before the next confirmed swing', targetManagement: 'Full exit at target; no partials', riskConfirmed: true }
+const body = () => ({ planContext: context, elliottInvalidation: 769, portfolioId: demo, ticker: 'META', market: 'aktien', tradeKind: 'langfristig',
   direction: 'short', entryPrice: 754.43, stopLoss: 769, takeProfit: 687.15,
   investedAmount: 1056.2, leverage: 5, quoteCurrency: 'USD', preTradeAnswers: answers,
   source: { kind: 'user_statement', capturedAt: new Date().toISOString(), confirmedByUser: true } })
@@ -51,6 +54,11 @@ beforeAll(async () => {
   const migration = readFileSync('drizzle/0044_money_currency.sql', 'utf8')
   await pg.exec(migration)
   await pg.exec(migration) // idempotent execution, actual SQL engine
+  await pg.exec(readFileSync('drizzle/0040_assistant_trade_requests.sql', 'utf8'))
+  // Exercise the additive context migration against an actual previous shape.
+  await pg.exec('ALTER TABLE trade DROP COLUMN "planContext"')
+  await pg.exec(readFileSync('drizzle/0046_plan_context.sql', 'utf8'))
+  await pg.exec(readFileSync('drizzle/0046_plan_context.sql', 'utf8'))
   const depots = await state.db.select().from(schema.portfolio)
   demo = depots.find((p: any) => p.name === 'Demo').id
   real = depots.find((p: any) => p.name === 'Main').id
@@ -67,6 +75,50 @@ beforeAll(async () => {
 afterAll(async () => { await pg?.close() })
 
 describe('isolated PostgreSQL currency integration', () => {
+  it('stores an incomplete draft, rejects activation, and supplements it with a versioned API patch', async () => {
+    const response = await POST(request({ ...body(), planContext: null }, '20000000-0000-4000-8000-000000000001'))
+    expect(response.status).toBe(201)
+    const draft = await response.json()
+    expect(draft.preTradeAnswered).toBe(false)
+    await expect(activateTrade(draft.id, { score: null, tags: [], note: 'Afraid but following plan' }, { createPlanAlerts: false })).rejects.toThrow('Plan noch unvollständig')
+    const patch = (version: number, bearer = token) => patchPlan(new NextRequest('http://localhost/api/assistant/v1/trades/' + draft.id, {
+      method: 'PATCH', headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/json', 'x-expected-version': String(version) },
+      body: JSON.stringify({ planContext: context, source: body().source }),
+    }), { params: Promise.resolve({ id: String(draft.id) }) })
+    expect((await patch(draft.version)).status).toBe(200)
+    expect((await patch(draft.version)).status).toBe(409)
+    const get = await getPlan(new NextRequest('http://localhost/api/assistant/v1/trades/' + draft.id, { headers: { authorization: `Bearer ${token}` } }), { params: Promise.resolve({ id: String(draft.id) }) })
+    const reread = await get.json()
+    expect(reread.preTradeAnswered).toBe(true)
+    expect(reread.events).toHaveLength(1)
+    expect(JSON.parse(reread.events[0].payload)).toMatchObject({ before: { planContext: null }, after: { planContext: context } })
+    const statuses = await Promise.all([patch(reread.version), patch(reread.version)])
+    expect(statuses.map(r => r.status).sort()).toEqual([200, 409])
+  })
+  it('activates after a recent loss without adding revenge and stores free feelings and original plan', async () => {
+    await state.db.insert(schema.trade).values({ userId: 'currency-test', portfolioId: demo, ticker: 'LOSS', entryPrice: 100, stopLoss: 90, takeProfit: 120,
+      direction: 'long', status: 'abgeschlossen', result: 'verlust', closedAt: new Date(Date.now() - 5 * 60000),
+      tradedWithMoney: false, actualExitPrice: 90, positionSize: 1, feeEntry: 0, feeExit: 0,
+      accountCurrency: 'USD', quoteCurrency: 'USD', quoteToAccountRate: 1 })
+    const response = await POST(request(body(), '20000000-0000-4000-8000-000000000002'))
+    const saved = await response.json()
+    await state.db.insert(schema.tradeTarget).values({ tradeId: saved.id, userId: 'currency-test',
+      sortOrder: 0, price: 687.15, sharePct: 100 })
+    const result = await activateTrade(saved.id, { score: null, tags: [], note: 'Afraid but following plan' }, { createPlanAlerts: false })
+    expect(result.revengeWarning).toBe(true)
+    const active = await getTrade(saved.id)
+    expect(active).toMatchObject({ status: 'aktiv', moodEntry: null, moodEntryTags: null, moodEntryNote: 'Afraid but following plan', ruleViolations: '[]' })
+    await updateTradePlan(saved.id, { stopLoss: 765 }, false, { assessment: 'plan', reason: 'Confirmed swing trailing before partial sale' })
+    expect((await getTrade(saved.id)).ruleViolations).toBe('[]')
+    await updateTradePlan(saved.id, { stopLoss: 764 }, false, { assessment: 'unknown', reason: 'Plan condition unclear' })
+    expect((await getTrade(saved.id)).ruleViolations).toBe('[]')
+    await updateTradePlan(saved.id, { stopLoss: 770 }, false, { assessment: 'violation', reason: 'User confirms risk widening against plan' })
+    expect((await getTrade(saved.id)).ruleViolations).toBe('["stop_moved"]')
+    const events = await state.db.select().from(schema.tradeEvent).where(eq(schema.tradeEvent.tradeId, saved.id)).orderBy(schema.tradeEvent.id)
+    expect(JSON.parse(events[0].payload).planningSnapshot.stopLoss).toBe(769)
+    expect(JSON.parse(events[0].payload).planningSnapshot.targets).toEqual([{ price: 687.15, sharePct: 100, note: null }])
+    expect(events.filter((e: any) => e.type === 'stop_verschoben').map((e: any) => JSON.parse(e.payload).violation)).toEqual([false, null, true])
+  })
   it('declares account currencies through the API without changing an existing declaration', async () => {
     const call = (id: number, currency: string) => declareCurrency(new NextRequest('http://localhost/api/assistant/v1/portfolios/' + id, {
       method: 'PATCH', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ currency }),

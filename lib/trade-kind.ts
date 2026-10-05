@@ -1,13 +1,13 @@
 // Zwei Erfassungswege für einen Trade — die gemeinsame Quelle für Client,
 // Server-Gate und Auswertung.
 //
-// **Langfristig** ist der volle Weg: die neun Douglas-Fragen als Gate, Elliott,
+// **Langfristig** ist der volle Weg: die konkrete Planprüfung, Elliott,
 // Setup, Begründung, Emotions-Check-in beim Ein- und Ausstieg. So war die App
 // bis hierher gebaut.
 //
 // **Schnell** ist der kurze Weg für Trades, die keine halbe Stunde Vorbereitung
 // vertragen (Scalp, Intraday-Reaktion). Er verlangt nur das Nötigste — Ticker,
-// Richtung, Einstieg und **Stop** — und überspringt die neun Fragen bewusst.
+// Richtung, Einstieg und **Stop** — und überspringt die ausführliche Planprüfung bewusst.
 //
 // Der Stop bleibt auch hier Pflicht: „Risiko ist vor dem Einstieg definiert" ist
 // nicht die Formalie, die einen schnellen Trade langsam macht, sondern der Kern
@@ -38,9 +38,9 @@ export const TRADE_KIND_BADGE: Record<TradeKind, string> = {
 
 export const TRADE_KIND_HINT: Record<TradeKind, string> = {
   langfristig:
-    'Der volle Weg: neun Douglas-Fragen als Gate, Elliott-Zählung, Setup und Begründung.',
+    'Der volle Weg: konkrete Planprüfung, Elliott-Zählung, Setup und Begründung.',
   schnell:
-    'Nur das Nötigste: Ticker, Richtung, Einstieg und Stop. Die neun Fragen entfallen bewusst.',
+    'Nur das Nötigste: Ticker, Richtung, Einstieg und Stop. Die ausführliche Planprüfung entfällt bewusst.',
 }
 
 /**

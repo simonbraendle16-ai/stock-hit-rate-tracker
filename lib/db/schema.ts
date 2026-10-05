@@ -1,3 +1,5 @@
+import type { PlanContext } from '../plan-context'
+
 import {
   pgTable,
   text,
@@ -400,8 +402,9 @@ export const trade = pgTable('trade', {
   elliottInvalidation: doublePrecision('elliottInvalidation'), // "Analyse ungültig"-Preis
 
   // --- Douglas discipline ---
-  preTradeAnswered: boolean('preTradeAnswered').notNull().default(false), // 4-Fragen-Gate (= alle 4 = ja)
-  // JSON array der 4 Antworten: [{ key, question, answer: 'ja'|'nein', note }]
+  planContext: jsonb('planContext').$type<PlanContext>(),
+  preTradeAnswered: boolean('preTradeAnswered').notNull().default(false), // cached completeness; activation rechecks concrete plan
+  // Historical answers remain unchanged; new plans use planContext.
   preTradeAnswers: text('preTradeAnswers'),
   // Mit echtem Geld gehandelt vs. Demo/Papertrade.
   //

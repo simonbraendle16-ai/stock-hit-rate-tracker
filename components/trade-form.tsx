@@ -24,11 +24,9 @@ import {
 } from '@/components/target-stages'
 import { PaperBadge } from '@/components/paper-badge'
 import type { PortfolioOption } from '@/lib/portfolio-scope'
-import {
-  PreTradeQuestionsDialog,
-  PRE_TRADE_QUESTIONS,
-  type PreTradeAnswer,
-} from '@/components/pre-trade-questions-dialog'
+import { emptyPlanContext } from '@/lib/plan-context'
+import { PlanContextFields } from '@/components/plan-context-fields'
+import type { PreTradeAnswer } from '@/lib/pre-trade-questions'
 import {
   AlertTriangle,
   ArrowDownRight,
@@ -113,7 +111,7 @@ export function TradeForm({
   const router = useRouter()
   const [loading, setLoading] = useState(false)
   const [setupTags, setSetupTags] = useState<string[]>([])
-  const [questionsOpen, setQuestionsOpen] = useState(false)
+  const [planContext, setPlanContext] = useState(emptyPlanContext)
   const [spec, setSpec] = useState<ContractSpec | null>(null)
   const [instrumentStatus, setInstrumentStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [instrumentRetry, setInstrumentRetry] = useState(0)
@@ -166,8 +164,10 @@ export function TradeForm({
     notes: '',
   })
 
-  const set = (k: keyof typeof form, v: string) =>
+  const set = (k: keyof typeof form, v: string) => {
     setForm((p) => ({ ...p, [k]: v }))
+    setPlanContext(p => ({ ...p, riskConfirmed: false }))
+  }
 
   // Teilziele — optional und IMMER vor dem Kursziel. Das Kursziel selbst steht
   // oben im Formular, ist Pflicht und bildet die äußerste Stufe; der nicht
@@ -398,8 +398,7 @@ export function TradeForm({
       toast.error(zielCheck.error)
       return
     }
-    if (quick) void submitTrade([])
-    else setQuestionsOpen(true)
+    void submitTrade([])
   }
 
   // Schritt 2: Trade anlegen — mit den Antworten des vollen Wegs oder ohne.
@@ -447,11 +446,10 @@ export function TradeForm({
         // ab (`createTrade`). Der Browser kann sie damit nicht mehr behaupten.
         portfolioId,
         preTradeAnswers: answers,
+        planContext: quick ? null : planContext,
         tradeKind,
       }
-      const allYes = answers.every((a) => a.answer === 'ja')
-      const { id, deckungsHinweis } = await createTrade(payload)
-      setQuestionsOpen(false)
+      const { id, deckungsHinweis, planReady } = await createTrade(payload)
       // Der Trade ist angelegt, aber die Deckung konnte NICHT geprüft werden
       // (Fremdwährung ohne hinterlegten Umrechnungskurs). Das gehört gesagt:
       // Sonst sieht ein ungeprüfter Trade aus wie einer, der die Prüfung
@@ -463,9 +461,9 @@ export function TradeForm({
       toast.success(
         quick
           ? 'Schneller Trade angelegt — sofort aktivierbar.'
-          : allYes
+          : planReady
             ? 'Trade geplant — bereit zur Aktivierung.'
-            : 'Entwurf gespeichert. Bei einem „Nein" bleibt der Trade nicht aktivierbar.',
+            : 'Entwurf gespeichert. Ergänze die fehlenden Planangaben vor der Aktivierung.',
       )
       router.push(`/trades/${id}`)
       router.refresh()
@@ -509,29 +507,9 @@ export function TradeForm({
         )}
       </FormSection>
 
-      {/* Douglas-Fragen-Gate — beim Speichern als eigene Fenster abgefragt */}
-      {!quick && (
-        <FormSection
-          icon={Shield}
-          title="Die Fragen von Douglas"
-          hint="Entscheide den Trade, bevor du ihn eingehst."
-        >
-          <ol className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {PRE_TRADE_QUESTIONS.map((q, i) => (
-              <li key={q.key} className="flex items-center gap-2">
-                <span className="eyebrow flex size-5 shrink-0 items-center justify-center rounded-full border border-border">
-                  {i + 1}
-                </span>
-                <span className="font-mono text-xs text-muted-foreground">{q.question}</span>
-              </li>
-            ))}
-          </ol>
-          <p className="note">
-            Beim Speichern beantwortest du jede Frage einzeln mit Ja/Nein. Nur wenn alle mit
-            „Ja" beantwortet sind, ist der Trade aktivierbar — sonst bleibt er ein Entwurf.
-          </p>
-        </FormSection>
-      )}
+      {!quick && <FormSection icon={Shield} title="Konkrete Planprüfung" hint="Vorhandene Angaben übernehmen; nur Lücken ergänzen.">
+        <PlanContextFields value={planContext} onChange={setPlanContext} disabled={loading} />
+      </FormSection>}
 
       {/* Der Plan selbst: Handelsart, Instrument, Richtung, Kurse */}
       <FormSection
@@ -567,7 +545,7 @@ export function TradeForm({
                 active={portfolioId === p.id}
                 tone={p.kind === 'demo' ? 'warning' : 'positive'}
                 icon={p.kind === 'demo' ? FlaskConical : Banknote}
-                onClick={() => setPortfolioId(p.id)}
+                onClick={() => { setPortfolioId(p.id); setPlanContext(c => ({ ...c, riskConfirmed: false })) }}
               >
                 {p.name}
               </ChoiceButton>
@@ -690,7 +668,7 @@ export function TradeForm({
           direction={form.direction}
           kursziel={parseFloat(form.takeProfit)}
           drafts={targets}
-          onChange={setTargets}
+          onChange={next => { setTargets(next); setPlanContext(c => ({ ...c, riskConfirmed: false })) }}
           disabled={loading}
         />
 
@@ -1010,7 +988,7 @@ export function TradeForm({
               ))}
             </select>
           </Field>
-          <Field label="Wellenzählung (Frage 1)">
+          <Field label="Wellenzählung (optional ergänzend)">
             <Input
               value={form.elliottWaveCount}
               onChange={(e) => set('elliottWaveCount', e.target.value)}
@@ -1018,7 +996,7 @@ export function TradeForm({
               className={inputCls}
             />
           </Field>
-          <Field label="Invalidation-Level (Frage 4)" tone="warning">
+          <Field label="Invalidierung des erwarteten Verlaufs" tone="warning">
             <Input
               type="number"
               step="any"
@@ -1132,7 +1110,7 @@ export function TradeForm({
             ? 'WIRD GESPEICHERT…'
             : quick
               ? 'SCHNELLEN TRADE ANLEGEN'
-              : 'WEITER ZUR FINALEN ENTSCHEIDUNG'}
+              : 'PLAN SPEICHERN'}
         </Button>
         <Button
           type="button"
@@ -1145,12 +1123,6 @@ export function TradeForm({
       </div>
     </form>
 
-      <PreTradeQuestionsDialog
-        open={questionsOpen}
-        onOpenChange={setQuestionsOpen}
-        onComplete={submitTrade}
-        submitting={loading}
-      />
     </>
   )
 }

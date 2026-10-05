@@ -1,6 +1,9 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { emptyPlanContext } from '@/lib/plan-context'
+import { PlanContextFields } from '@/components/plan-context-fields'
+import type { ManagementReview } from '@/lib/management-review'
 import type { TradeRow } from '@/lib/trade-stats'
 import { currencySymbol } from '@/lib/format'
 import { listTradeTargets, updateTradePlan } from '@/app/actions/trades'
@@ -24,7 +27,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { AlertTriangle } from 'lucide-react'
 import { toast } from 'sonner'
 
 const labelCls = 'font-mono text-[10px] tracking-widest uppercase text-primary/60'
@@ -65,8 +67,20 @@ export function EditTradeDialog({
   const [strategy, setStrategy] = useState(trade.strategy ?? '')
   const [setupTags, setSetupTags] = useState<string[]>(parseSetupTags(trade.setupTags))
   const [notes, setNotes] = useState(trade.notes ?? '')
-  const [ackViolation, setAckViolation] = useState(false)
+  const [planContext, setPlanContext] = useState(trade.planContext ?? emptyPlanContext())
+  const [managementAssessment, setManagementAssessment] = useState<ManagementReview['assessment']>('unknown')
+  const [managementReason, setManagementReason] = useState('Planbezug noch nicht geklärt.')
   const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    if (!open) return
+    setPlanContext(trade.planContext ?? emptyPlanContext())
+    setManagementAssessment('unknown')
+    setManagementReason('Planbezug noch nicht geklärt.')
+    setEntryPrice(String(trade.entryPrice ?? ''))
+    setStopLoss(String(trade.stopLoss ?? ''))
+    setTakeProfit(String(trade.takeProfit ?? ''))
+    setElliottInvalidation(String(trade.elliottInvalidation ?? ''))
+  }, [open, trade.id, trade.version])
 
   // Teilziele (Etappe 13). Sie hängen nicht an der Trade-Zeile, sondern in einer
   // eigenen Tabelle — deshalb werden sie beim Öffnen geladen, so wie der
@@ -111,19 +125,19 @@ export function EditTradeDialog({
   // „Gestaffelt" heißt ab hier: mehr als das Kursziel allein.
   const hatStufen = zielCheck.targets.length > 1
 
-  // Bei aktiven Trades ist das Verschieben von Stop/Invalidation ein Regelbruch.
+  // Änderungen erkennen; die Bewertung wird getrennt und ausdrücklich erfasst.
   const movesLocked = useMemo(() => {
     if (!isActive) return false
     const nextStop = numOrNull(stopLoss)
     const nextInval = numOrNull(elliottInvalidation)
     const stopMoved = nextStop != null && nextStop !== trade.stopLoss
-    const invalMoved = nextInval != null && nextInval !== trade.elliottInvalidation
+    const invalMoved = nextInval !== trade.elliottInvalidation
     return stopMoved || invalMoved
   }, [isActive, stopLoss, elliottInvalidation, trade.stopLoss, trade.elliottInvalidation])
 
   const submit = async () => {
-    if (movesLocked && !ackViolation) {
-      toast.error('Stop/Invalidation eines aktiven Trades: bitte den Regelbruch bestätigen.')
+    if (movesLocked && !managementReason.trim()) {
+      toast.error('Bitte die Bewertung oder den offenen Planbezug begründen.')
       return
     }
     if (zielCheck.error) {
@@ -156,11 +170,14 @@ export function EditTradeDialog({
           strategy,
           setupTags,
           notes,
+          ...(!isActive ? { planContext } : {}),
         },
-        movesLocked, // force = Regelbruch bewusst protokollieren
+        false,
+        movesLocked ? { assessment: managementAssessment, reason: managementReason } : undefined,
+        trade.version,
       )
       toast.success(
-        movesLocked ? 'Gespeichert — Regelbruch protokolliert.' : 'Trade aktualisiert.',
+        movesLocked ? managementAssessment === 'unknown' ? 'Änderung gespeichert — Planbewertung offen.' : managementAssessment === 'violation' ? 'Änderung und bestätigte Abweichung gespeichert.' : 'Änderung laut deiner Angabe planmäßig gespeichert.' : 'Trade aktualisiert.',
       )
       onOpenChange(false)
       onDone()
@@ -182,7 +199,7 @@ export function EditTradeDialog({
           </DialogTitle>
           <DialogDescription className="font-mono text-xs">
             {isActive
-              ? 'Aktiver Trade: Einstieg, Ziel und Kapital sind frei. Stop und Invalidation sind Plan-Lock — Änderungen werden als Regelbruch protokolliert (Douglas).'
+              ? 'Aktiver Trade: Änderungen werden dokumentiert. Für Stop und Invalidierung wird der Planbezug getrennt bewertet; ungeklärte Bewertungen bleiben offen.'
               : 'Geplanter Trade: alle Felder frei editierbar.'}
           </DialogDescription>
         </DialogHeader>
@@ -190,11 +207,11 @@ export function EditTradeDialog({
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <Field label="Einstieg">
             <Input type="number" step="any" value={entryPrice}
-              onChange={(e) => setEntryPrice(e.target.value)} className="input-ocean font-mono" />
+              onChange={(e) => { setEntryPrice(e.target.value); setPlanContext(c => ({ ...c, riskConfirmed: false })) }} className="input-ocean font-mono" />
           </Field>
           <Field label="Stop-Loss">
             <Input type="number" step="any" value={stopLoss}
-              onChange={(e) => setStopLoss(e.target.value)} className="input-ocean font-mono" />
+              onChange={(e) => { setStopLoss(e.target.value); setPlanContext(c => ({ ...c, riskConfirmed: false })) }} className="input-ocean font-mono" />
           </Field>
           {/* Immer bedienbar: Das Kursziel ist die äußerste Stufe und ein
               eigenes Feld. Vorher war es bei einem gestaffelten Trade gesperrt
@@ -202,7 +219,7 @@ export function EditTradeDialog({
               gar nicht mehr ändern. */}
           <Field label={hatStufen ? 'Kursziel (äußerste Stufe)' : 'Kursziel'}>
             <Input type="number" step="any" value={takeProfit}
-              onChange={(e) => setTakeProfit(e.target.value)} className="input-ocean font-mono" />
+              onChange={(e) => { setTakeProfit(e.target.value); setPlanContext(c => ({ ...c, riskConfirmed: false })) }} className="input-ocean font-mono" />
           </Field>
           {/* Einsatz und Hebel gibt es auch auf Papier — sonst ließe sich ein
               gehebelter Demo-Trade anlegen, aber nicht mehr korrigieren. */}
@@ -214,11 +231,11 @@ export function EditTradeDialog({
             }
           >
             <Input type="number" step="any" value={investedAmount}
-              onChange={(e) => setInvestedAmount(e.target.value)} className="input-ocean font-mono" />
+              onChange={(e) => { setInvestedAmount(e.target.value); setPlanContext(c => ({ ...c, riskConfirmed: false })) }} className="input-ocean font-mono" />
           </Field>
           <Field label="Hebel">
             <Input type="number" step="any" min="1" value={leverage}
-              onChange={(e) => setLeverage(e.target.value)} className="input-ocean font-mono" />
+              onChange={(e) => { setLeverage(e.target.value); setPlanContext(c => ({ ...c, riskConfirmed: false })) }} className="input-ocean font-mono" />
           </Field>
           {/* Der Anteil des KURSZIELS. Mit Teilzielen ergibt er sich als Rest
               (100 % minus die Teilziele) und wird deshalb nur angezeigt. */}
@@ -238,7 +255,7 @@ export function EditTradeDialog({
           )}
           <Field label="Invalidation">
             <Input type="number" step="any" value={elliottInvalidation}
-              onChange={(e) => setElliottInvalidation(e.target.value)} className="input-ocean font-mono" />
+              onChange={(e) => { setElliottInvalidation(e.target.value); setPlanContext(c => ({ ...c, riskConfirmed: false })) }} className="input-ocean font-mono" />
           </Field>
         </div>
 
@@ -251,7 +268,7 @@ export function EditTradeDialog({
             direction={trade.direction}
             kursziel={numOrNull(takeProfit) ?? 0}
             drafts={targets}
-            onChange={setTargets}
+            onChange={next => { setTargets(next); setPlanContext(c => ({ ...c, riskConfirmed: false })) }}
             disabled={busy}
             lockedCount={lockedCount}
           />
@@ -278,21 +295,21 @@ export function EditTradeDialog({
           </Field>
         </div>
 
-        {movesLocked && (
-          <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3">
-            <input
-              type="checkbox"
-              checked={ackViolation}
-              onChange={(e) => setAckViolation(e.target.checked)}
-              className="mt-0.5 accent-[var(--destructive)]"
-            />
-            <span className="flex items-start gap-1.5 font-mono text-[11px] text-foreground">
-              <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-destructive" />
-              Ich verschiebe Stop/Invalidation eines aktiven Trades bewusst. Das wird als
-              Regelbruch protokolliert und senkt meinen Disziplin-Score.
-            </span>
-          </label>
-        )}
+        {!isActive && <PlanContextFields value={planContext} onChange={setPlanContext} disabled={busy} />}
+        {movesLocked && <div className="flex flex-col gap-3">
+          <Field label="Planbezug dieser Stop-/Invalidierungsänderung">
+            <select aria-label="Managementbewertung" value={managementAssessment} disabled={busy}
+              onChange={e => { setManagementAssessment(e.target.value as ManagementReview['assessment']); setManagementReason(e.target.value === 'unknown' ? 'Planbezug noch nicht geklärt.' : '') }}>
+              <option value="unknown">Bewertung offen</option>
+              <option value="plan">Laut meiner bestätigten Regel planmäßig</option>
+              <option value="violation">Ich bestätige eine Regelabweichung</option>
+            </select>
+          </Field>
+          <Field label="Geltende Regel, Begründung oder offene Frage">
+            <Textarea value={managementReason} maxLength={4000} disabled={busy}
+              onChange={e => setManagementReason(e.target.value)} />
+          </Field>
+        </div>}
 
         <DialogFooter>
           <Button

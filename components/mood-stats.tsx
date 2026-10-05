@@ -38,13 +38,14 @@ export function MoodStatsPanel({ stats }: { stats: MoodStats }) {
           </p>
         </div>
         <p className="font-mono text-[10px] text-muted-foreground">
-          {coverage.withEntryMood} von {coverage.decided} entschiedenen Trades mit Check-in
+          {coverage.withEntryMood} von {coverage.decided} entschiedenen Trades mit Skalenwert
         </p>
       </div>
 
       {coverage.withEntryMood === 0 ? (
         <p className="mt-3 font-mono text-xs leading-relaxed text-muted-foreground">
-          Noch keine Zustands-Daten. Ab dem nächsten aktivierten Trade wird bei jedem
+          Noch keine Skalenwerte. Freie Gefühlsbeschreibungen bleiben im Trade erhalten,
+          ohne einen Zahlenwert zu erfinden. Bei einer freiwilligen Skalenangabe wird beim
           Ein- und Ausstieg festgehalten, in welcher Verfassung du handelst. Nach etwa{' '}
           {minGroupSize} Trades je Gruppe steht hier, in welchem Zustand du verdienst und in
           welchem du zahlst — mit deinen Zahlen, nicht mit einer Binsenweisheit.

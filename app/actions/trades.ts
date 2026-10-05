@@ -2,7 +2,9 @@
 
 import { requireFrozenFxRate, portfolioCurrency } from '@/lib/money-currency'
 
+import { normalizePlanContext, planGaps, requireCompletePlan, planningSnapshot, type PlanContext } from '@/lib/plan-context'
 import { createTradeForUser } from '@/lib/create-trade-service'
+import { hasRecentLoss, resolveManagementReview, type ManagementReview } from '@/lib/management-review'
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { withManualTrade } from '@/lib/manual-trade'
@@ -10,7 +12,7 @@ import { priceAlert, trade, tradeEvent, tradeTarget, assessment, stock } from '@
 import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm'
 import { headers } from 'next/headers'
 import { revalidatePath } from 'next/cache'
-import { PRE_TRADE_QUESTIONS, type PreTradeAnswer } from '@/lib/pre-trade-questions'
+import { type PreTradeAnswer } from '@/lib/pre-trade-questions'
 import {
   normalizeMoodCheck,
   serializeMoodTags,
@@ -60,8 +62,6 @@ import {
 import { simulateFuture, type MonteCarloStats } from '@/lib/monte-carlo'
 import {
   settlePosition,
-  hasPartialSale,
-  isRiskReducingStop,
   type TradeEventRow,
 } from '@/lib/trade-events'
 import {
@@ -149,14 +149,14 @@ export type TradeInput = {
   // absichtlich kein Eingabefeld mehr: Sie war eine Vorbelegung, die man
   // übersieht, und genau daran ist ein Papier-Trade in der echten Bilanz gelandet.
   portfolioId?: number | null
-  // die 4 Douglas-Antworten (Gate = alle 'ja')
+  // Vorabantworten: Planvoraussetzungen und Reflexion
   preTradeAnswers?: PreTradeAnswer[]
+  planContext?: PlanContext | null
   // Erfassungsweg: 'langfristig' (voller Weg) oder 'schnell' (ohne Fragen-Gate).
   // Regeln in `lib/trade-kind.ts`; Unbekanntes fällt auf den vollen Weg zurück.
   tradeKind?: TradeKind
 }
 
-const COOLDOWN_MIN = 60 // Revenge-Guard window
 
 /**
  * Das Depot, in das ein neuer Trade gebucht wird.
@@ -379,8 +379,8 @@ function requireMood(input: MoodCheckInput | null | undefined, phase: 'entry' | 
   if (!mood) {
     throw new Error(
       phase === 'entry'
-        ? 'Emotions-Check-in fehlt: Bitte auf der Skala 1–5 eintragen, wie ruhig du vor dem Einstieg bist.'
-        : 'Emotions-Check-in fehlt: Bitte auf der Skala 1–5 eintragen, wie du aus dem Trade gehst.',
+        ? 'Emotions-Check-in fehlt: Bitte beschreibe, wie du dich vor dem Einstieg fühlst; die Skala ist freiwillig.'
+        : 'Emotions-Check-in fehlt: Bitte beschreibe, wie du dich beim Ausstieg fühlst; die Skala ist freiwillig.',
     )
   }
   return mood
@@ -494,13 +494,13 @@ async function loadTradeTargets(userId: string, tradeId: number): Promise<TradeT
 }
 
 /**
- * Create a planned trade. Enforces the Douglas "4 Fragen" gate: a trade is only
- * fully planned (preTradeAnswered) when wave count, entry, stop and a
+ * Create a planned trade. The shared pre-trade gate checks confirmed planning
+ * prerequisites without requiring emotional neutrality or certainty. A
  * target/invalidation are all present.
  */
 export async function createTrade(
   input: TradeInput,
-): Promise<{ id: number; deckungsHinweis: string | null }> {
+): Promise<{ id: number; deckungsHinweis: string | null; planReady: boolean }> {
   const result = await createTradeForUser(await getUserId(), input)
   try { await createPlanAlerts(result.id, { kinds: ['einstieg'] }) } catch { /* Alert ist Beiwerk. */ }
   revalidatePath('/')
@@ -591,9 +591,7 @@ async function activateTradeImpl(
   // es bewusst (siehe `lib/trade-kind.ts`) — er bleibt aber als solcher
   // gekennzeichnet, damit später niemand Disziplin unterstellt, wo keine
   // geprüft wurde.
-  if (requiresPreTradeGate(t.tradeKind) && !t.preTradeAnswered) {
-    throw new Error('Erst die 4 Douglas-Fragen beantworten (Wellenzählung, Einstieg, Stop, Ziel/Invalidation).')
-  }
+  if (requiresPreTradeGate(t.tradeKind)) requireCompletePlan(t)
   const checkIn = moodForKind(t.tradeKind, mood, 'entry')
 
   // Deckung erneut prüfen (Teil 3). Zwischen Planen und Eröffnen kann anderes
@@ -623,13 +621,7 @@ async function activateTradeImpl(
     deckungsHinweis = ergebnis.hinweis
   }
 
-  // Revenge-Guard: any loss closed within the cooldown window?
-  //
-  // Seit Etappe 12 nur Verluste im SELBEN Depot. Sonst hinge einem echten Trade
-  // der Regelbruch `revenge` an, weil eine Stunde vorher ein Übungstrade im
-  // Demo-Depot ins Minus lief — eine Übung würde die echte Disziplin-Bilanz
-  // belasten, also genau der Fehler, den diese Etappe behebt. Umgekehrt gilt es
-  // genauso: Ein realer Verlust markiert keinen Papier-Trade.
+  // Zeitliche Nähe zu einem Verlust ist nur ein Prüfhinweis.
   const [lastLoss] = await db
     .select({ closedAt: trade.closedAt })
     .from(trade)
@@ -643,17 +635,11 @@ async function activateTradeImpl(
     .orderBy(desc(trade.closedAt))
     .limit(1)
 
-  let revengeWarning = false
+  const revengeWarning = hasRecentLoss(lastLoss?.closedAt, Date.now())
   const violations = parseViolations(t.ruleViolations)
-  if (lastLoss?.closedAt) {
-    const mins = (Date.now() - new Date(lastLoss.closedAt).getTime()) / 60000
-    if (mins < COOLDOWN_MIN) {
-      revengeWarning = true
-      if (!violations.includes('revenge')) violations.push('revenge')
-    }
-  }
 
   const openedAt = new Date()
+  const plannedTargets = await loadTradeTargets(userId, id)
   await db.transaction(async (tx) => {
     await tx
       .update(trade)
@@ -678,6 +664,7 @@ async function activateTradeImpl(
       openedEventValues({ ...t, openedAt, positionSize: t.positionSize }, userId, {
         at: openedAt,
         note: 'Eröffnet',
+        payload: JSON.stringify({ planningSnapshot: planningSnapshot({ ...t, targets: plannedTargets.map(z => ({ price: z.price, sharePct: z.sharePct, note: z.note })) }), source: 'user_statement' }),
       }),
     )
   })
@@ -707,16 +694,22 @@ async function activateTradeImpl(
 
 /**
  * Edit plan fields. Allowed freely while `geplant`. Once `aktiv`, changing the
- * stop or invalidation is a Douglas rule violation — it is logged, not silently
- * accepted. Pass `force` to override (and take the discipline hit).
+ * stop or invalidation requires an explicit assessment; unknown stays unknown.
+ * Legacy force confirms a violation, never an emotional cause.
  */
 async function updateTradePlanImpl(
   id: number,
   patch: Partial<TradeInput>,
   force = false,
+  review?: ManagementReview,
+  expectedVersion?: number,
 ): Promise<void> {
   const userId = await getUserId()
   const t = await loadOwnedTrade(userId, id)
+
+  if (expectedVersion !== undefined && expectedVersion !== t.version) {
+    throw new Error('Trade wurde inzwischen geändert. Bitte erneut laden.')
+  }
 
   if (t.status === 'abgeschlossen' || t.status === 'abgebrochen') {
     throw new Error('Abgeschlossene Trades können nicht mehr geändert werden.')
@@ -798,11 +791,9 @@ async function updateTradePlanImpl(
   const violations = parseViolations(t.ruleViolations)
   const levelEvents: TradeEventInsert[] = []
   if (t.status === 'aktiv') {
-    const events = await loadTradeEvents(userId, id)
-    const partialDone = hasPartialSale(events)
     const movesStop = patch.stopLoss != null && patch.stopLoss !== t.stopLoss
     const movesInval =
-      patch.elliottInvalidation != null && patch.elliottInvalidation !== t.elliottInvalidation
+      patch.elliottInvalidation !== undefined && patch.elliottInvalidation !== t.elliottInvalidation
     // Ein Ziel ist verschoben, wenn das Feld selbst wandert ODER wenn die
     // Staffel neu geplant wurde (das Kursziel ist die LETZTE Stufe).
     const zielVorher = t.takeProfit
@@ -814,28 +805,9 @@ async function updateTradePlanImpl(
     const movesTarget =
       (zielNachher != null && zielNachher !== zielVorher) || staffelGeaendert
 
-    // Nach einem Teilverkauf ist risiko-REDUZIERENDES Stop-Nachziehen (Long höher /
-    // Short tiefer, auch in den Profit) erlaubt und KEIN Regelbruch — der
-    // Kern-Workflow „bei 1 R die Hälfte verkaufen, Stop auf Einstand ziehen".
-    // Vor dem ersten Teilverkauf bleibt der Plan-Lock streng, das Aufweiten
-    // (Risiko rauf) bleibt immer ein Regelbruch. Die Invalidation bleibt streng.
-    const trailingAllowed =
-      movesStop && partialDone && isRiskReducingStop(t.direction, t.stopLoss, patch.stopLoss!)
-    const stopIsViolation = movesStop && !trailingAllowed
-
-    if ((stopIsViolation || movesInval) && !force) {
-      throw new Error(
-        'Plan-Lock: Stop/Invalidation eines aktiven Trades nicht verschieben (Douglas). ' +
-          'Mit force=true wird es als Regelbruch protokolliert.' +
-          (movesStop && partialDone
-            ? ' Ein risiko-reduzierendes Nachziehen nach einem Teilverkauf ist dagegen ohne force erlaubt.'
-            : ''),
-      )
-    }
-    if (stopIsViolation && !violations.includes('stop_moved')) violations.push('stop_moved')
-    if (movesInval && !violations.includes('invalidation_ignored')) {
-      violations.push('invalidation_ignored')
-    }
+    const management = movesStop || movesInval ? resolveManagementReview(review, force) : null
+    if (movesStop && management?.violation === true && !violations.includes('stop_moved')) violations.push('stop_moved')
+    if (movesInval && management?.violation === true && !violations.includes('invalidation_ignored')) violations.push('invalidation_ignored')
 
     // Level-Änderungen für die Chronik festhalten (payload trägt alt→neu).
     if (movesStop) {
@@ -844,8 +816,8 @@ async function updateTradePlanImpl(
         userId,
         type: 'stop_verschoben',
         at: new Date(),
-        payload: JSON.stringify({ from: t.stopLoss, to: patch.stopLoss, violation: stopIsViolation }),
-        note: trailingAllowed ? 'Stop nachgezogen (nach Teilverkauf)' : null,
+        payload: JSON.stringify({ from: t.stopLoss, to: patch.stopLoss, violation: management!.violation, assessment: management!.assessment, reason: management!.reason, source: 'user_statement' }),
+        note: management!.note,
       })
     }
     if (movesTarget) {
@@ -866,7 +838,8 @@ async function updateTradePlanImpl(
         userId,
         type: 'invalidation_ignoriert',
         at: new Date(),
-        payload: JSON.stringify({ from: t.elliottInvalidation, to: patch.elliottInvalidation }),
+        payload: JSON.stringify({ from: t.elliottInvalidation, to: patch.elliottInvalidation, violation: management!.violation, assessment: management!.assessment, reason: management!.reason, source: 'user_statement' }),
+        note: management!.note,
       })
     }
   }
@@ -882,10 +855,25 @@ async function updateTradePlanImpl(
   const derivedSize = changesSize && nextInvested != null
     ? computeShares(nextInvested, nextEntry, nextLeverage, requireFrozenFxRate(t)) : undefined
 
+  let nextContext = patch.planContext !== undefined ? normalizePlanContext(patch.planContext) : t.planContext
+  const riskInputsChanged = ['entryPrice', 'stopLoss', 'takeProfit', 'investedAmount', 'leverage', 'positionSize', 'elliottInvalidation']
+    .some(key => key in patch && patch[key as keyof TradeInput] !== t[key as keyof TradeRow])
+  if (t.status === 'geplant' && riskInputsChanged && patch.planContext === undefined && nextContext) {
+    nextContext = { ...nextContext, riskConfirmed: false }
+  }
+  const nextPlan = { ...t, ...patch, planContext: nextContext, takeProfit: zielAbleitung?.takeProfit ?? patch.takeProfit ?? t.takeProfit,
+    direction: t.direction, positionSize: derivedSize ?? patch.positionSize ?? t.positionSize }
+  const planReady = planGaps(nextPlan).length === 0
+  if (patch.planContext !== undefined || (t.status === 'geplant' && (patch.entryPrice !== undefined || patch.stopLoss !== undefined || patch.takeProfit !== undefined || patch.elliottInvalidation !== undefined || changesSize))) {
+    levelEvents.push({ tradeId: id, userId, type: 'notiz', at: new Date(), note: 'Planangaben aktualisiert; frühere Fassung erhalten',
+      payload: JSON.stringify({ source: 'user_statement', before: planningSnapshot(t), after: planningSnapshot(nextPlan) }) })
+  }
   await db.transaction(async (tx) => {
     await tx
       .update(trade)
       .set({
+        ...(patch.planContext !== undefined || (t.status === 'geplant' && riskInputsChanged) ? { planContext: nextContext } : {}),
+        ...(t.status === 'geplant' ? { preTradeAnswered: planReady } : {}),
         ...(patch.entryPrice != null ? { entryPrice: patch.entryPrice } : {}),
         ...(patch.stopLoss != null ? { stopLoss: patch.stopLoss } : {}),
         // Ziel, Anteil und R:R kommen aus dem Plan. Sobald das Ziel überhaupt

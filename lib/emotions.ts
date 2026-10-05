@@ -98,7 +98,7 @@ export function emotionTagLabel(key: string): string {
 export const MIN_GROUP_SIZE = 10
 
 /** Obergrenze für das Freitextfeld — eine Momentaufnahme, kein Tagebuch. */
-export const MOOD_NOTE_MAX = 400
+export const MOOD_NOTE_MAX = 4000
 
 // ---------------------------------------------------------------------------
 // Normalisierung / Validierung
@@ -113,7 +113,7 @@ export type MoodCheckInput = {
 
 /** Geprüfte Momentaufnahme — nur das kommt in die Datenbank. */
 export type NormalizedMood = {
-  score: MoodScore
+  score: MoodScore | null
   tags: EmotionTagKey[]
   note: string | null
 }
@@ -160,21 +160,18 @@ export function serializeMoodTags(tags: readonly string[]): string | null {
   return clean.length ? JSON.stringify(clean) : null
 }
 
-/**
- * Vollständige Prüfung einer Momentaufnahme.
- *
- * `null` heißt: kein gültiger Skalenwert dabei — die aufrufende Server Action
- * lehnt den Vorgang dann mit einer Meldung ab, statt eine halbe Zeile zu
- * speichern. Tags und Notiz allein ergeben keinen auswertbaren Datenpunkt.
- */
+/** Eine ausdrücklich angegebene Momentaufnahme; Freitext reicht ohne Skalenwert. */
 export function normalizeMoodCheck(
   input: MoodCheckInput | null | undefined,
 ): NormalizedMood | null {
   if (!input) return null
   const score = normalizeMoodScore(input.score)
-  if (score === null) return null
-  const note = typeof input.note === 'string' ? input.note.trim().slice(0, MOOD_NOTE_MAX) : ''
-  return { score, tags: sanitizeMoodTags(input.tags), note: note || null }
+  if (input.score != null && score === null) return null
+  if (input.note != null && (typeof input.note !== 'string' || input.note.length > MOOD_NOTE_MAX)) return null
+  const note = typeof input.note === 'string' ? input.note.trim() : ''
+  const tags = sanitizeMoodTags(input.tags)
+  if (score === null && !note && !tags.length) return null
+  return { score, tags, note: note || null }
 }
 
 /** Gruppe eines Skalenwerts; `null` für fehlende oder ungültige Werte. */

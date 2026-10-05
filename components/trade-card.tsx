@@ -1,5 +1,7 @@
 'use client'
 
+import { planGaps } from '@/lib/plan-context'
+
 import { frozenFxRate } from '@/lib/money-currency'
 import { InlineNotice } from '@/components/form-frame'
 
@@ -142,7 +144,7 @@ export function TradeCard({
 
   // Sperrt das Fragen-Gate diesen Trade? Beim schnellen Trade gibt es keines —
   // dieselbe Entscheidung wie serverseitig in `activateTrade`.
-  const gateOpen = requiresPreTradeGate(t.tradeKind) && !t.preTradeAnswered
+  const gateOpen = requiresPreTradeGate(t.tradeKind) && planGaps(t).length > 0
 
   // Nach dem Löschen auf die Liste navigieren — sonst lädt eine offene
   // Detailseite (/trades/[id]) den geloeschten Trade neu und stürzt via notFound() ab.
@@ -230,7 +232,7 @@ export function TradeCard({
           {isQuickTrade(t.tradeKind) && (
             <span
               className="flex items-center gap-1 rounded-md border border-warning/40 bg-warning/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest text-warning"
-              title="Ohne die neun Douglas-Fragen erfasst"
+              title="Ohne die konkrete Vorabprüfung erfasst"
             >
               <Zap className="size-3" /> {TRADE_KIND_BADGE.schnell}
             </span>
@@ -321,10 +323,10 @@ export function TradeCard({
       )}
 
       {/* Emotions-Check-in — nur wenn erfasst; Alt-Trades bleiben leer. */}
-      {(t.moodEntry != null || t.moodExit != null) && (
+      {(t.moodEntry != null || t.moodExit != null || t.moodEntryNote || t.moodExitNote) && (
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          <MoodBadge score={t.moodEntry} tags={t.moodEntryTags} phase="entry" />
-          <MoodBadge score={t.moodExit} tags={t.moodExitTags} phase="exit" />
+          <MoodBadge score={t.moodEntry} tags={t.moodEntryTags} note={t.moodEntryNote} phase="entry" />
+          <MoodBadge score={t.moodExit} tags={t.moodExitTags} note={t.moodExitNote} phase="exit" />
         </div>
       )}
 
@@ -351,7 +353,7 @@ export function TradeCard({
             </Button>
             {gateOpen && (
               <span className="flex items-center gap-1 font-mono text-[10px] text-warning">
-                <Lock className="size-3" /> Erst die 4 Fragen
+                <Lock className="size-3" /> Planangaben ergänzen
               </span>
             )}
           </>
@@ -649,7 +651,7 @@ export function ActivateDialog({
 
   const submit = async () => {
     if (moodRequired && !isMoodDraftComplete(mood)) {
-      toast.error('Bitte auf der Skala eintragen, wie ruhig du gerade bist.')
+      toast.error('Bitte beschreibe, wie du dich gerade fühlst; die Skala ist freiwillig.')
       return
     }
     setBusy(true)
@@ -665,7 +667,7 @@ export function ActivateDialog({
       }
       if (revengeWarning) {
         toast.warning(
-          'Revenge-Guard: kurz nach einem Verlust — handelst du den Plan oder die Wut?',
+          'Vor weniger als einer Stunde wurde in diesem Depot ein Verlust geschlossen. Prüfe den aktuellen Plan; daraus folgt kein emotionales Motiv oder Regelverstoß.',
         )
       }
       // Eroeffnet, aber die Deckung war nicht pruefbar (Fremdwaehrung ohne

@@ -3,6 +3,8 @@
 // shares the same portfolio/trade lock as manual actions.
 import { and, asc, eq, inArray } from 'drizzle-orm'
 import { db } from '@/lib/db'
+import { planGaps, planningSnapshot } from '@/lib/plan-context'
+import { requiresPreTradeGate } from '@/lib/trade-kind'
 import { brokerOrder, portfolio, stock, trade, tradeEvent, tradeTarget, userSettings } from '@/lib/db/schema'
 import { getCachedCandles } from '@/lib/market-data/cached'
 import { readStoredCandles, pruneStoredCandles } from '@/lib/market-data/candle-store'
@@ -59,7 +61,8 @@ export async function runDemoFills(
     const brokerLinks = await db.select({ linkedTradeId: brokerOrder.linkedTradeId }).from(brokerOrder)
       .where(inArray(brokerOrder.portfolioId, ids))
     const brokerTradeIds = new Set(brokerLinks.map((row) => row.linkedTradeId))
-    trades = trades.filter((row) => !brokerTradeIds.has(row.id))
+    trades = trades.filter((row) => !brokerTradeIds.has(row.id) &&
+      !(row.status === 'geplant' && requiresPreTradeGate(row.tradeKind) && planGaps(row).length))
     // Healthy trades first so repeatedly failing symbols cannot starve the rest.
     // A shared symbol is refreshed again if a later trade needs older history.
     const baseline = (t: typeof trade.$inferSelect) =>
@@ -92,6 +95,7 @@ export async function runDemoFills(
         }
         const result = await withTradeLock(before.userId, before.id, async (t, depot) => {
           if (normalizePortfolioKind(depot.kind) !== 'demo' || !['geplant', 'aktiv'].includes(t.status)) return null
+          if (t.status === 'geplant' && requiresPreTradeGate(t.tradeKind) && planGaps(t).length) return null
           // The symbol was resolved before taking the lock. A concurrent edit
           // must never evaluate a new instrument using the old one's candles.
           if (t.ticker !== before.ticker || t.stockId !== before.stockId || t.market !== before.market) {
@@ -386,6 +390,8 @@ async function bucheFill(args: {
   // Die Herkunft steht im Ereignis, nicht in einer neuen Spalte: Daran erkennt
   // die Oberfläche, bei welchen Trades der Check-in noch nachzuholen ist.
   const payload = JSON.stringify({ auto: true, quelle: 'demo-fill', interval: args.interval ?? FILL_INTERVAL, preisModus: 'plan', art: fill.art,
+    ...(fill.art === 'einstieg' && !args.archive ? { planningSnapshot: planningSnapshot({ ...t,
+      targets: args.stufen.map(z => ({ price: z.price, sharePct: z.sharePct, note: z.note })) }) } : {}),
     ...(args.archive ? { historisch: true, zeitGenauigkeit: args.interval, zeitFensterEnde: new Date((fill.zeit + 900) * 1000).toISOString() } : {}) })
   let status = t.status
 

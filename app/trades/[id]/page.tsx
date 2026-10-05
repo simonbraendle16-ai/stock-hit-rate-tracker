@@ -132,8 +132,9 @@ export default async function TradeDetailPage({
             <div className="panel sheen flex items-center gap-2 p-3">
               <Lock className="size-4 text-primary" />
               <p className="font-mono text-[11px] text-muted-foreground">
-                Plan-Lock aktiv: Einstieg, Stop und Invalidation sind festgeschrieben. Der Stop
-                wird nicht verschoben (Douglas).
+                Änderungen werden in der Chronik dokumentiert. Ob eine Stop- oder
+                Invalidierungsänderung planmäßig ist, richtet sich nach deiner bestätigten
+                Regel; ungeklärter Planbezug bleibt offen.
               </p>
             </div>
           )}
@@ -152,7 +153,7 @@ export default async function TradeDetailPage({
                       : v === 'invalidation_ignored'
                         ? 'Invalidation geändert'
                         : v === 'revenge'
-                          ? 'Revenge-Trade (kurz nach Verlust eröffnet)'
+                          ? 'Historische Rachehandels-Markierung — Herkunft noch nicht geprüft'
                           : v}
                   </li>
                 ))}
@@ -166,6 +167,15 @@ export default async function TradeDetailPage({
 
           {t.strategy && <Panel title="Begründung / Strategie">{t.strategy}</Panel>}
           {t.notes && <Panel title="Notizen">{t.notes}</Panel>}
+          {t.planContext && <Panel title="Bestätigte Planangaben">
+            <dl className="flex flex-col gap-2">
+              <dt>Erwarteter Verlauf</dt><dd>{t.planContext.expectedMove || 'offen'}</dd>
+              <dt>Einstiegsauslöser</dt><dd>{t.planContext.entryTrigger || 'offen'}</dd>
+              <dt>Stop-Management</dt><dd>{t.planContext.stopManagement || 'offen'}</dd>
+              <dt>Ziel-Management</dt><dd>{t.planContext.targetManagement || 'offen'}</dd>
+              <dt>Risikobestätigung</dt><dd>{t.planContext.riskConfirmed ? 'angegeben' : 'offen'}</dd>
+            </dl>
+          </Panel>}
           {/* Die Skala und die Tags stehen schon auf der Karte — hier steht der
               Freitext, für den dort kein Platz ist. */}
           {t.moodEntryNote && (

@@ -244,7 +244,7 @@ export type TimelineItem = {
 function itemFromEvent(ev: TradeEventRow): TimelineItem {
   const payload = parsePayload(ev.payload)
   const isViolation =
-    ev.type === 'invalidation_ignoriert' ||
+    (ev.type === 'invalidation_ignoriert' && payload.violation !== false && payload.violation !== null) ||
     (ev.type === 'stop_verschoben' && payload.violation === true)
   return {
     type: ev.type as TradeEventType,

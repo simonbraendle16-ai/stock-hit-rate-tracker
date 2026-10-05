@@ -95,7 +95,7 @@ export function CloseDialog({
     // Freiwillig beim schnellen Trade — Ausstiegskurs und Verlustannahme oben
     // gelten dagegen in beiden Wegen.
     if (requiresMoodCheck(trade.tradeKind) && !isMoodDraftComplete(mood)) {
-      toast.error('Bitte auf der Skala eintragen, wie du aus dem Trade gehst.')
+      toast.error('Bitte beschreibe, wie du dich beim Ausstieg fühlst; die Skala ist freiwillig.')
       return
     }
     setBusy(true)

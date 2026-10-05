@@ -131,18 +131,16 @@ describe('normalizeMoodCheck', () => {
     })
   })
 
-  it('lehnt eine Eingabe ohne gültigen Skalenwert ab', () => {
+  it('speichert freie Angaben ohne einen Skalenwert zu erfinden', () => {
     // Tags und Notiz allein ergeben keinen auswertbaren Datenpunkt.
-    expect(normalizeMoodCheck({ score: null, tags: ['gier'], note: 'viel' })).toBeNull()
+    expect(normalizeMoodCheck({ score: null, tags: ['gier'], note: 'viel' })).toEqual({ score: null, tags: ['gier'], note: 'viel' })
     expect(normalizeMoodCheck(null)).toBeNull()
     expect(normalizeMoodCheck(undefined)).toBeNull()
   })
 
-  it('kürzt eine überlange Notiz, statt sie abzulehnen', () => {
+  it('lehnt eine überlange Notiz ab, ohne die persönliche Aussage still zu kürzen', () => {
     const lang = 'x'.repeat(MOOD_NOTE_MAX + 50)
-    expect(normalizeMoodCheck({ score: 2, tags: [], note: lang })!.note).toHaveLength(
-      MOOD_NOTE_MAX,
-    )
+    expect(normalizeMoodCheck({ score: 2, tags: [], note: lang })).toBeNull()
   })
 
   it('macht aus einer leeren Notiz null, nicht ""', () => {

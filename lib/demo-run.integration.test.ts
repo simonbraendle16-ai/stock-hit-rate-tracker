@@ -199,13 +199,24 @@ describe('Demo-Ausführung mit gespeicherten Positionen', () => {
     expect(state.trades[0]).toMatchObject({ status: 'abgeschlossen', result: null })
   })
   it('hält nach Einstieg und Teilziel den aktiven Zustand für die nächste Kerze', async () => {
-    state.trades = [{ ...row(), status: 'geplant', openedAt: null, createdAt: at('10:00') }]
+    state.trades = [{ ...row(), status: 'geplant', openedAt: null, createdAt: at('10:00'),
+      quoteCurrency: 'EUR', accountCurrency: 'EUR', quoteToAccountRate: 1, elliottInvalidation: 94,
+      planContext: { version: 1, expectedMove: 'Move up', entryTrigger: 'At 100', stopManagement: 'No trailing',
+        targetManagement: '40% at 110, rest at 120', riskConfirmed: true } }]
     state.events = []
     state.candles = [candle('09:55'), candle('10:00', { low: 99 }),
       candle('10:05', { high: 112 }), candle('10:10', { high: 122 })]
     const result = await runDemoFills()
     expect(result).toMatchObject({ einstiege: 1, teilziele: 1, abschluesse: 1 })
     expect((state.events as TradeEventRow[]).map((e) => e.price)).toEqual([100, 110, 120])
+  })
+  it('aktiviert einen unvollständigen Entwurf auch im automatischen Demo-Weg nicht', async () => {
+    state.trades = [{ ...row(), status: 'geplant', openedAt: null, preTradeAnswered: true, planContext: null }]
+    state.events = []
+    const result = await runDemoFills()
+    expect(result.einstiege).toBe(0)
+    expect(state.events).toEqual([])
+    expect(state.trades[0]).toMatchObject({ status: 'geplant', preTradeAnswered: true, planContext: null })
   })
   it('ändert im Trockenlauf weder Position noch Ereignisse, Ziele oder Prüfstand', async () => {
     const before = structuredClone({ trades: state.trades, events: state.events, targets: state.targets })
