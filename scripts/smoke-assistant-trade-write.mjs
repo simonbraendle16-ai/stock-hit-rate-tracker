@@ -1,16 +1,14 @@
-import { readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { readTestTarget } from './trade-history-test-target.mjs'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import pg from 'pg'
 
-const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const line = readFileSync(join(root, '.env.local'), 'utf8').split(/\r?\n/)
-  .find((item) => item.startsWith('DATABASE_URL_UNPOOLED='))
-if (!line) throw new Error('Direkte Datenbankverbindung fehlt.')
-const connectionString = line.slice('DATABASE_URL_UNPOOLED='.length).replace(/^["']|["']$/g, '')
+const target = readTestTarget()
+const connectionString = process.env.ASSISTANT_TEST_DATABASE_URL
+if (!connectionString || connectionString !== target.connectionString) throw new Error('Explizite geprüfte Testverbindung erforderlich.')
+const baseUrl = process.env.ASSISTANT_TEST_API_BASE_URL
+const localApi = new URL(baseUrl ?? 'about:blank')
+if (localApi.protocol !== 'http:' || !['localhost','127.0.0.1'].includes(localApi.hostname)) throw new Error('Expliziter lokaler Test-API-Endpunkt erforderlich.')
 const client = new pg.Client({ connectionString })
-const baseUrl = process.env.ASSISTANT_API_BASE_URL ?? 'http://localhost:3100'
 await client.connect()
 const userId = `assistant-api-test-${randomUUID()}`
 let tradeId = null
@@ -21,8 +19,8 @@ try {
   const before = Number((await client.query('SELECT count(*) AS count FROM trade')).rows[0].count)
   await client.query('INSERT INTO "user" (id, name, email) VALUES ($1, $2, $3)',
     [userId, 'API Test', `${userId}@example.invalid`])
-  portfolioId = (await client.query('INSERT INTO portfolio ("userId", name, kind) VALUES ($1, $2, $3) RETURNING id',
-    [userId, 'API Test Depot', 'demo'])).rows[0].id
+  portfolioId = (await client.query('INSERT INTO portfolio ("userId", name, kind, currency) VALUES ($1, $2, $3, $4) RETURNING id',
+    [userId, 'API Test Depot', 'demo', 'EUR'])).rows[0].id
   stockId = (await client.query('INSERT INTO stock ("userId", name, ticker, market) VALUES ($1, $2, $3, $4) RETURNING id',
     [userId, 'API Test Instrument', 'TEST', 'sonstiges'])).rows[0].id
   const token = `sat_${randomBytes(32).toString('base64url')}`
@@ -30,7 +28,7 @@ try {
     [userId, 'API Write Test', createHash('sha256').update(token).digest('hex'), JSON.stringify(['trades:read', 'trades:write'])])).rows[0].id
   const key = randomUUID()
   const payload = { portfolioId, ticker: 'TEST', market: 'sonstiges', tradeKind: 'schnell',
-    direction: 'long', entryPrice: 100, stopLoss: 98, takeProfit: 104,
+    direction: 'long', entryPrice: 100, stopLoss: 98, takeProfit: 104, quoteCurrency: 'EUR', positionSize: 10,
     source: { kind: 'user_statement', capturedAt: new Date().toISOString(), confirmedByUser: true } }
   const post = async (body) => {
     const response = await fetch(`${baseUrl}/api/assistant/v1/trades`, {
@@ -64,12 +62,15 @@ try {
   const stale = await patch({ notes: 'Veraltete Korrektur' }, 1)
   if (stale.status !== 409) throw new Error('Veraltete Trade-Version wurde nicht abgelehnt.')
   const unsafe = await patch({ stopLoss: 90 }, 2)
-  if (unsafe.status !== 400) throw new Error('Planpreis über Metadaten-PATCH wurde nicht abgelehnt.')
+  if (unsafe.status !== 422) throw new Error('Planpreis ohne bestätigte Quelle wurde nicht abgelehnt.')
   const count = Number((await client.query('SELECT count(*) AS count FROM trade')).rows[0].count)
   if (count !== before + 1) throw new Error('Unerwartete Trade-Anzahl nach POST.')
-  console.log('Trade-POST: 201/200/409; Metadaten-PATCH: 200, veraltete Version: 409, Planpreis abgewiesen; genau ein Test-Trade.')
+  console.log('Trade-POST: 201/200/409; Metadaten-PATCH: 200, veraltete Version: 409, Planpreis ohne bestätigte Quelle: 422; genau ein Test-Trade.')
 } finally {
   // Alle Löschziele stammen ausschließlich aus den oben erzeugten Test-IDs.
+  await client.query('DELETE FROM trade_action_request WHERE "userId" = $1', [userId])
+  await client.query('DELETE FROM trade_event_revision WHERE "userId" = $1', [userId])
+  await client.query('DELETE FROM trade_settlement_receipt WHERE "userId" = $1', [userId])
   if (tradeId) await client.query('DELETE FROM trade_target WHERE "tradeId" = $1 AND "userId" = $2', [tradeId, userId])
   if (tradeId) await client.query('DELETE FROM trade_event WHERE "tradeId" = $1 AND "userId" = $2', [tradeId, userId])
   if (tradeId) await client.query('DELETE FROM price_alert WHERE "tradeId" = $1 AND "userId" = $2', [tradeId, userId])

@@ -4,6 +4,7 @@ import { portfolio, trade, tradeEvent, tradeSettlementReceipt } from '@/lib/db/s
 import { ApiError } from './assistant-api'
 import { normalizeSettlementReceipt, receiptSignature } from './settlement-receipt'
 import { settlePosition } from './trade-events'
+import { reviewStatusAfterClose } from './trade-review-state'
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
 
@@ -54,7 +55,9 @@ export async function saveSettlementReceipt(tx: Tx, userId: string, eventId: num
     const result = settlement.moneyComplete && settlement.isFullyClosed && Number.isFinite(settlement.totalNet)
       ? Math.abs(settlement.totalNet) < 1e-8 ? 'breakeven' : settlement.totalNet > 0 ? 'gewinn' : 'verlust'
       : null
-    await tx.update(trade).set({ result, version: sql`${trade.version} + 1` }).where(eq(trade.id, t.id))
+    await tx.update(trade).set({ result, version: sql`${trade.version} + 1`,
+      reviewStatus: reviewStatusAfterClose(t, result)
+    }).where(eq(trade.id, t.id))
   }
   return saved
 }

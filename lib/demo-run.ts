@@ -5,6 +5,7 @@ import { and, asc, eq, inArray } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { planGaps, planningSnapshot } from '@/lib/plan-context'
 import { requiresPreTradeGate } from '@/lib/trade-kind'
+import { reviewStatusAfterClose } from './trade-review-state'
 import { brokerOrder, portfolio, stock, trade, tradeEvent, tradeTarget, userSettings } from '@/lib/db/schema'
 import { getCachedCandles } from '@/lib/market-data/cached'
 import { readStoredCandles, pruneStoredCandles } from '@/lib/market-data/candle-store'
@@ -454,10 +455,9 @@ async function bucheFill(args: {
           // metadata is unknown. Never manufacture a monetary win/loss.
           result: Number.isFinite(settle.totalNet) ? ergebnisAus(settle.totalNet) : null,
           actualExitPrice: fill.preis,
-          // Die Ausführung IST der Plan — das ist der ganze Punkt der
-          // Automatik. Anders als beim Abschluss von Hand gibt es hier keinen
-          // Ermessensspielraum, der nachträglich beschönigt werden könnte.
-          followedPlan: t.followedPlan !== false && parseViolations(t.ruleViolations).length === 0,
+          // A simulated fill is an execution fact, not a personal assessment.
+          followedPlan: t.followedPlan,
+          reviewStatus: reviewStatusAfterClose(t, Number.isFinite(settle.totalNet) ? ergebnisAus(settle.totalNet) : null, true),
           closedAt: at,
           // `moodExit` und `lossAccepted` bleiben BEWUSST leer — sie werden
           // nachgefordert. Eine Maschine kann keinen Verlust bewusst annehmen;

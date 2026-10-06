@@ -22,7 +22,14 @@ describe('assistant trade input', () => {
   it('rejects derived or client-controlled trade state', () => {
     expect(() => normalizeAssistantTradeInput({ ...valid, tradedWithMoney: false })).toThrow('Unbekanntes')
     expect(() => normalizeAssistantTradeInput({ ...valid, stockId: 7 })).toThrow('Unbekanntes')
-    expect(() => normalizeAssistantTradeInput({ ...valid, positionSize: 2 })).toThrow('Unbekanntes')
+    expect(() => normalizeAssistantTradeInput({ ...valid, status: 'aktiv' })).toThrow('Unbekanntes')
+  })
+
+  it('accepts confirmed planned quantities and explicit partial targets', () => {
+    const r = normalizeAssistantTradeInput({ ...valid, positionSize: 2, targets: [{ price: 102, sharePct: 40 }] })
+    expect(r.input.positionSize).toBe(2)
+    expect(r.input.targets).toEqual([{ price: 102, sharePct: 40 }])
+    expect(() => normalizeAssistantTradeInput({ ...valid, targets: [{ price: 102, sharePct: 150 }] })).toThrow('Anteil')
   })
 
   it('rejects malformed numerical values', () => {

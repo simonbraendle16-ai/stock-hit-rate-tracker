@@ -416,6 +416,9 @@ export const trade = pgTable('trade', {
   // Depot-Modell wirkt über die Auswahl der Zeilen, nicht über neue Rechenwege.
   tradedWithMoney: boolean('tradedWithMoney').notNull().default(true),
   followedPlan: boolean('followedPlan'),
+  reviewStatus: text('reviewStatus'),
+  reviewDeferredUntil: timestamp('reviewDeferredUntil'),
+  reviewLossAccepted: boolean('reviewLossAccepted'),
   // JSON array of flags: stop_moved | invalidation_ignored | revenge
   ruleViolations: text('ruleViolations'),
   lossAccepted: boolean('lossAccepted').notNull().default(false),
@@ -684,6 +687,23 @@ export const tradeEvent = pgTable('trade_event', {
   note: text('note'),
   createdAt: timestamp('createdAt').notNull().defaultNow(),
 })
+
+export const tradeActionRequest = pgTable('trade_action_request', {
+  id: serial('id').primaryKey(),
+  userId: text('userId').notNull().references(() => user.id),
+  tradeId: integer('tradeId').notNull().references(() => trade.id, { onDelete: 'restrict' }),
+  requestKey: text('requestKey').notNull(), requestHash: text('requestHash').notNull(),
+  response: jsonb('response').notNull(), createdAt: timestamp('createdAt').notNull().defaultNow(),
+}, t => [uniqueIndex('trade_action_request_owner_key_idx').on(t.userId, t.requestKey)])
+
+export const tradeEventRevision = pgTable('trade_event_revision', {
+  id: serial('id').primaryKey(), userId: text('userId').notNull().references(() => user.id),
+  tradeId: integer('tradeId').notNull().references(() => trade.id, { onDelete: 'restrict' }),
+  eventId: integer('eventId').notNull().references(() => tradeEvent.id, { onDelete: 'restrict' }),
+  version: integer('version').notNull(), before: jsonb('before').notNull(), after: jsonb('after').notNull(),
+  reason: text('reason').notNull(), source: jsonb('source').notNull(),
+  createdAt: timestamp('createdAt').notNull().defaultNow(),
+}, t => [uniqueIndex('trade_event_revision_event_version_idx').on(t.eventId, t.version), index('event_revision_owner_trade_idx').on(t.userId, t.tradeId)])
 
 export const tradeSettlementReceipt = pgTable('trade_settlement_receipt', {
   id: serial('id').primaryKey(),

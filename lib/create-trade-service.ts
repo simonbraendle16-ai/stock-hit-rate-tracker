@@ -569,6 +569,10 @@ export async function createTradeForUser(
     : investedAmount != null
       ? computeShares(investedAmount, input.entryPrice, leverage, moneyCurrency.quoteToAccountRate)
       : (input.positionSize ?? null)
+  if (input.positionSize != null && positionSize != null &&
+      Math.abs(positionSize-input.positionSize)>1e-8*Math.max(1,Math.abs(input.positionSize))) {
+    throw new Error('Positionsgröße und Kapitaleinsatz widersprechen sich. Menge und Kapital gemeinsam korrigieren.')
+  }
   const takeProfitPct = zielPlan.takeProfitPct
   const preTradeAnswered = planGaps({ ...input, ...moneyCurrency, planContext, positionSize }).length === 0
 

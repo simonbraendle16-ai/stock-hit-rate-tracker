@@ -271,11 +271,16 @@ describe('Demo-Ausführung mit gespeicherten Positionen', () => {
     expect(second).toMatchObject({ teilziele: 1, abschluesse: 1, unvollstaendig: [] })
     expect(state.events).toHaveLength(3)
   })
-  it('macht frühere manuelle Planverstöße nicht nachträglich zu einem regelkonformen Trade', async () => {
+  it('erhält frühere Verstoßmarkierungen ohne eine persönliche Bewertung daraus abzuleiten', async () => {
     state.trades = [{ ...row(), ruleViolations: '["stop_moved"]' }]
     await runDemoFills()
-    expect(state.trades[0]).toMatchObject({ followedPlan: false })
+    expect(state.trades[0]).toMatchObject({ followedPlan: null, ruleViolations: '["stop_moved"]', reviewStatus: 'pending' })
     expect(JSON.parse((state.events as TradeEventRow[])[2].payload!)).toMatchObject({ auto: true, preisModus: 'plan' })
+  })
+  it('erhält eine ausdrücklich negative Planbewertung beim automatischen Abschluss', async () => {
+    state.trades = [{ ...row(), followedPlan: false }]
+    await runDemoFills()
+    expect(state.trades[0]).toMatchObject({ followedPlan: false })
   })
   it('verwendet nach einem gleichzeitigen Instrumentwechsel keine Kerzen des alten Symbols', async () => {
     state.changeInstrument = true

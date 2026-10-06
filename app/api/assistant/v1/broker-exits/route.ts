@@ -2,6 +2,7 @@ import { db } from '@/lib/db'
 import { brokerExit, brokerOrder, portfolio, trade, tradeEvent } from '@/lib/db/schema'
 import { ApiError, apiResponseError, onlyKeys, positiveId, readJsonObject, requireApiScope } from '@/lib/assistant-api'
 import { settlePosition } from '@/lib/trade-events'
+import { reviewStatusAfterClose } from '@/lib/trade-review-state'
 import { classifyBrokerExit, hasConfirmedBrokerEntry } from '@/lib/broker-exit-guard'
 import { normalizeSettlementReceipt, receiptSignature } from '@/lib/settlement-receipt'
 import { saveSettlementReceipt } from '@/lib/settlement-service'
@@ -152,6 +153,7 @@ export async function POST(req: NextRequest) {
           }
           const [changed] = await tx.update(trade).set({ status: 'abgeschlossen', result,
             actualExitPrice: input.price, closedAt: input.exitedAt,
+            reviewStatus: reviewStatusAfterClose(t, result, true),
             version: sql`${trade.version} + 1`,
           }).where(and(eq(trade.id, linkedTradeId), eq(trade.userId, userId), eq(trade.status, 'aktiv')))
             .returning({ id: trade.id })

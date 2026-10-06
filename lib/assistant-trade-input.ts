@@ -2,12 +2,13 @@ import { ApiError, onlyKeys, positiveId } from '@/lib/assistant-api'
 import type { TradeInput } from '@/app/actions/trades'
 import { normalizePlanContext } from './plan-context'
 import { validatePreTradeAnswers } from './pre-trade-questions'
+import { normalizePlanPatch } from './assistant-trade-patch'
 
 const markets = ['aktien', 'krypto', 'forex', 'rohstoffe', 'etf', 'optionen', 'sonstiges']
 const fields = ['portfolioId', 'ticker', 'market', 'tradeKind', 'direction', 'entryPrice',
   'stopLoss', 'takeProfit', 'strategy', 'setupTags', 'investedAmount', 'leverage',
   'contracts', 'feeEntry', 'feeExit', 'broker', 'notes', 'source', 'quoteCurrency',
-  'planContext', 'preTradeAnswers', 'elliottWaveCount', 'waveDegree', 'elliottInvalidation']
+  'planContext', 'preTradeAnswers', 'elliottWaveCount', 'waveDegree', 'elliottInvalidation', 'targets', 'positionSize']
 
 function textValue(value: unknown, label: string, max: number, required = false) {
   if (value == null && !required) return undefined
@@ -51,6 +52,8 @@ export function normalizeAssistantTradeInput(raw: Record<string, unknown>) {
   let planContext
   try { planContext = normalizePlanContext(raw.planContext) } catch { throw new ApiError(422, 'Plan-Kontext ist ungültig.') }
   const input: TradeInput = {
+    ...('targets' in raw ? normalizePlanPatch({ targets: raw.targets }) : {}),
+    positionSize: numberValue(raw.positionSize, 'Positionsgröße'),
     planContext,
     preTradeAnswers,
     elliottWaveCount: textValue(raw.elliottWaveCount, 'Count', 4000),

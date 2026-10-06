@@ -1,3 +1,7 @@
+import { TradeReview } from '@/components/trade-review'
+import { ExecutionCorrection } from '@/components/execution-correction'
+import { TradePlanHistory } from '@/components/trade-plan-history'
+import { listTradeEventRevisions } from '@/app/actions/trade-history'
 import { auth } from '@/lib/auth'
 import { headers } from 'next/headers'
 import { redirect, notFound } from 'next/navigation'
@@ -33,7 +37,7 @@ export default async function TradeDetailPage({
   const t = await getTrade(Number(id))
   if (!t) notFound()
 
-  const [chartUrl, settings, events, targets, excursion, kontext, alerts] = await Promise.all([
+  const [chartUrl, settings, events, targets, excursion, kontext, alerts, revisions] = await Promise.all([
     t.stockId != null ? getStockChartUrl(t.stockId) : Promise.resolve(null),
     getSettings(),
     listTradeEvents(t.id),
@@ -50,6 +54,7 @@ export default async function TradeDetailPage({
     // Ausgelöste Ziel-Alerts: Woher die Leiste weiß, dass eine Stufe schon
     // einmal berührt war — auch wenn der Kurs inzwischen zurückgefallen ist.
     listAlerts(),
+    listTradeEventRevisions(t.id),
   ])
   const beruehrt = triggeredTargetPricesByTrade(alerts).get(t.id)
   const locked = t.status === 'aktiv' || t.status === 'abgeschlossen'
@@ -112,6 +117,9 @@ export default async function TradeDetailPage({
           <TradeReplay t={t} />
 
           <TradeTimeline trade={t} events={events} />
+          <TradePlanHistory events={events} revisions={revisions} quoteCurrency={t.quoteCurrency} accountCurrency={t.accountCurrency} />
+          <ExecutionCorrection tradeId={t.id} version={t.version} events={events} />
+          <TradeReview key={`${t.id}-${t.version}`} trade={t} />
           <SettlementReceipts events={events} currency={t.accountCurrency ?? kontext.portfolios.find(p => p.id === t.portfolioId)?.currency ?? null} />
 
           {/* Gegenlauf/Mitlauf (Etappe 7c) — nur bei entschiedenen Trades. */}

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { emptyPlanContext } from '@/lib/plan-context'
 import { PlanContextFields } from '@/components/plan-context-fields'
 import type { ManagementReview } from '@/lib/management-review'
@@ -71,8 +71,14 @@ export function EditTradeDialog({
   const [managementAssessment, setManagementAssessment] = useState<ManagementReview['assessment']>('unknown')
   const [managementReason, setManagementReason] = useState('Planbezug noch nicht geklärt.')
   const [busy, setBusy] = useState(false)
+  const editorTrade = useRef<number|null>(null)
+  const [editVersion, setEditVersion] = useState(trade.version)
   useEffect(() => {
-    if (!open) return
+    if (!open) { editorTrade.current=null; return }
+    // A refresh must not discard an open draft or silently advance its expected version.
+    if (editorTrade.current===trade.id) return
+    editorTrade.current=trade.id
+    setEditVersion(trade.version)
     setPlanContext(trade.planContext ?? emptyPlanContext())
     setManagementAssessment('unknown')
     setManagementReason('Planbezug noch nicht geklärt.')
@@ -80,7 +86,14 @@ export function EditTradeDialog({
     setStopLoss(String(trade.stopLoss ?? ''))
     setTakeProfit(String(trade.takeProfit ?? ''))
     setElliottInvalidation(String(trade.elliottInvalidation ?? ''))
-  }, [open, trade.id, trade.version])
+    setInvestedAmount(String(trade.investedAmount ?? ''))
+    setLeverage(String(trade.leverage ?? 1))
+    setTakeProfitPct(String(trade.takeProfitPct ?? 100))
+    setElliottWaveCount(trade.elliottWaveCount ?? '')
+    setStrategy(trade.strategy ?? '')
+    setSetupTags(parseSetupTags(trade.setupTags))
+    setNotes(trade.notes ?? '')
+  }, [open, trade])
 
   // Teilziele (Etappe 13). Sie hängen nicht an der Trade-Zeile, sondern in einer
   // eigenen Tabelle — deshalb werden sie beim Öffnen geladen, so wie der
@@ -174,7 +187,7 @@ export function EditTradeDialog({
         },
         false,
         movesLocked ? { assessment: managementAssessment, reason: managementReason } : undefined,
-        trade.version,
+        editVersion,
       )
       toast.success(
         movesLocked ? managementAssessment === 'unknown' ? 'Änderung gespeichert — Planbewertung offen.' : managementAssessment === 'violation' ? 'Änderung und bestätigte Abweichung gespeichert.' : 'Änderung laut deiner Angabe planmäßig gespeichert.' : 'Trade aktualisiert.',

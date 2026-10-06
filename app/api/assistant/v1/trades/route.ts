@@ -10,7 +10,9 @@ export async function GET(req: NextRequest) {
   try {
     const userId = await requireApiScope(req, 'trades:read')
     const params = req.nextUrl.searchParams
-    if ([...params.keys()].some((key) => !['portfolioId', 'from', 'to', 'limit', 'cursor'].includes(key))) throw new ApiError(400, 'Unbekannter Filter.')
+    if ([...params.keys()].some((key) => !['portfolioId', 'from', 'to', 'limit', 'cursor', 'reviewStatus'].includes(key))) throw new ApiError(400, 'Unbekannter Filter.')
+    const pending = params.get('reviewStatus')
+    if (pending !== null && pending !== 'pending') throw new ApiError(400, 'reviewStatus erlaubt pending.')
     const portfolioId = params.get('portfolioId') ? positiveId(params.get('portfolioId')!) : null
     if (portfolioId != null) {
       const [owned] = await db.select({ id: portfolio.id }).from(portfolio)
@@ -43,8 +45,11 @@ export async function GET(req: NextRequest) {
     }
     const rows = await db.select({ id: trade.id, portfolioId: trade.portfolioId,
       ticker: trade.ticker, market: trade.market, direction: trade.direction,
-      status: trade.status, createdAt: trade.createdAt }).from(trade)
+      status: trade.status, createdAt: trade.createdAt, version: trade.version,
+      reviewStatus: trade.reviewStatus, reviewDeferredUntil: trade.reviewDeferredUntil, followedPlan: trade.followedPlan }).from(trade)
       .where(and(eq(trade.userId, userId),
+        pending ? and(eq(trade.status, 'abgeschlossen'), or(eq(trade.reviewStatus,'pending'),
+          and(eq(trade.reviewStatus,'deferred'),lte(trade.reviewDeferredUntil,new Date())))) : undefined,
         portfolioId == null ? undefined : eq(trade.portfolioId, portfolioId),
         from ? gte(trade.createdAt, from) : undefined, to ? lte(trade.createdAt, to) : undefined,
         cursor ? or(lt(trade.createdAt, cursor.date),

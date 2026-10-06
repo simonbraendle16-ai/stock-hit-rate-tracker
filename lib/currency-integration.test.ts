@@ -17,7 +17,10 @@ import { activateTrade, updateTradePlan } from '../app/actions/trades'
 import { loadScopeContext, schreibeScope } from './portfolio-context'
 
 const state = vi.hoisted(() => ({ db: null as any }))
-vi.mock('@/lib/db', () => ({ get db() { return state.db } }))
+vi.mock('@/lib/db', () => ({ get db() { return state.db }, inDatabaseTransaction: async (callback: () => Promise<unknown>) => {
+  const outer = state.db
+  return outer.transaction(async (tx: any) => { state.db = tx; try { return await callback() } finally { state.db = outer } })
+} }))
 vi.mock('@/lib/auth', () => ({ auth: { api: { getSession: async () => ({ user: { id: 'currency-test' } }) } } }))
 vi.mock('next/headers', () => ({ headers: async () => new Headers() }))
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }))
@@ -81,9 +84,9 @@ describe('isolated PostgreSQL currency integration', () => {
     const draft = await response.json()
     expect(draft.preTradeAnswered).toBe(false)
     await expect(activateTrade(draft.id, { score: null, tags: [], note: 'Afraid but following plan' }, { createPlanAlerts: false })).rejects.toThrow('Plan noch unvollständig')
-    const patch = (version: number, bearer = token) => patchPlan(new NextRequest('http://localhost/api/assistant/v1/trades/' + draft.id, {
+    const patch = (version: number, bearer = token, source = body().source) => patchPlan(new NextRequest('http://localhost/api/assistant/v1/trades/' + draft.id, {
       method: 'PATCH', headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/json', 'x-expected-version': String(version) },
-      body: JSON.stringify({ planContext: context, source: body().source }),
+      body: JSON.stringify({ planContext: context, source }),
     }), { params: Promise.resolve({ id: String(draft.id) }) })
     expect((await patch(draft.version)).status).toBe(200)
     expect((await patch(draft.version)).status).toBe(409)
@@ -92,8 +95,12 @@ describe('isolated PostgreSQL currency integration', () => {
     expect(reread.preTradeAnswered).toBe(true)
     expect(reread.events).toHaveLength(1)
     expect(JSON.parse(reread.events[0].payload)).toMatchObject({ before: { planContext: null }, after: { planContext: context } })
-    const statuses = await Promise.all([patch(reread.version), patch(reread.version)])
-    expect(statuses.map(r => r.status).sort()).toEqual([200, 409])
+    const sameSource = body().source
+    const statuses = await Promise.all([patch(reread.version, token, sameSource), patch(reread.version, token, sameSource)])
+    // Equivalent version/body requests now share a stable idempotency identity.
+    expect(statuses.map(r => r.status).sort()).toEqual([200, 200])
+    const final = await (await getPlan(new NextRequest('http://localhost', { headers: { authorization: `Bearer ${token}` } }), { params: Promise.resolve({ id: String(draft.id) }) })).json()
+    expect(final.events).toHaveLength(reread.events.length + 1)
   })
   it('activates after a recent loss without adding revenge and stores free feelings and original plan', async () => {
     await state.db.insert(schema.trade).values({ userId: 'currency-test', portfolioId: demo, ticker: 'LOSS', entryPrice: 100, stopLoss: 90, takeProfit: 120,

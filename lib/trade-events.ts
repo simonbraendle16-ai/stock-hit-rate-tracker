@@ -123,15 +123,19 @@ export function settlePosition(t: TradeRow, events: TradeEventRow[]): PositionSe
   // --- Anfangszustand: aus dem eroeffnet-Event, sonst aus der Trade-Zeile ------
   const opened = sorted.find((e) => e.type === 'eroeffnet')
   const firstStopMove = sorted.find((e) => e.type === 'stop_verschoben')
-  const initialStop = firstStopMove
+  const original = (() => {
+    try { const p=JSON.parse(opened?.payload??'{}');const s=p.planningSnapshot;return s&&typeof s==='object'?s:null } catch { return null }
+  })()
+  const initialStop = original?.stopLoss ?? (firstStopMove
     ? (parsePayload(firstStopMove.payload).from ?? t.stopLoss)
-    : t.stopLoss
+    : t.stopLoss)
   const initialEntry = opened?.price ?? t.entryPrice
   const initialQty = opened?.quantity ?? t.positionSize ?? 0
   const rate = frozenFxRate(t)
   const realizedRate = settledFxRate(t)
   let moneyComplete = initialQty > 0 && Number.isFinite(initialQty) && Number.isFinite(initialEntry)
-  const plannedRiskMoney = rate === null || initialQty <= 0 ? NaN : Math.abs(initialEntry - initialStop) * initialQty * rate
+  const riskEntry = original?.entryPrice ?? initialEntry, riskQty = original?.positionSize ?? initialQty
+  const plannedRiskMoney = rate === null || !(riskQty > 0) ? NaN : Math.abs(riskEntry - initialStop) * riskQty * rate
 
   let openQty = initialQty
   let avgEntry = initialEntry

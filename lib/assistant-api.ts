@@ -52,7 +52,8 @@ export async function readJsonObject(req: NextRequest) {
 }
 
 export function onlyKeys(input: Record<string, unknown>, keys: readonly string[]) {
-  if (Object.keys(input).some((key) => !keys.includes(key))) throw new ApiError(400, 'Unbekanntes Eingabefeld.')
+  const unknown = Object.keys(input).filter(key => !keys.includes(key))
+  if (unknown.length) throw new ApiError(400, `Unbekanntes Eingabefeld: ${unknown.map(key => key.replace(/[^a-zA-Z0-9_.-]/g,'?').slice(0,80)).join(', ')}.`)
 }
 
 export function versionFromHeader(req: NextRequest) {
@@ -71,4 +72,10 @@ export function positiveId(raw: string) {
 export function uuidId(raw: string) {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw)) throw new ApiError(400, 'Ungültige ID.')
   return raw
+}
+
+export function requestKey(req: NextRequest) {
+  const key = req.headers.get('idempotency-key')
+  if (!key) throw new ApiError(400, 'Idempotency-Key als UUID erforderlich.')
+  return uuidId(key)
 }

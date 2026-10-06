@@ -7,6 +7,7 @@ export type PlanContext = {
   stopManagement: string
   targetManagement: string
   riskConfirmed: boolean
+  rules?: { name: string; version: string | null; text: string }[]
 }
 
 export const emptyPlanContext = (): PlanContext => ({ version: 1, expectedMove: '', entryTrigger: '',
@@ -16,7 +17,7 @@ export function normalizePlanContext(raw: unknown): PlanContext | null {
   if (raw == null) return null
   if (typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Plan-Kontext ist ungültig.')
   const r = raw as Record<string, unknown>
-  const keys = ['version', 'expectedMove', 'entryTrigger', 'stopManagement', 'targetManagement', 'riskConfirmed']
+  const keys = ['version', 'expectedMove', 'entryTrigger', 'stopManagement', 'targetManagement', 'riskConfirmed', 'rules']
   if (r.version !== 1 || typeof r.riskConfirmed !== 'boolean' || Object.keys(r).some(k => !keys.includes(k))) {
     throw new Error('Plan-Kontext ist ungültig.')
   }
@@ -26,6 +27,15 @@ export function normalizePlanContext(raw: unknown): PlanContext | null {
     result[key] = r[key].trim()
   }
   result.riskConfirmed = r.riskConfirmed
+  if ('rules' in r) {
+    if (!Array.isArray(r.rules) || r.rules.length > 20) throw new Error('Bestätigte Regelbezüge sind ungültig.')
+    result.rules = r.rules.map(v => {
+      if (!v || typeof v !== 'object' || Array.isArray(v) || Object.keys(v).some(k => !['name','version','text'].includes(k)) ||
+          typeof v.name !== 'string' || !v.name.trim() || v.name.length > 200 || typeof v.text !== 'string' || !v.text.trim() || v.text.length > 4000 ||
+          (v.version !== null && (typeof v.version !== 'string' || !v.version.trim() || v.version.length > 200))) throw new Error('Bestätigte Regelbezüge sind ungültig.')
+      return { name: v.name.trim(), version: v.version?.trim() ?? null, text: v.text.trim() }
+    })
+  }
   return result
 }
 
@@ -69,10 +79,18 @@ export function requireCompletePlan(t: PlannedTrade): void {
 }
 
 /** Recorded at activation, never reconstructed from a later management change. */
-export function planningSnapshot(t: PlannedTrade & { feeEntry?: number | null; feeExit?: number | null; targets?: readonly unknown[] | null }) {
-  return { version: 1, planContext: t.planContext ?? null, entryPrice: t.entryPrice, stopLoss: t.stopLoss,
+export function planningSnapshot(t: PlannedTrade & { feeEntry?: number | null; feeExit?: number | null; targets?: readonly unknown[] | null;
+  elliottWaveCount?: string | null; waveDegree?: string | null; strategy?: string | null; setupTags?: string | null;
+  investedAmount?: number | null; leverage?: number | null; contracts?: number | null; notes?: string | null }) {
+  return { version: 2, planContext: t.planContext ?? null, entryPrice: t.entryPrice, stopLoss: t.stopLoss,
     takeProfit: t.takeProfit, elliottInvalidation: t.elliottInvalidation, positionSize: t.positionSize,
     direction: t.direction, quoteCurrency: t.quoteCurrency, accountCurrency: t.accountCurrency,
     quoteToAccountRate: t.quoteToAccountRate, fxRateAt: t.fxRateAt, feeEntry: t.feeEntry, feeExit: t.feeExit,
-    targets: t.targets ?? [] }
+    targets: t.targets ?? null, elliottWaveCount: t.elliottWaveCount ?? null, waveDegree: t.waveDegree ?? null,
+    strategy: t.strategy ?? null, setupTags: t.setupTags ?? null, investedAmount: t.investedAmount ?? null,
+    notes: t.notes ?? null,
+    leverage: t.leverage ?? null, contracts: t.contracts ?? null,
+    ruleReferences: t.planContext?.rules ?? null, gaps: [
+      ...(!t.planContext?.rules?.length ? ['Keine separate bestätigte Regelversion hinterlegt'] : t.planContext.rules.some(r=>!r.version) ? ['Mindestens ein Regelbezug ohne benannte Version'] : []),
+      ...(t.targets === undefined ? ['Zielstaffel nicht geladen'] : [])] }
 }
