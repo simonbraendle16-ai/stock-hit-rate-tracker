@@ -1,0 +1,72 @@
+[
+  {
+    "file": "ibm-plex-sans-latin-400-normal.woff2",
+    "sha256": "3b646991d30055a93a4ecc499713d4347953a74a947ecab435ab72070cbdab0e",
+    "package": "@fontsource/ibm-plex-sans@5.3.0"
+  },
+  {
+    "file": "ibm-plex-sans-latin-500-normal.woff2",
+    "sha256": "0717336fb31fcdcde4b8deb3675bb4a0f7f6d484864afcd6751ac29975962203",
+    "package": "@fontsource/ibm-plex-sans@5.3.0"
+  },
+  {
+    "file": "ibm-plex-sans-latin-600-normal.woff2",
+    "sha256": "8960851d691c054ed38e259bdcf1a6190d157b4203ed5bb32c632a863fb8ec2f",
+    "package": "@fontsource/ibm-plex-sans@5.3.0"
+  },
+  {
+    "file": "ibm-plex-sans-latin-700-normal.woff2",
+    "sha256": "42e7b0c143c19df9d99fd896e76b48f846edf0902d200bc29796b34d12c33aa7",
+    "package": "@fontsource/ibm-plex-sans@5.3.0"
+  },
+  {
+    "file": "LICENSE-ibm-plex-sans.txt",
+    "sha256": "d0283623ef57e722fd0eb688a8041589670c608ab780cd3612d06ba6f153d3fd",
+    "package": "@fontsource/ibm-plex-sans@5.3.0"
+  },
+  {
+    "file": "ibm-plex-serif-latin-400-normal.woff2",
+    "sha256": "cb2c5eee2c0a43ff30d2365407c7bc8b20e3bd90720a4a64102ba0b328022a02",
+    "package": "@fontsource/ibm-plex-serif@5.3.0"
+  },
+  {
+    "file": "ibm-plex-serif-latin-500-normal.woff2",
+    "sha256": "677082fc2e9ee60701b874fe5983c98ea9fb3b588cc1b02058ff9bf29ea783e4",
+    "package": "@fontsource/ibm-plex-serif@5.3.0"
+  },
+  {
+    "file": "ibm-plex-serif-latin-600-normal.woff2",
+    "sha256": "e279e4f8baa0d4634d98868092f2198ae0dcd9e142c935822c385b9843352a9b",
+    "package": "@fontsource/ibm-plex-serif@5.3.0"
+  },
+  {
+    "file": "ibm-plex-serif-latin-700-normal.woff2",
+    "sha256": "886ea167faf6610c3448a7dd058dbe7c7438f710229c9ff52343ef006960939c",
+    "package": "@fontsource/ibm-plex-serif@5.3.0"
+  },
+  {
+    "file": "LICENSE-ibm-plex-serif.txt",
+    "sha256": "b9e9c867b084f43f2bf0284808dbf394b5a027200577c246f2ac4fe2711da416",
+    "package": "@fontsource/ibm-plex-serif@5.3.0"
+  },
+  {
+    "file": "ibm-plex-mono-latin-400-normal.woff2",
+    "sha256": "08949f728dc52d528e69b1667d15c89a5686a4ee9a296ff90983985f99c380f7",
+    "package": "@fontsource/ibm-plex-mono@5.3.0"
+  },
+  {
+    "file": "ibm-plex-mono-latin-500-normal.woff2",
+    "sha256": "01d285447409c8a588692162439a038b8cbd7871309ee20267b0d2d91c6e8e22",
+    "package": "@fontsource/ibm-plex-mono@5.3.0"
+  },
+  {
+    "file": "ibm-plex-mono-latin-600-normal.woff2",
+    "sha256": "0d1f0b8d0722224e32e9f28261bdc86c79115be73444ae5eceb73976a1bcdf83",
+    "package": "@fontsource/ibm-plex-mono@5.3.0"
+  },
+  {
+    "file": "LICENSE-ibm-plex-mono.txt",
+    "sha256": "23b0a9d0c6d3f140a0b77e483c5cfa6bba574325ef5cb189ed9f2fec4884533f",
+    "package": "@fontsource/ibm-plex-mono@5.3.0"
+  }
+]

@@ -1,26 +1,40 @@
 import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
-import { IBM_Plex_Serif, IBM_Plex_Sans, IBM_Plex_Mono } from 'next/font/google'
+import localFont from 'next/font/local'
 import { Toaster } from '@/components/ui/sonner'
 import { AppBackdrop } from '@/components/app-backdrop'
 import './globals.css'
 
 // Institutionelles Terminal: IBM-Plex-Superfamilie — eine Vision, drei Rollen.
 // Serif = Titel & Hero-Zahlen (Gravitas), Sans = UI/Text, Mono = Daten/Kurse.
-const plexSerif = IBM_Plex_Serif({
+const plexSerif = localFont({
   variable: '--font-plex-serif',
-  subsets: ['latin'],
-  weight: ['400', '500', '600', '700'],
+  display: 'swap',
+  src: [
+    { path: './fonts/ibm-plex-serif-latin-400-normal.woff2', weight: '400', style: 'normal' },
+    { path: './fonts/ibm-plex-serif-latin-500-normal.woff2', weight: '500', style: 'normal' },
+    { path: './fonts/ibm-plex-serif-latin-600-normal.woff2', weight: '600', style: 'normal' },
+    { path: './fonts/ibm-plex-serif-latin-700-normal.woff2', weight: '700', style: 'normal' },
+  ],
 })
-const plexSans = IBM_Plex_Sans({
+const plexSans = localFont({
   variable: '--font-plex-sans',
-  subsets: ['latin'],
-  weight: ['400', '500', '600', '700'],
+  display: 'swap',
+  src: [
+    { path: './fonts/ibm-plex-sans-latin-400-normal.woff2', weight: '400', style: 'normal' },
+    { path: './fonts/ibm-plex-sans-latin-500-normal.woff2', weight: '500', style: 'normal' },
+    { path: './fonts/ibm-plex-sans-latin-600-normal.woff2', weight: '600', style: 'normal' },
+    { path: './fonts/ibm-plex-sans-latin-700-normal.woff2', weight: '700', style: 'normal' },
+  ],
 })
-const plexMono = IBM_Plex_Mono({
+const plexMono = localFont({
   variable: '--font-plex-mono',
-  subsets: ['latin'],
-  weight: ['400', '500', '600'],
+  display: 'swap',
+  src: [
+    { path: './fonts/ibm-plex-mono-latin-400-normal.woff2', weight: '400', style: 'normal' },
+    { path: './fonts/ibm-plex-mono-latin-500-normal.woff2', weight: '500', style: 'normal' },
+    { path: './fonts/ibm-plex-mono-latin-600-normal.woff2', weight: '600', style: 'normal' },
+  ],
 })
 
 export const metadata: Metadata = {
