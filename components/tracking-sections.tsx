@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { Activity, BarChart3, Repeat } from 'lucide-react'
+import { Activity, BarChart3, Repeat, Ruler } from 'lucide-react'
 
 // Etappe 14, Abschnitt 5: Gliederung der Auswertungsseite.
 //
@@ -23,6 +23,7 @@ import { Activity, BarChart3, Repeat } from 'lucide-react'
 // der Prozess, der in dieser App die eigentliche Aussage trägt.
 
 export const TRACKING_SECTIONS = [
+  { id: 'fibonacci', label: 'Fibonacci', hint: 'Wie tief korrigieren die Wellen?', icon: Ruler },
   { id: 'ergebnis', label: 'Ergebnis', hint: 'Was ist herausgekommen?', icon: BarChart3 },
   { id: 'prozess', label: 'Prozess', hint: 'Wie bin ich damit umgegangen?', icon: Activity },
   { id: 'muster', label: 'Muster', hint: 'Was zeigt sich über viele Trades?', icon: Repeat },
@@ -50,7 +51,7 @@ export function TrackingNav() {
 /**
  * Überschrift eines Abschnitts, zugleich Sprungziel.
  *
- * `scroll-mt-20`: Ohne Abstand landet die Überschrift beim Springen unter der
+ * `scroll-mt-40`: Ohne Abstand landet die Überschrift beim Springen unter der
  * Kopfzeile und man sieht mitten im ersten Panel.
  */
 export function TrackingSection({
@@ -63,7 +64,7 @@ export function TrackingSection({
   const section = TRACKING_SECTIONS.find((s) => s.id === id)!
   const Icon = section.icon
   return (
-    <div id={id} className="mt-8 scroll-mt-20 border-t border-border/60 pt-6">
+    <div id={id} className="mt-8 scroll-mt-40 border-t border-border/60 pt-6">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <h3 className="flex items-center gap-2 font-heading text-lg font-semibold tracking-tight text-foreground">
           <Icon className="size-4 text-primary" />

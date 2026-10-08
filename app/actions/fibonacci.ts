@@ -38,6 +38,7 @@ export async function saveFibonacci(
   try {
     const row = await saveFib(userId, uuidId(id), input, version)
     revalidatePath('/analysis')
+    revalidatePath('/tracking')
     revalidatePath(`/stock/${row.stockId}`)
     return { ok: true as const, row }
   } catch (e) {

@@ -19,14 +19,10 @@ export async function CockpitHeader({ userLabel }: { userLabel?: string | null }
     // Deckendes Panel statt `backdrop-blur`: Weichzeichnen ist ein Glas-Signal,
     // das der Designbrief („kein Glas, kein Glow") ausschließt.
     <header className="sticky top-0 z-10 border-b border-border bg-sidebar">
-      {/* Etappe 14: Auf dem Handy ZWEIZEILIG.
-          Logo, sieben Navigationspunkte, Depot-Umschalter und Abmelden brauchen
-          zusammen rund 620 Pixel — auf einem 390er Display erzwang das eine
-          horizontale Bildlaufleiste auf JEDER Seite der App. Kein Panel war
-          schuld, sondern der Kopf über allen.
-          Ab `sm` bleibt alles wie bisher in einer Zeile. */}
-      <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 sm:flex-nowrap sm:px-6 sm:py-4">
-        <Link href="/" className="flex min-w-0 items-center gap-3">
+      {/* Die Navigation hat eine eigene Zeile; neun Ziele passen zusammen mit
+          Logo und Kontoauswahl auch auf dem Desktop nicht in max-w-6xl. */}
+      <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 sm:px-6 sm:py-4">
+        <Link href="/" className="flex shrink-0 items-center gap-3">
           <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
             <Activity className="size-5" />
           </div>
@@ -37,16 +33,13 @@ export async function CockpitHeader({ userLabel }: { userLabel?: string | null }
             <p className="eyebrow mt-0.5">Disziplin · Elliott · Trefferquote</p>
           </div>
         </Link>
-        {/* Auf dem Handy als eigene Zeile unter Logo und Depot — dort ist Platz
-            für alle sieben Ziele, ohne dass eines hinter einem Menü verschwindet.
-            Ein Menü wäre ein zusätzlicher Griff bei jedem Seitenwechsel. */}
-        <div className="order-last w-full overflow-x-auto sm:order-none sm:w-auto sm:overflow-visible">
+        <div className="order-last w-full min-w-0 overflow-x-auto">
           <CockpitNav />
         </div>
         <div className="flex min-w-0 items-center gap-2">
           <PortfolioSwitcher portfolios={portfolios} scope={scope} />
           {userLabel && (
-            <span className="hidden font-mono text-xs text-muted-foreground lg:inline">
+            <span className="hidden max-w-40 truncate font-mono text-xs text-muted-foreground lg:inline">
               {userLabel}
             </span>
           )}

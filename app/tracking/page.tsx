@@ -39,6 +39,8 @@ import { getBotTwinStats } from '@/app/actions/bot-twin'
 import { getInstrumentCards } from '@/app/actions/instruments'
 import { getSettings } from '@/app/actions/settings'
 import { formatMoney } from '@/lib/format'
+import { getFibonacciData } from '@/app/actions/fibonacci'
+import { FibonacciPanel } from '@/components/fibonacci-panel'
 
 function monthKey(t: TradeRow): string {
   const d = t.closedAt ? new Date(t.closedAt) : new Date(t.createdAt)
@@ -64,6 +66,7 @@ export default async function TrackingPage() {
     instruments,
     // Die aktive Auswahl: entscheidet, ob diese Seite Papiergeld zeigt.
     kontext,
+    fibonacci,
   ] =
     await Promise.all([
       getDisciplineStats(),
@@ -81,6 +84,7 @@ export default async function TrackingPage() {
       getSettings(),
       getInstrumentCards(),
       getScopeContext(),
+      getFibonacciData(),
     ])
   const completed = trades.filter((t) => t.status === 'abgeschlossen')
 
@@ -140,6 +144,16 @@ export default async function TrackingPage() {
 
         {/* Etappe 14: Drei Sprungmarken statt einer Panel-Säule ohne Ordnung. */}
         <TrackingNav />
+
+        <TrackingSection id="fibonacci">
+          <p className="mt-3 text-sm text-muted-foreground">
+            Beobachtete Korrekturtiefen deiner Instrumente, unabhängig vom ausgewählten Depot.
+            Filtere nach Welle, Markt und Zeitraum; nur abgeschlossene Messungen zählen in die Statistik.
+          </p>
+          <div className="mt-4">
+            <FibonacciPanel observations={fibonacci.observations} instruments={fibonacci.instruments} />
+          </div>
+        </TrackingSection>
 
         <TrackingSection id="ergebnis">
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">

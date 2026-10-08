@@ -4,7 +4,7 @@ Stand: 08.10.2026. Lokale Erweiterung im führenden Tracker-Repository; produkti
 
 ## Bedienung
 
-Auf **Analyse** liegt die instrumentübergreifende Fibonacci-Auswertung. Auf jeder **Instrumentseite** erscheint dieselbe Auswertung auf dieses Instrument begrenzt. „Beobachtung“ öffnet das Formular. Ein Trade ist keine Voraussetzung.
+Auf **Auswertung → Fibonacci** liegt die instrumentübergreifende Fibonacci-Auswertung direkt als erster Abschnitt mit Sprungmarke. Sie bleibt zusätzlich auf **Analyse** erreichbar. Die Messungen gelten über Depotgrenzen hinweg; der Depotumschalter filtert sie nicht. Auf jeder **Instrumentseite** erscheint dieselbe Auswertung auf dieses Instrument begrenzt. „Beobachtung“ öffnet das Formular. Ein Trade ist keine Voraussetzung.
 
 1. Instrument, Welle, Wellengrad, Zeiteinheit und Beobachtungsdatum wählen.
 2. Tatsächlich gemessene Tiefe direkt in Prozent eingeben oder Anfang/Ende der Referenzbewegung und das folgende Korrekturextrem eintragen. Preise müssen dieselbe Währung, Bereinigung und Kursskala verwenden. Dezimalwerte über das Zahlenfeld eingeben.
