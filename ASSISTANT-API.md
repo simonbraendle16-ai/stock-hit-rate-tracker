@@ -39,3 +39,8 @@ Migrationen: `drizzle/0038_journal_insights.sql`, `0039_assistant_api_tokens.sql
 Prüfung: `pnpm test` und `pnpm exec tsc --noEmit --incremental false`. Die Smoke-Skripte unter `scripts/smoke-assistant-*.mjs` verwenden isolierte Daten. Produktive Lese-, Schreib-, Konflikt- und Widerrufstests liefen am 23.09.2026 erfolgreich. Der persönliche Token wurde danach nur lesend geprüft: 26 Trades, 2 Depots. Insgesamt liegen 52 Trades über mehrere Accounts in der Datenbank.
 
 Nicht umgesetzt: Import historischer Ausführungen, Broker-Anbindung, Astra-Synchronisation, Volltextsuche und Änderungshistorie. Erkenntnisse liegen derzeit im Tracker. Unsichere Angaben aus Gesprächen nicht als Trade-Fakten schreiben.
+
+
+## Fibonacci-Beobachtungen (lokale Erweiterung 08.10.2026)
+
+Neue GET/POST/PATCH-Routen unter `/api/assistant/v1/fibonacci`, geschützt mit `trades:read`/`trades:write`. Vollständiger Mess-, Statistik-, Versions- und Migrationsvertrag: [FIBONACCI.md](FIBONACCI.md). Vor Veröffentlichung Migration 0048 anwenden; dieser Abschnitt ist kein Produktionsnachweis.

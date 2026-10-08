@@ -1,3 +1,5 @@
+import { FibonacciPanel } from '@/components/fibonacci-panel'
+import { getFibonacciData } from '@/app/actions/fibonacci'
 import { auth } from '@/lib/auth'
 import { headers } from 'next/headers'
 import { redirect, notFound } from 'next/navigation'
@@ -36,12 +38,13 @@ export default async function StockDetailPage({
   const stockId = Number(id)
   if (!Number.isInteger(stockId)) notFound()
 
-  const [detail, trades, drawings, instrument, settings] = await Promise.all([
+  const [detail, trades, drawings, instrument, settings, fibonacci] = await Promise.all([
     getStockDetail(stockId),
     getInstrumentTrades(stockId),
     getDrawings(stockId),
     getInstrumentCard(stockId),
     getSettings(),
+    getFibonacciData(stockId),
   ])
   // Kontrakt-Spezifikation (Teil 3): Sie gehoert ans Instrument, weil dort auch
   // die Handeingabe liegt — und weil jede Risikozahl eines Kontrakt-Trades an
@@ -260,6 +263,7 @@ export default async function StockDetailPage({
             assessments={detail.assessments}
           />
         </div>
+        <FibonacciPanel {...fibonacci} stockId={stockId} />
       </main>
     </div>
   )

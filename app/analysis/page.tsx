@@ -1,3 +1,5 @@
+import { FibonacciPanel } from '@/components/fibonacci-panel'
+import { getFibonacciData } from '@/app/actions/fibonacci'
 import { auth } from '@/lib/auth'
 import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
@@ -22,12 +24,13 @@ export default async function AnalysisPage() {
   const session = await auth.api.getSession({ headers: await headers() })
   if (!session?.user) redirect('/sign-in')
 
-  const [stats, stocks, timeline, instruments, settings] = await Promise.all([
+  const [stats, stocks, timeline, instruments, settings, fibonacci] = await Promise.all([
     getOverallStats(),
     getStocksWithStats(),
     getHitRateTimeline(),
     getInstrumentCards(),
     getSettings(),
+    getFibonacciData(),
   ])
 
   return (
@@ -42,13 +45,14 @@ export default async function AnalysisPage() {
               Analyse
             </h2>
             <p className="mt-1 font-mono text-xs text-muted-foreground">
-              Reine Prognosen pro Instrument — richtig vs. falsch, ohne echtes Geld.
+              Prognosen und beobachtete Fibonacci-Tiefen pro Instrument, Welle und Markt.
             </p>
           </div>
           <AddStockDialog />
         </div>
 
         <StatCards stats={stats} />
+        <FibonacciPanel {...fibonacci} />
 
         <div className="mt-6">
           <HitRateTimeline data={timeline} />

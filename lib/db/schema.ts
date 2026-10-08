@@ -1039,3 +1039,14 @@ export const candleCollectRun = pgTable('candle_collect_run', {
   candlesAdded: integer('candlesAdded').notNull().default(0),
   error: text('error'),
 })
+
+// Observed wave depths, separate from trade plans and chart drawings.
+export const fibonacciObservation = pgTable('fibonacci_observation', {
+ id: uuid('id').primaryKey(), userId: text('userId').notNull().references(()=>user.id,{onDelete:'cascade'}),
+ stockId: integer('stockId').notNull().references(()=>stock.id,{onDelete:'cascade'}),
+ wave:text('wave').notNull(),degree:text('degree').notNull(),timeframe:text('timeframe').notNull(),
+ observedOn:text('observedOn').notNull(),status:text('status').$type<'laufend'|'abgeschlossen'|'ungueltig'>().notNull(),
+ percent:doublePrecision('percent').notNull(),anchorStart:doublePrecision('anchorStart'),anchorEnd:doublePrecision('anchorEnd'),extreme:doublePrecision('extreme'),
+ note:text('note').notNull(),version:integer('version').notNull().default(1),
+ createdAt:timestamp('createdAt').notNull().defaultNow(),updatedAt:timestamp('updatedAt').notNull().defaultNow(),
+},table=>[index('fibonacci_owner_instrument').on(table.userId,table.stockId,table.observedOn)])
