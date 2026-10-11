@@ -58,7 +58,7 @@ if (!process.argv.includes('--empty')) {
   ]
   for (let i = 0; i < levels.length; i++)
     await database.query(
-      'INSERT INTO fibonacci_observation(id,"userId","stockId",wave,degree,timeframe,"observedOn",status,percent,note) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+      'INSERT INTO fibonacci_observation(id,"contextId","userId","stockId",wave,degree,timeframe,"observedOn",status,percent,note) VALUES ($1,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
       [
         randomUUID(),
         owner,

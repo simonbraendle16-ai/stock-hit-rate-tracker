@@ -57,6 +57,10 @@ try {
     )
     return data
   }
+  const baseline = (await request('?stockId=1')).stats
+  const sqlBaseline = (await client.query(`SELECT count(*)::int AS n, avg(percent)::float AS mean FROM fibonacci_observation WHERE "userId"=$1 AND "stockId"=1 AND status=$2 AND percent IS NOT NULL AND "measurementKind"=$3`, [owner, "abgeschlossen", "retracement"])).rows[0]
+  assert.equal(baseline.n, sqlBaseline.n)
+  if (baseline.mean !== null) assert.ok(Math.abs(baseline.mean - sqlBaseline.mean) < 1e-8)
   const input = {
     stockId: 1,
     wave: 'B',
@@ -92,12 +96,29 @@ try {
   )
   assert.equal(updated.percent, 50)
   assert.equal(updated.version, 2)
+  const revisions = await request('/' + id + '/revisions')
+  assert.equal(revisions.items.length, 2)
+  const context = await request('/context?instrument=FIBQA-S&wave=B')
+  assert.equal(context.instruments.length, 1)
+  assert.ok(context.contexts.length > 0)
+  const historyId = randomUUID()
+  const historyInput = { stockId: 1, interval: '1d', timezone: 'UTC', currency: 'EUR', source: 'Isolated HTTP history QA', origin: 'csv', candles: [{time: 1767225600, open: 100, high: 110, low: 90, close: 105, volume: 1}] }
+  const history = await request('/history', 'POST', historyInput, {'Idempotency-Key': historyId}, 201)
+  assert.equal((await request('/history/' + history.id)).candles.length, 1)
+  assert.equal((await request('/history', 'POST', historyInput, {'Idempotency-Key': historyId}, 201)).id, history.id)
+  assert.ok((await request('/history?stockId=1')).items.some(r => r.id === history.id))
+  const instrumentResponse = await fetch(base + '/api/assistant/v1/instruments', {headers: {authorization: 'Bearer ' + token}})
+  assert.equal(instrumentResponse.status, 200)
+  const instruments = await instrumentResponse.json()
+  assert.ok(instruments.items.some(c => c.stockId === 1))
+  await client.query('DELETE FROM fibonacci_history WHERE id=$1 AND "userId"=$2', [history.id, owner])
   await request('/' + id, 'PATCH', input, { 'X-Expected-Version': '1' }, 409)
   const paged = await request('?stockId=1&wave=B&limit=1')
   assert.equal(paged.items.length, 1)
   assert.ok(paged.stats.n > 1)
   assert.ok(paged.total > paged.items.length)
-  await request('?wave=bogus', 'GET', undefined, {}, 400)
+  assert.equal((await request('?wave=EigenesLabel')).total, 0)
+  await request('?wave=', 'GET', undefined, {}, 400)
   temp = mkdtempSync(join(tmpdir(), 'fibonacci-cli-qa-'))
   const envFile = join(temp, 'local.env')
   writeFileSync(
@@ -138,9 +159,11 @@ try {
   console.log(
     JSON.stringify({
       localOnly: true,
+      instrumentBaseline: { n: baseline.n, mean: baseline.mean, median: baseline.median },
       httpCreateReadRetryPatchConflict: true,
       fullSummaryAcrossPages: true,
       cliRead: true,
+      contextRevisionsHistoryInstrumentRead: true,
       browserRoundtrip: browserRow,
       productionAccess: false,
     }),

@@ -25,15 +25,16 @@ export async function migrateFibonacci(client) {
         'utf8',
       ),
     )
+    for (const file of ['0049_fibonacci_research.sql','0050_fibonacci_history.sql']) await client.query(readFileSync(new URL('../drizzle/'+file,import.meta.url),'utf8'))
     const after = await fingerprint()
     if (JSON.stringify(before) !== JSON.stringify(after))
       throw new Error('Historical data changed')
     const { rows } = await client.query(
       "SELECT count(*)::int AS n FROM information_schema.columns WHERE table_name='fibonacci_observation'",
     )
-    if (rows[0].n !== 16) throw new Error('Incomplete Fibonacci schema')
+    if (rows[0].n !== 32) throw new Error('Incomplete Fibonacci schema')
     await client.query('COMMIT')
-    return { migration: '0048', historyUnchanged: true, columns: rows[0].n }
+    return { migration: '0048–0050', historyUnchanged: true, columns: rows[0].n }
   } catch (e) {
     await client.query('ROLLBACK')
     throw e

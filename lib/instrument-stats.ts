@@ -93,6 +93,8 @@ export type InstrumentStats = {
   gap: number | null
   /** Prognosen + Trades — der Sortierschlüssel „nach Aktivität". */
   activity: number
+  research?: import('./research-metrics').ResearchMetrics
+  fibonacci?: {contexts:number;retracement:ReturnType<typeof import('./fibonacci').fibStats>;expansion:ReturnType<typeof import('./fibonacci').fibStats>}
 }
 
 const DECIDED = new Set(['gewinn', 'verlust'])
@@ -171,6 +173,7 @@ export function computeInstrumentStats(
   assessments: AssessmentLike[],
   trades: TradeRow[],
   eventsByTrade?: TradeEventsByTrade,
+  includeInactive = false,
 ): InstrumentStats[] {
   const assessmentsByStock = new Map<number, AssessmentLike[]>()
   for (const a of assessments) {
@@ -191,7 +194,7 @@ export function computeInstrumentStats(
   for (const inst of instruments) {
     const a = assessmentsByStock.get(inst.id) ?? []
     const t = tradesByStock.get(inst.id) ?? []
-    if (a.length === 0 && t.length === 0) continue
+    if (!includeInactive && a.length === 0 && t.length === 0) continue
 
     const assessmentStats = assessmentSide(a)
     const tradeStats = tradeSide(t, eventsByTrade)

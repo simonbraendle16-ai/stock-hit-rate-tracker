@@ -13,7 +13,7 @@ describe('currency-aware trade planning', () => {
     expect(projectStopLoss({ invested: 1056.2, entry: 754.43, sl: 769, direction: 'short', leverage: 5, fees: { entry: 0, exit: 0 }, quoteToAccountRate: 1 })!.netLoss).toBeCloseTo(-101.99, 2)
   })
   it('converts EUR capital to USD units, then USD profit back to EUR before EUR fees', () => {
-    const rate = resolveMoneyCurrency({ accountCurrency: 'EUR', quoteCurrency: 'USD', rates: { USD: 0.9 }, ratesAt: at }).quoteToAccountRate
+    const rate = resolveMoneyCurrency({ accountCurrency: 'EUR', quoteCurrency: 'USD', rates: { USD: 0.9 }, ratesAt: at, now: at }).quoteToAccountRate
     expect(computeShares(900, 100, 1, rate)).toBe(10)
     const sl = projectStopLoss({ invested: 900, entry: 100, sl: 90, direction: 'long', quoteToAccountRate: rate, fees: { entry: 2, exit: 3 } })!
     const tp = projectTakeProfit({ invested: 900, entry: 100, tp: 120, direction: 'long', sellPct: 100, quoteToAccountRate: rate, fees: { entry: 2, exit: 3 } })!
@@ -32,6 +32,12 @@ describe('currency-aware trade planning', () => {
     expect(() => resolveMoneyCurrency({ accountCurrency: 'EUR', rates: {} })).toThrow()
     expect(frozenFxRate({})).toBeNull()
     expect(frozenFxRate({ accountCurrency: 'EUR', quoteCurrency: 'USD', quoteToAccountRate: 0.9, fxRateAt: at })).toBe(0.9)
+  })
+  it('checks FX age against an explicit clock including future dates', () => {
+    const base = { accountCurrency: 'EUR', quoteCurrency: 'USD', rates: { USD: 0.9 }, ratesAt: at }
+    expect(resolveMoneyCurrency({ ...base, now: new Date(at.getTime() + 7 * 86400000) }).quoteToAccountRate).toBe(0.9)
+    expect(() => resolveMoneyCurrency({ ...base, now: new Date(at.getTime() + 7 * 86400000 + 1) })).toThrow()
+    expect(() => resolveMoneyCurrency({ ...base, now: new Date(at.getTime() - 1) })).toThrow()
   })
   it('does not add EUR and USD portfolios as if they were the same unit', () => {
     expect(scopeCurrency([{ currency: 'EUR' }], 'USD')).toBe('EUR')

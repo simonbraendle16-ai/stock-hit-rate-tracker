@@ -1,3 +1,5 @@
+> Lokaler Fibonacci-Ausbau vom 11.10.2026 (noch nicht veröffentlicht): Kontext-/Revisions-/Kursdatenrouten und gemeinsame Instrument-Gesamtwerte samt Filtern und Kennzahlen stehen im maßgeblichen Nachtrag von [FIBONACCI.md](FIBONACCI.md). Bestehende Tokenrechte bleiben erhalten; Migrationen 0048–0050 und Deployment separat.
+
 # Trading-Journal-API
 
 Stand: 23.09.2026. Basis: `https://stock-hit-rate-tracker-astra-quest.vercel.app/api/assistant/v1`. Die API ergänzt `/journal` und `/settings/assistant-api`; sie führt keine Broker-Orders aus.

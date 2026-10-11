@@ -1,18 +1,23 @@
-import { db } from '@/lib/db'
-import { fibonacciObservation as observation, stock } from '@/lib/db/schema'
-import { and, eq, desc, sql } from 'drizzle-orm'
-import { ApiError } from '@/lib/assistant-api'
+import { isDeepStrictEqual } from "node:util";
+import { db } from "@/lib/db";
+import {
+  fibonacciObservation as observation,
+  stock,
+  trade,
+} from "@/lib/db/schema";
+import { and, eq, desc, sql, or } from "drizzle-orm";
+import { ApiError } from "@/lib/assistant-api";
 import {
   FibonacciError,
   validateFibInput,
   type FibObservation,
-} from '@/lib/fibonacci'
+} from "@/lib/fibonacci";
 export function fibValues(raw: Record<string, unknown>) {
   try {
-    return validateFibInput(raw)
+    return validateFibInput(raw);
   } catch (e) {
-    if (e instanceof FibonacciError) throw new ApiError(422, e.message)
-    throw e
+    if (e instanceof FibonacciError) throw new ApiError(422, e.message);
+    throw e;
   }
 }
 export async function listFib(
@@ -41,20 +46,20 @@ export async function listFib(
       desc(observation.observedOn),
       desc(observation.createdAt),
       desc(observation.id),
-    )
+    );
   return rows.map(({ observation: row, ...instrument }) => {
-    const { userId: _, createdAt: __, updatedAt: ___, ...data } = row
-    return { ...data, ...instrument }
-  })
+    const { userId: _, createdAt: __, updatedAt: ___, ...data } = row;
+    return { ...data, ...instrument };
+  });
 }
 export async function getFib(userId: string, id: string) {
   const [row] = await db
     .select()
     .from(observation)
-    .where(and(eq(observation.id, id), eq(observation.userId, userId)))
-  if (!row) throw new ApiError(404, 'Beobachtung nicht gefunden.')
-  const { userId: _, ...result } = row
-  return result
+    .where(and(eq(observation.id, id), eq(observation.userId, userId)));
+  if (!row) throw new ApiError(404, "Beobachtung nicht gefunden.");
+  const { userId: _, ...result } = row;
+  return result;
 }
 export async function saveFib(
   userId: string,
@@ -62,15 +67,110 @@ export async function saveFib(
   raw: Record<string, unknown>,
   version?: number,
 ) {
-  const values = fibValues(raw)
+  let merged = raw;
+  if (version !== undefined) {
+    const previous = await getFib(userId, id);
+    // Legacy full-replacement clients keep new metadata they do not know about.
+    const extended = [
+      "measurementKind",
+      "measurementBasis",
+      "contextId",
+      "sourceKey",
+      "sourceRef",
+      "periodFrom",
+      "periodTo",
+      "structure",
+      "target",
+      "stopDescription",
+      "tradability",
+      "hypotheticalOutcome",
+      "actualOutcome",
+      "tradeId",
+      "historyId",
+      "stopVariants",
+    ] as const;
+    merged = { ...raw };
+    for (const key of extended) if (!(key in raw)) merged[key] = previous[key];
+    if (merged.contextId !== previous.contextId)
+      throw new ApiError(
+        409,
+        "Wellenkontext ist stabil; die vorhandene Kennung verwenden.",
+      );
+  }
+  const validated = fibValues(merged);
+  const values = { ...validated, contextId: validated.contextId ?? id };
   const [owned] = await db
     .select({ id: stock.id })
     .from(stock)
-    .where(and(eq(stock.id, values.stockId), eq(stock.userId, userId)))
-  if (!owned) throw new ApiError(404, 'Instrument nicht gefunden.')
+    .where(and(eq(stock.id, values.stockId), eq(stock.userId, userId)));
+  if (!owned) throw new ApiError(404, "Instrument nicht gefunden.");
+  if (values.tradeId) {
+    const [linked] = await db
+      .select({ id: trade.id })
+      .from(trade)
+      .where(
+        and(
+          eq(trade.id, values.tradeId),
+          eq(trade.userId, userId),
+          eq(trade.stockId, values.stockId),
+        ),
+      );
+    if (!linked) throw new ApiError(404, "Passender Trade nicht gefunden.");
+  }
+  if (values.historyId) {
+    const linked = await db.execute(
+      sql`SELECT id FROM fibonacci_history WHERE id=${values.historyId}::uuid AND "userId"=${userId} AND "stockId"=${values.stockId}`,
+    );
+    if (!linked.rows.length)
+      throw new ApiError(404, "Passender Kursdatensatz nicht gefunden.");
+  }
+  const peers = await listFib(userId);
+  if (
+    version === undefined &&
+    !validated.contextId &&
+    values.periodFrom &&
+    values.periodTo &&
+    values.degree !== "unbekannt" &&
+    values.timeframe !== "unbekannt"
+  ) {
+    const matches = peers.filter(
+      (r) =>
+        r.stockId === values.stockId &&
+        r.wave === values.wave &&
+        r.degree === values.degree &&
+        r.timeframe === values.timeframe &&
+        r.periodFrom === values.periodFrom &&
+        r.periodTo === values.periodTo,
+    );
+    const ids = [...new Set(matches.map((r) => r.contextId ?? r.id))];
+    if (ids.length > 1)
+      throw new ApiError(
+        409,
+        "Mehrere passende Wellenkontexte. Vorhandene Kontext-ID gezielt wählen.",
+      );
+    if (ids.length === 1) values.contextId = ids[0];
+  }
+  const context = peers.filter(
+    (r) => r.contextId === values.contextId && r.id !== id,
+  );
+  if (
+    context.some(
+      (r) =>
+        r.stockId !== values.stockId ||
+        r.wave !== values.wave ||
+        r.degree !== values.degree ||
+        r.timeframe !== values.timeframe ||
+        r.periodFrom !== values.periodFrom ||
+        r.periodTo !== values.periodTo,
+    )
+  )
+    throw new ApiError(
+      409,
+      "Wellenkontext gehört zu anderen Instrument-/Wellenangaben.",
+    );
   if (version !== undefined) {
     if (!Number.isSafeInteger(version) || version < 1)
-      throw new ApiError(400, 'Gültige Version erforderlich.')
+      throw new ApiError(400, "Gültige Version erforderlich.");
     const [row] = await db
       .update(observation)
       .set({
@@ -85,32 +185,67 @@ export async function saveFib(
           eq(observation.version, version),
         ),
       )
-      .returning()
+      .returning();
     if (!row) {
-      await getFib(userId, id)
+      await getFib(userId, id);
       throw new ApiError(
         409,
-        'Beobachtung wurde inzwischen geändert. Neu laden.',
-      )
+        "Beobachtung wurde inzwischen geändert. Neu laden.",
+      );
     }
   } else {
     const [inserted] = await db
       .insert(observation)
       .values({ ...values, id, userId })
       .onConflictDoNothing()
-      .returning()
+      .returning();
     if (!inserted) {
-      const existing = await getFib(userId, id)
+      const [match] = await db
+        .select({ id: observation.id })
+        .from(observation)
+        .where(
+          and(
+            eq(observation.userId, userId),
+            or(
+              eq(observation.id, id),
+              and(
+                eq(observation.measurementKind, values.measurementKind!),
+                or(
+                  eq(observation.contextId, values.contextId!),
+                  values.sourceKey
+                    ? eq(observation.sourceKey, values.sourceKey)
+                    : undefined,
+                ),
+              ),
+            ),
+          ),
+        );
+      if (!match)
+        throw new ApiError(409, "Erfassungskennung bereits vergeben.");
+      const existing = await getFib(userId, match.id);
       if (
         Object.entries(values).some(
-          ([key, value]) => existing[key as keyof typeof existing] !== value,
+          ([key, value]) =>
+            key !== "contextId" &&
+            (key === "stopVariants"
+              ? !isDeepStrictEqual(existing.stopVariants ?? [], value)
+              : existing[key as keyof typeof existing] !== value),
         )
       )
         throw new ApiError(
           409,
-          'Diese Erfassungs-ID gehört zu einer anderen Beobachtung.',
-        )
+          "Diese Erfassungs-ID oder Quelle gehört zu einer anderen Beobachtung. Vorhandene Kennung und Version zur Korrektur verwenden.",
+        );
+      return existing;
     }
   }
-  return getFib(userId, id)
+  return getFib(userId, id);
+}
+
+export async function getFibRevisions(userId: string, id: string) {
+  await getFib(userId, id);
+  const result = await db.execute(
+    sql`SELECT version,snapshot- 'userId' AS snapshot,"recordedAt" FROM fibonacci_revision WHERE "observationId"=${id}::uuid ORDER BY version DESC`,
+  );
+  return result.rows;
 }

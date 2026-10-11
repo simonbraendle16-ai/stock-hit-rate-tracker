@@ -21,7 +21,7 @@ export function ChartHeader({
   right?: React.ReactNode
 }) {
   return (
-    <div className="mb-4 flex items-start justify-between gap-3">
+    <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
       <div className="flex items-start gap-2.5">
         <Icon className="mt-0.5 size-4 shrink-0 text-primary" />
         <div>
@@ -29,7 +29,7 @@ export function ChartHeader({
           {subtitle && <p className="note mt-1">{subtitle}</p>}
         </div>
       </div>
-      {right && <div className="shrink-0">{right}</div>}
+      {right && <div className="min-w-0 max-w-full">{right}</div>}
     </div>
   )
 }

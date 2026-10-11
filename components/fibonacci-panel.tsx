@@ -1,25 +1,25 @@
-'use client'
-import { useMemo, useState, useTransition, useId } from 'react'
-import { useRouter } from 'next/navigation'
-import { toast } from 'sonner'
-import { Download, Plus, Pencil, Waves, ArrowRight } from 'lucide-react'
+"use client";
+import { useMemo, useState, useTransition, useId } from "react";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
+import { Download, Plus, Pencil, Waves, ArrowRight } from "lucide-react";
 import {
   Card,
   CardHeader,
   CardTitle,
   CardDescription,
   CardContent,
-} from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Field,
   FieldGroup,
   FieldLabel,
   FieldDescription,
-} from '@/components/ui/field'
+} from "@/components/ui/field";
 import {
   Select,
   SelectTrigger,
@@ -27,15 +27,15 @@ import {
   SelectContent,
   SelectGroup,
   SelectItem,
-} from '@/components/ui/select'
+} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogDescription,
-} from '@/components/ui/dialog'
-import { saveFibonacci } from '@/app/actions/fibonacci'
+} from "@/components/ui/dialog";
+import { saveFibonacci } from "@/app/actions/fibonacci";
 import {
   FIB_LEVELS,
   FIB_WAVES,
@@ -47,25 +47,36 @@ import {
   retracement,
   type FibObservation,
   type FibFilters,
-} from '@/lib/fibonacci'
-import { cn } from '@/lib/utils'
-type Instrument = { id: number; name: string; ticker: string; market: string }
+} from "@/lib/fibonacci";
+import { researchMetrics, type MetricSample } from "@/lib/research-metrics";
+import { ResearchMetricSummary } from "@/components/research-metric-summary";
+import {
+  FibonacciHistoryPanel,
+  type HistorySummary,
+} from "@/components/fibonacci-history-panel";
+import { StopVariantsEditor } from "@/components/fibonacci-stop-variants";
+import { cn } from "@/lib/utils";
+type Instrument = { id: number; name: string; ticker: string; market: string };
 type Props = {
-  observations: FibObservation[]
-  instruments: Instrument[]
-  stockId?: number
-}
+  observations: FibObservation[];
+  instruments: Instrument[];
+  stockId?: number;
+  samples?: MetricSample[];
+  histories?: HistorySummary[];
+};
 const fmt = (n: number | null) =>
-  n === null ? '—' : n.toLocaleString('de-DE', { maximumFractionDigits: 1 })
+  n === null
+    ? "Nicht berechenbar"
+    : n.toLocaleString("de-DE", { maximumFractionDigits: 1 });
 const marketNames: Record<string, string> = {
-  aktien: 'Aktien',
-  krypto: 'Krypto',
-  forex: 'Forex',
-  rohstoffe: 'Rohstoffe',
-  etf: 'ETF',
-  optionen: 'Optionen',
-  sonstiges: 'Sonstige',
-}
+  aktien: "Aktien",
+  krypto: "Krypto",
+  forex: "Forex",
+  rohstoffe: "Rohstoffe",
+  etf: "ETF",
+  optionen: "Optionen",
+  sonstiges: "Sonstige",
+};
 function Choice({
   label,
   value,
@@ -73,21 +84,21 @@ function Choice({
   options,
   all = true,
 }: {
-  label: string
-  value: string
-  onChange: (v: string) => void
-  options: { value: string; label: string }[]
-  all?: boolean
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+  all?: boolean;
 }) {
-  const id = useId()
-  const items = [...(all ? [{ value: 'all', label: 'Alle' }] : []), ...options]
+  const id = useId();
+  const items = [...(all ? [{ value: "all", label: "Alle" }] : []), ...options];
   return (
     <Field>
       <FieldLabel htmlFor={id}>{label}</FieldLabel>
       <Select
         items={items}
-        value={value || 'all'}
-        onValueChange={(v) => onChange(v === 'all' ? '' : String(v ?? ''))}
+        value={value || "all"}
+        onValueChange={(v) => onChange(v === "all" ? "" : String(v ?? ""))}
       >
         <SelectTrigger id={id} className="w-full">
           <SelectValue />
@@ -103,63 +114,91 @@ function Choice({
         </SelectContent>
       </Select>
     </Field>
-  )
+  );
 }
 const choices = (values: readonly string[]) =>
-  values.map((v) => ({ value: v, label: v }))
-export function FibonacciPanel({ observations, instruments, stockId }: Props) {
-  const [filters, setFilters] = useState<FibFilters>({ stockId }),
+  values.map((v) => ({ value: v, label: v }));
+export function FibonacciPanel({
+  observations,
+  instruments,
+  stockId,
+  samples = [],
+  histories = [],
+}: Props) {
+  const [filters, setFilters] = useState<FibFilters>({
+      stockId,
+      measurementKind: "retracement",
+    }),
     [editing, setEditing] = useState<FibObservation | null>(null),
     [open, setOpen] = useState(false),
-    [page, setPage] = useState(0)
+    [page, setPage] = useState(0);
   const filtered = useMemo(
       () => filterFib(observations, filters),
       [observations, filters],
     ),
-    stats = useMemo(() => fibStats(filtered), [filtered])
+    stats = useMemo(
+      () => fibStats(filtered, filters.measurementKind),
+      [filtered, filters.measurementKind],
+    );
+  const waveLabels = [
+    ...new Set([...FIB_WAVES, ...observations.map((r) => r.wave)]),
+  ];
+  const linkedIds = new Set(
+    filtered.flatMap((r) =>
+      r.status === "abgeschlossen" && r.tradeId ? [r.tradeId] : [],
+    ),
+  );
+  const metrics = researchMetrics(samples.filter((s) => linkedIds.has(s.id)));
   const set = (key: keyof FibFilters, value: string) => {
     setFilters((f) => ({
       ...f,
       [key]:
-        key === 'stockId'
+        key === "stockId"
           ? value
             ? Number(value)
             : undefined
           : value || undefined,
-    }))
-    setPage(0)
-  }
-  const waves = FIB_WAVES.map((wave) => ({
+    }));
+    setPage(0);
+  };
+  const waves = waveLabels.map((wave) => ({
     wave,
-    stats: fibStats(filtered.filter((r) => r.wave === wave)),
-  }))
+    stats: fibStats(
+      filtered.filter((r) => r.wave === wave),
+      filters.measurementKind,
+    ),
+  }));
   const groups = instruments
     .map((i) => ({
       instrument: i,
-      stats: fibStats(filtered.filter((r) => r.stockId === i.id)),
+      stats: fibStats(
+        filtered.filter((r) => r.stockId === i.id),
+        filters.measurementKind,
+      ),
     }))
     .filter((g) => g.stats.n > 0)
-    .sort((a, b) => b.stats.n - a.stats.n)
-  const maxCount = Math.max(1, ...stats.zones.map((z) => z.count))
+    .sort((a, b) => b.stats.n - a.stats.n);
+  const maxCount = Math.max(1, ...stats.zones.map((z) => z.count));
   const currentPage = Math.min(
     page,
     Math.max(0, Math.ceil(filtered.length / 20) - 1),
-  )
-  const shown = filtered.slice(currentPage * 20, (currentPage + 1) * 20)
+  );
+  const shown = filtered.slice(currentPage * 20, (currentPage + 1) * 20);
   const download = () => {
     const url = URL.createObjectURL(
-      new Blob([fibCsv(filtered)], { type: 'text/csv;charset=utf-8' }),
-    )
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'fibonacci-beobachtungen.csv'
-    a.click()
-    URL.revokeObjectURL(url)
-  }
+      new Blob([fibCsv(filtered)], { type: "text/csv;charset=utf-8" }),
+    );
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "fibonacci-beobachtungen.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
   return (
     <section
+      id="fibonacci"
       aria-label="Fibonacci-Auswertung"
-      className="mt-8 flex flex-col gap-5"
+      className="mt-8 flex min-w-0 flex-col gap-5 overflow-x-clip"
     >
       <div className="flex flex-wrap items-end justify-between gap-4 border-t border-border pt-8">
         <div>
@@ -167,11 +206,11 @@ export function FibonacciPanel({ observations, instruments, stockId }: Props) {
             Wellen · empirisch beobachtet
           </p>
           <h2 className="font-heading text-3xl tracking-tight">
-            Wie tief korrigiert die Welle?
+            Wellen messen. Muster prüfen.
           </h2>
           <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-            Fibonacci-Tiefen aus deinen Messungen. Vergleiche Wellen,
-            Wellengrade und Märkte auf derselben Prozentbasis.
+            Retracements und Expansionen aus deinen Messungen. Vergleiche
+            Wellen, Wellengrade und Märkte auf derselben Prozentbasis.
           </p>
         </div>
         <div className="flex gap-2">
@@ -185,8 +224,8 @@ export function FibonacciPanel({ observations, instruments, stockId }: Props) {
           </Button>
           <Button
             onClick={() => {
-              setEditing(null)
-              setOpen(true)
+              setEditing(null);
+              setOpen(true);
             }}
             disabled={!instruments.length}
           >
@@ -208,8 +247,8 @@ export function FibonacciPanel({ observations, instruments, stockId }: Props) {
             {!stockId && (
               <Choice
                 label="Instrument"
-                value={String(filters.stockId || '')}
-                onChange={(v) => set('stockId', v)}
+                value={String(filters.stockId || "")}
+                onChange={(v) => set("stockId", v)}
                 options={instruments.map((i) => ({
                   value: String(i.id),
                   label: `${i.ticker} · ${i.name}`,
@@ -217,9 +256,30 @@ export function FibonacciPanel({ observations, instruments, stockId }: Props) {
               />
             )}
             <Choice
+              label="Messart"
+              all={false}
+              value={filters.measurementKind || "retracement"}
+              onChange={(v) => set("measurementKind", v)}
+              options={[
+                { value: "retracement", label: "Retracement" },
+                { value: "expansion", label: "Expansion" },
+              ]}
+            />
+            <Choice
+              label="Status"
+              value={filters.status || ""}
+              onChange={(v) => set("status", v)}
+              options={choices([
+                "laufend",
+                "abgeschlossen",
+                "unklar",
+                "ungueltig",
+              ])}
+            />
+            <Choice
               label="Anlageklasse"
-              value={filters.market || ''}
-              onChange={(v) => set('market', v)}
+              value={filters.market || ""}
+              onChange={(v) => set("market", v)}
               options={Object.entries(marketNames).map(([value, label]) => ({
                 value,
                 label,
@@ -227,38 +287,38 @@ export function FibonacciPanel({ observations, instruments, stockId }: Props) {
             />
             <Choice
               label="Welle"
-              value={filters.wave || ''}
-              onChange={(v) => set('wave', v)}
-              options={choices(FIB_WAVES)}
+              value={filters.wave || ""}
+              onChange={(v) => set("wave", v)}
+              options={choices(waveLabels)}
             />
             <Choice
               label="Wellengrad"
-              value={filters.degree || ''}
-              onChange={(v) => set('degree', v)}
+              value={filters.degree || ""}
+              onChange={(v) => set("degree", v)}
               options={choices(FIB_DEGREES)}
             />
             <Choice
               label="Zeiteinheit"
-              value={filters.timeframe || ''}
-              onChange={(v) => set('timeframe', v)}
+              value={filters.timeframe || ""}
+              onChange={(v) => set("timeframe", v)}
               options={choices(FIB_TIMEFRAMES)}
             />
             <DateFilter
               label="Von"
-              value={filters.from || ''}
-              onChange={(v) => set('from', v)}
+              value={filters.from || ""}
+              onChange={(v) => set("from", v)}
             />
             <DateFilter
               label="Bis"
-              value={filters.to || ''}
-              onChange={(v) => set('to', v)}
+              value={filters.to || ""}
+              onChange={(v) => set("to", v)}
             />
             <div className="flex items-end">
               <Button
                 variant="ghost"
                 onClick={() => {
-                  setFilters({ stockId })
-                  setPage(0)
+                  setFilters({ stockId, measurementKind: "retracement" });
+                  setPage(0);
                 }}
               >
                 Filter zurücksetzen
@@ -272,35 +332,41 @@ export function FibonacciPanel({ observations, instruments, stockId }: Props) {
           )}
         </CardContent>
       </Card>
+      <ResearchMetricSummary metrics={metrics} />
+      <p className="text-xs text-muted-foreground">
+        Trade-Kennzahlen: eindeutig verknüpfte abgeschlossene Trades der
+        gefilterten abgeschlossenen Wellen, jeder Trade einmal. Hypothetische
+        Angaben bleiben davon getrennt.
+      </p>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[
           [
-            'Abgeschlossene Wellen',
+            "Abgeschlossene Wellen",
             String(stats.n),
-            `${stats.running} laufend · ${stats.invalid} ungültig`,
+            `${stats.running} laufend · ${stats.unclear} unklar · ${stats.invalid} ungültig · ${stats.missing} ohne Messwert`,
           ],
           [
-            'Durchschnitt',
+            "Durchschnitt",
             `${fmt(stats.mean)} %`,
-            'Arithmetischer Mittelwert der Tiefe',
+            "Arithmetischer Mittelwert der Tiefe",
           ],
           [
-            'Median',
+            "Median",
             `${fmt(stats.median)} %`,
             stats.n
               ? `Mittlere 50 %: ${fmt(stats.q1)}–${fmt(stats.q3)} %`
-              : 'Robuster Mittelpunkt der Stichprobe',
+              : "Robuster Mittelpunkt der Stichprobe",
           ],
           [
-            'Häufigste Endzone',
+            "Häufigste Endzone",
             stats.modes.length === 1
               ? `${fmt(stats.modes[0])} %`
               : stats.modes.length
-                ? 'Gleichstand'
-                : '—',
+                ? "Gleichstand"
+                : "—",
             stats.modes.length > 1
-              ? stats.modes.map(fmt).join(' / ') + ' %'
-              : 'Zuordnung zur nächsten Fibonacci-Marke',
+              ? stats.modes.map(fmt).join(" / ") + " %"
+              : "Zuordnung zur nächsten Fibonacci-Marke",
           ],
         ].map(([label, value, description]) => (
           <Card key={label}>
@@ -316,10 +382,34 @@ export function FibonacciPanel({ observations, instruments, stockId }: Props) {
           </Card>
         ))}
       </div>
+      <nav
+        aria-label="Wellendetails"
+        className="grid grid-cols-2 gap-3 md:grid-cols-5"
+      >
+        {waveLabels.map((wave) => {
+          const s = fibStats(
+            filterFib(observations, { ...filters, wave }),
+            filters.measurementKind,
+          );
+          return (
+            <Button
+              key={wave}
+              variant={filters.wave === wave ? "default" : "outline"}
+              className="h-auto min-w-0 flex-col items-start gap-1 whitespace-normal p-4 text-left"
+              onClick={() => set("wave", wave)}
+            >
+              <span className="text-lg">Welle {wave}</span>
+              <span className="text-xs">
+                n={s.n} · Median {fmt(s.median)} %
+              </span>
+            </Button>
+          );
+        })}
+      </nav>
       <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-        <Badge variant={stats.exploratory ? 'outline' : 'secondary'}>
+        <Badge variant={stats.exploratory ? "outline" : "secondary"}>
           {stats.exploratory
-            ? 'Explorativ · weniger als 10 Fälle'
+            ? "Explorativ · weniger als 10 Fälle"
             : `${stats.n} abgeschlossene Beobachtungen`}
         </Badge>
         Beschreibt deine erfasste Auswahl. Keine Prognose; auch mehr Fälle
@@ -334,20 +424,20 @@ export function FibonacciPanel({ observations, instruments, stockId }: Props) {
             </h3>
             <p className="max-w-md text-sm text-muted-foreground">
               {filtered.length
-                ? 'Laufende und ungültige Wellen zählen nicht zur Verteilung. Schließe eine beobachtete Welle ab oder passe die Filter an.'
-                : 'Erfasse eine Welle mit ihrer tatsächlich beobachteten Tiefe. Alte Trade-Ziele werden nicht als Messwerte übernommen.'}
+                ? "Laufende und ungültige Wellen zählen nicht zur Verteilung. Schließe eine beobachtete Welle ab oder passe die Filter an."
+                : "Erfasse eine Welle mit ihrer tatsächlich beobachteten Tiefe. Alte Trade-Ziele werden nicht als Messwerte übernommen."}
             </p>
             <Button
               variant="outline"
               disabled={!instruments.length}
               onClick={() => {
-                setEditing(null)
-                setOpen(true)
+                setEditing(null);
+                setOpen(true);
               }}
             >
               {instruments.length
-                ? 'Erste Messung erfassen'
-                : 'Zuerst ein Instrument anlegen'}
+                ? "Erste Messung erfassen"
+                : "Zuerst ein Instrument anlegen"}
             </Button>
           </CardContent>
         </Card>
@@ -472,8 +562,8 @@ export function FibonacciPanel({ observations, instruments, stockId }: Props) {
                           key={z.level}
                           title={`${wave}: ${z.count} von ${s.n} Fällen in Zone ${fmt(z.level)} %`}
                           className={cn(
-                            'rounded p-2 text-center font-mono',
-                            z.count ? 'bg-primary/15' : 'bg-muted/40',
+                            "rounded p-2 text-center font-mono",
+                            z.count ? "bg-primary/15" : "bg-muted/40",
                           )}
                           style={
                             z.count
@@ -483,7 +573,7 @@ export function FibonacciPanel({ observations, instruments, stockId }: Props) {
                               : undefined
                           }
                         >
-                          {z.count || '—'}
+                          {z.count || "—"}
                         </td>
                       ))}
                       <td className="text-center">{s.n}</td>
@@ -528,7 +618,7 @@ export function FibonacciPanel({ observations, instruments, stockId }: Props) {
                             <button
                               type="button"
                               className="text-primary underline-offset-4 hover:underline"
-                              onClick={() => set('stockId', String(i.id))}
+                              onClick={() => set("stockId", String(i.id))}
                             >
                               {i.ticker}
                             </button>
@@ -538,14 +628,14 @@ export function FibonacciPanel({ observations, instruments, stockId }: Props) {
                           </th>
                           <td>
                             {s.n}
-                            {s.exploratory ? ' *' : ''}
+                            {s.exploratory ? " *" : ""}
                           </td>
                           <td className="font-mono">{fmt(s.mean)} %</td>
                           <td className="font-mono">{fmt(s.median)} %</td>
                           <td className="font-mono">
                             {s.modes.length > 1
-                              ? 'Gleichstand'
-                              : fmt(s.modes[0]) + ' %'}
+                              ? "Gleichstand"
+                              : fmt(s.modes[0]) + " %"}
                           </td>
                         </tr>
                       ))}
@@ -596,7 +686,7 @@ export function FibonacciPanel({ observations, instruments, stockId }: Props) {
                         <th scope="row" className="py-3 text-left font-normal">
                           {r.ticker}
                           <p className="text-xs text-muted-foreground">
-                            {r.observedOn} · {r.timeframe}
+                            {r.observedOn} · {r.timeframe} · Version {r.version}
                           </p>
                         </th>
                         <td>
@@ -607,6 +697,9 @@ export function FibonacciPanel({ observations, instruments, stockId }: Props) {
                         </td>
                         <td className="font-mono">
                           {fmt(r.percent)} %
+                          <p className="text-xs text-muted-foreground">
+                            {r.measurementKind || "retracement"}
+                          </p>
                           {r.anchorStart !== null && (
                             <p className="text-[10px] text-muted-foreground">
                               {fmt(r.anchorStart)} → {fmt(r.anchorEnd)}
@@ -617,14 +710,35 @@ export function FibonacciPanel({ observations, instruments, stockId }: Props) {
                         </td>
                         <td className="max-w-xs">
                           <Badge variant="outline">
-                            {r.status === 'ungueltig'
-                              ? 'Ungültig'
-                              : r.status === 'laufend'
-                                ? 'Laufend'
-                                : 'Abgeschlossen'}
+                            {r.status === "ungueltig"
+                              ? "Ungültig"
+                              : r.status === "laufend"
+                                ? "Laufend"
+                                : r.status === "unklar"
+                                  ? "Unklar"
+                                  : "Abgeschlossen"}
                           </Badge>
                           <p className="mt-1 whitespace-pre-wrap break-words text-xs text-muted-foreground">
                             {r.note}
+                            {[
+                              r.measurementBasis,
+                              r.structure,
+                              r.stopDescription,
+                              r.sourceRef,
+                              r.periodFrom &&
+                                `${r.periodFrom}–${r.periodTo || "offen"}`,
+                              r.tradeId && `Trade ${r.tradeId}`,
+                              r.historyId && `Kursdaten ${r.historyId}`,
+                              `Handelbarkeit: ${r.tradability || "unbekannt"}`,
+                              `Hypothese: ${r.hypotheticalOutcome || "unbekannt"}`,
+                              `Tatsächlich (Nutzerangabe): ${r.actualOutcome || "unbekannt"}`,
+                            ]
+                              .filter(Boolean)
+                              .map((v, i) => (
+                                <span className="block" key={i}>
+                                  {v}
+                                </span>
+                              ))}
                           </p>
                         </td>
                         <td>
@@ -633,8 +747,8 @@ export function FibonacciPanel({ observations, instruments, stockId }: Props) {
                             size="icon"
                             aria-label={`Messung ${r.ticker} ${r.observedOn} bearbeiten`}
                             onClick={() => {
-                              setEditing(r)
-                              setOpen(true)
+                              setEditing(r);
+                              setOpen(true);
                             }}
                           >
                             <Pencil />
@@ -648,7 +762,7 @@ export function FibonacciPanel({ observations, instruments, stockId }: Props) {
               <div className="mt-4 flex items-center justify-between">
                 <span className="text-xs text-muted-foreground">
                   {currentPage * 20 + 1}–
-                  {Math.min((currentPage + 1) * 20, filtered.length)} von{' '}
+                  {Math.min((currentPage + 1) * 20, filtered.length)} von{" "}
                   {filtered.length}
                 </span>
                 <div className="flex gap-2">
@@ -675,6 +789,77 @@ export function FibonacciPanel({ observations, instruments, stockId }: Props) {
           )}
         </CardContent>
       </Card>
+      <div className="grid gap-3 md:grid-cols-2">
+        {[
+          ["Strukturen", stats.structures],
+          ["Stopbeschreibungen", stats.stops],
+        ].map(([title, raw]) => {
+          const f = raw as typeof stats.structures;
+          return (
+            <Card key={String(title)}>
+              <CardHeader>
+                <CardTitle>{String(title)}</CardTitle>
+                <CardDescription>
+                  n={f.n} · {f.missing} ohne Angabe · abgeschlossene gemessene
+                  Wellen
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {f.items.length ? (
+                  f.items.map((item) => (
+                    <p key={item.label} className="text-sm">
+                      {item.label}: {item.count} ({fmt(item.percent)} %)
+                    </p>
+                  ))
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    Keine Angaben für diese Auswahl.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>Stopvarianten im Vergleich</CardTitle>
+          <CardDescription>
+            Dokumentierte Nutzereinschätzungen, getrennt nach tatsächlichem und
+            hypothetischem Verlauf. Keine Simulation; keine automatische
+            Handelsregel.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          {stats.stopVariants.length ? (
+            stats.stopVariants.map((v, i) => (
+              <div key={i} className="border-t border-border pt-3 text-sm">
+                <p>
+                  {v.label} ·{" "}
+                  {v.kind === "tatsaechlich" ? "Tatsächlich" : "Hypothetisch"} ·
+                  n={v.n}
+                </p>
+                <p className="text-xs text-muted-foreground">{v.description}</p>
+                <p className="font-mono text-xs">
+                  {Object.entries(v.outcomes)
+                    .map(([k, n]) => `${k}: ${n}`)
+                    .join(" · ")}{" "}
+                  · Ø R {fmt(v.averageR)} (n={v.rCount})
+                </p>
+              </div>
+            ))
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Noch keine dokumentierten Varianten in dieser Auswahl.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+      <FibonacciHistoryPanel
+        key={stockId || filters.stockId || "all"}
+        stockId={stockId || filters.stockId}
+        histories={histories}
+      />
       <details className="rounded-lg border border-border p-4 text-xs text-muted-foreground">
         <summary className="cursor-pointer font-medium text-foreground">
           Messdefinition & Grenzen
@@ -712,8 +897,8 @@ export function FibonacciPanel({ observations, instruments, stockId }: Props) {
           <DialogHeader>
             <DialogTitle>
               {editing
-                ? 'Beobachtung korrigieren'
-                : 'Fibonacci-Beobachtung erfassen'}
+                ? "Beobachtung korrigieren"
+                : "Fibonacci-Beobachtung erfassen"}
             </DialogTitle>
             <DialogDescription>
               Eine konkrete Welle, ihre Referenzbewegung und das beobachtete
@@ -722,7 +907,7 @@ export function FibonacciPanel({ observations, instruments, stockId }: Props) {
           </DialogHeader>
           {open && (
             <FibForm
-              key={editing?.id || 'new'}
+              key={editing?.id || "new"}
               instruments={instruments}
               stockId={stockId || filters.stockId}
               existing={editing}
@@ -732,18 +917,18 @@ export function FibonacciPanel({ observations, instruments, stockId }: Props) {
         </DialogContent>
       </Dialog>
     </section>
-  )
+  );
 }
 function DateFilter({
   label,
   value,
   onChange,
 }: {
-  label: string
-  value: string
-  onChange: (v: string) => void
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
 }) {
-  const id = useId()
+  const id = useId();
   return (
     <Field>
       <FieldLabel htmlFor={id}>{label}</FieldLabel>
@@ -754,7 +939,7 @@ function DateFilter({
         onChange={(e) => onChange(e.target.value)}
       />
     </Field>
-  )
+  );
 }
 function FibForm({
   instruments,
@@ -762,36 +947,54 @@ function FibForm({
   existing,
   close,
 }: {
-  instruments: Instrument[]
-  stockId?: number
-  existing: FibObservation | null
-  close: () => void
+  instruments: Instrument[];
+  stockId?: number;
+  existing: FibObservation | null;
+  close: () => void;
 }) {
   const router = useRouter(),
     prefix = useId(),
     [pending, startTransition] = useTransition(),
-    [error, setError] = useState(''),
-    [id] = useState(() => existing?.id || crypto.randomUUID())
+    [error, setError] = useState(""),
+    [id] = useState(() => existing?.id || crypto.randomUUID());
+  const [stopVariants, setStopVariants] = useState(
+    existing?.stopVariants ?? [],
+  );
   const [form, setForm] = useState({
-    stockId: String(existing?.stockId || stockId || instruments[0]?.id || ''),
-    wave: existing?.wave || 'B',
-    degree: existing?.degree || 'Minor',
-    timeframe: existing?.timeframe || '1d',
+    stockId: String(existing?.stockId || stockId || instruments[0]?.id || ""),
+    wave: existing?.wave || "B",
+    degree: existing?.degree || "unbekannt",
+    timeframe: existing?.timeframe || "unbekannt",
     observedOn: existing?.observedOn || new Date().toISOString().slice(0, 10),
-    status: existing?.status || 'laufend',
-    mode: existing?.anchorStart != null ? 'anchors' : 'direct',
-    percent: existing ? String(existing.percent) : '',
+    status: existing?.status || "laufend",
+    mode: existing?.anchorStart != null ? "anchors" : "direct",
+    percent: existing?.percent != null ? String(existing.percent) : "",
+    measurementKind: existing?.measurementKind || "retracement",
+    measurementBasis: existing?.measurementBasis || "",
+    structure: existing?.structure || "",
+    target: existing?.target != null ? String(existing.target) : "",
+    stopDescription: existing?.stopDescription || "",
+    sourceRef: existing?.sourceRef || "",
+    sourceKey: existing?.sourceKey || "",
+    periodFrom: existing?.periodFrom || "",
+    periodTo: existing?.periodTo || "",
+    tradeId: existing?.tradeId ? String(existing.tradeId) : "",
+    historyId: existing?.historyId || "",
+    contextId: existing?.contextId || "",
+    tradability: existing?.tradability || "unbekannt",
+    hypotheticalOutcome: existing?.hypotheticalOutcome || "unbekannt",
+    actualOutcome: existing?.actualOutcome || "unbekannt",
     anchorStart:
-      existing?.anchorStart != null ? String(existing.anchorStart) : '',
-    anchorEnd: existing?.anchorEnd != null ? String(existing.anchorEnd) : '',
-    extreme: existing?.extreme != null ? String(existing.extreme) : '',
-    note: existing?.note || '',
-  })
+      existing?.anchorStart != null ? String(existing.anchorStart) : "",
+    anchorEnd: existing?.anchorEnd != null ? String(existing.anchorEnd) : "",
+    extreme: existing?.extreme != null ? String(existing.extreme) : "",
+    note: existing?.note || "",
+  });
   const set = (key: keyof typeof form, value: string) =>
-    setForm((f) => ({ ...f, [key]: value }))
-  let preview: number | null = null
+    setForm((f) => ({ ...f, [key]: value }));
+  let preview: number | null = null;
   if (
-    form.mode === 'anchors' &&
+    form.mode === "anchors" &&
     form.anchorStart &&
     form.anchorEnd &&
     form.extreme
@@ -801,15 +1004,15 @@ function FibForm({
         Number(form.anchorStart),
         Number(form.anchorEnd),
         Number(form.extreme),
-      )
+      );
     } catch {}
   }
   const submit = (event: React.FormEvent) => {
-    event.preventDefault()
-    setError('')
+    event.preventDefault();
+    setError("");
     startTransition(async () => {
       try {
-        const anchored = form.mode === 'anchors'
+        const anchored = form.mode === "anchors";
         const result = await saveFibonacci(
           id,
           {
@@ -819,29 +1022,46 @@ function FibForm({
             timeframe: form.timeframe,
             observedOn: form.observedOn,
             status: form.status,
-            percent: anchored ? null : Number(form.percent),
+            percent:
+              anchored || form.percent === "" ? null : Number(form.percent),
             anchorStart: anchored ? Number(form.anchorStart) : null,
             anchorEnd: anchored ? Number(form.anchorEnd) : null,
             extreme: anchored ? Number(form.extreme) : null,
             note: form.note,
+            stopVariants,
+            measurementKind: form.measurementKind,
+            measurementBasis: form.measurementBasis || null,
+            structure: form.structure || null,
+            target: form.target ? Number(form.target) : null,
+            stopDescription: form.stopDescription || null,
+            sourceRef: form.sourceRef || null,
+            sourceKey: form.sourceKey || null,
+            periodFrom: form.periodFrom || null,
+            periodTo: form.periodTo || null,
+            tradeId: form.tradeId ? Number(form.tradeId) : null,
+            historyId: form.historyId || null,
+            contextId: form.contextId || null,
+            tradability: form.tradability,
+            hypotheticalOutcome: form.hypotheticalOutcome,
+            actualOutcome: form.actualOutcome,
           },
           existing?.version,
-        )
+        );
         if (!result.ok) {
-          setError(result.error)
-          router.refresh()
-          return
+          setError(result.error);
+          router.refresh();
+          return;
         }
-        toast.success('Beobachtung gespeichert und zurückgelesen.')
-        router.refresh()
-        close()
+        toast.success("Beobachtung gespeichert und zurückgelesen.");
+        router.refresh();
+        close();
       } catch {
         setError(
-          'Speicherung nicht bestätigt. Bitte erneut versuchen; dieselbe Erfassungs-ID verhindert Duplikate.',
-        )
+          "Speicherung nicht bestätigt. Bitte erneut versuchen; dieselbe Erfassungs-ID verhindert Duplikate.",
+        );
       }
-    })
-  }
+    });
+  };
   return (
     <form onSubmit={submit} className="flex flex-col gap-5">
       <fieldset disabled={pending} className="flex flex-col gap-4">
@@ -850,68 +1070,102 @@ function FibForm({
             all={false}
             label="Instrument"
             value={form.stockId}
-            onChange={(v) => set('stockId', v)}
+            onChange={(v) => set("stockId", v)}
             options={instruments.map((i) => ({
               value: String(i.id),
               label: `${i.ticker} · ${i.name}`,
             }))}
           />
-          <Choice
-            all={false}
-            label="Welle"
-            value={form.wave}
-            onChange={(v) => set('wave', v)}
-            options={choices(FIB_WAVES)}
-          />
+          <Field>
+            <FieldLabel htmlFor={prefix + "wave"}>
+              Welle / eigenes Label
+            </FieldLabel>
+            <Input
+              id={prefix + "wave"}
+              value={form.wave}
+              required
+              maxLength={40}
+              onChange={(e) => set("wave", e.target.value)}
+            />
+          </Field>
           <Choice
             all={false}
             label="Wellengrad"
             value={form.degree}
-            onChange={(v) => set('degree', v)}
+            onChange={(v) => set("degree", v)}
             options={choices(FIB_DEGREES)}
           />
           <Choice
             all={false}
             label="Zeiteinheit"
             value={form.timeframe}
-            onChange={(v) => set('timeframe', v)}
+            onChange={(v) => set("timeframe", v)}
             options={choices(FIB_TIMEFRAMES)}
           />
           <DateFilter
             label="Beobachtungsdatum"
             value={form.observedOn}
-            onChange={(v) => set('observedOn', v)}
+            onChange={(v) => set("observedOn", v)}
           />
           <Choice
             all={false}
             label="Wellenstatus"
             value={form.status}
-            onChange={(v) => set('status', v)}
+            onChange={(v) => set("status", v)}
             options={[
-              { value: 'laufend', label: 'Laufend' },
-              { value: 'abgeschlossen', label: 'Abgeschlossen' },
-              { value: 'ungueltig', label: 'Ungültig' },
+              { value: "laufend", label: "Laufend" },
+              { value: "abgeschlossen", label: "Abgeschlossen" },
+              { value: "unklar", label: "Unklar" },
+              { value: "ungueltig", label: "Ungültig" },
             ]}
           />
         </FieldGroup>
         <Choice
           all={false}
+          label="Messart"
+          value={form.measurementKind}
+          options={[
+            { value: "retracement", label: "Retracement" },
+            { value: "expansion", label: "Expansion" },
+          ]}
+          onChange={(v) =>
+            setForm((f) => ({
+              ...f,
+              measurementKind: v as "retracement" | "expansion",
+              mode: "direct",
+              anchorStart: "",
+              anchorEnd: "",
+              extreme: "",
+            }))
+          }
+        />
+        <Choice
+          all={false}
           label="Messmethode"
           value={form.mode}
-          onChange={(v) => set('mode', v)}
+          onChange={(v) => set("mode", v)}
           options={[
-            { value: 'direct', label: 'Tiefe direkt in Prozent' },
-            { value: 'anchors', label: 'Aus Referenzankern berechnen' },
+            { value: "direct", label: "Tiefe direkt in Prozent" },
+            ...(form.measurementKind === "retracement"
+              ? [{ value: "anchors", label: "Aus Referenzankern berechnen" }]
+              : []),
           ]}
         />
         <FieldGroup className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {(form.mode === 'anchors'
+          {(form.mode === "anchors"
             ? [
-                ['anchorStart', 'Anfang der Referenz'],
-                ['anchorEnd', 'Ende der Referenz'],
-                ['extreme', 'Beobachtetes Extrem'],
+                ["anchorStart", "Anfang der Referenz"],
+                ["anchorEnd", "Ende der Referenz"],
+                ["extreme", "Beobachtetes Extrem"],
               ]
-            : [['percent', 'Retracement in %']]
+            : [
+                [
+                  "percent",
+                  form.measurementKind === "expansion"
+                    ? "Expansion in %"
+                    : "Retracement in %",
+                ],
+              ]
           ).map(([key, label]) => (
             <Field key={key}>
               <FieldLabel htmlFor={prefix + key}>{label}</FieldLabel>
@@ -919,9 +1173,13 @@ function FibForm({
                 id={prefix + key}
                 type="number"
                 step="any"
-                min={key === 'percent' ? 0 : 0.00000001}
-                max={key === 'percent' ? 500 : undefined}
-                required
+                min={key === "percent" ? 0 : 0.00000001}
+                max={
+                  key === "percent" && form.measurementKind === "retracement"
+                    ? 500
+                    : undefined
+                }
+                required={form.mode === "anchors"}
                 value={form[key as keyof typeof form]}
                 onChange={(e) => set(key as keyof typeof form, e.target.value)}
                 aria-invalid={!!error}
@@ -929,7 +1187,7 @@ function FibForm({
             </Field>
           ))}
         </FieldGroup>
-        {form.mode === 'anchors' && (
+        {form.mode === "anchors" && (
           <p className="rounded-lg bg-muted p-3 font-mono text-sm">
             Berechnete Tiefe: <strong>{fmt(preview)} %</strong>
             <span className="mt-1 block font-sans text-xs text-muted-foreground">
@@ -938,14 +1196,82 @@ function FibForm({
             </span>
           </p>
         )}
+        <FieldGroup className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {(
+            [
+              ["measurementBasis", "Bezugsbasis (bei Expansion erforderlich)"],
+              ["structure", "Struktur / Korrekturtyp"],
+              ["target", "Kursziel"],
+              ["stopDescription", "Stop relativ zu Box / Trendwendebereich"],
+              ["sourceRef", "Quelle / Referenz"],
+              ["sourceKey", "Stabile Quellenkennung (optional)"],
+              ["periodFrom", "Zeitraum von"],
+              ["periodTo", "Zeitraum bis"],
+              ["tradeId", "Trade-ID (optional)"],
+              ["historyId", "Kursdatensatz-ID (optional)"],
+              ["contextId", "Wellenkontext-ID (optional)"],
+            ] as const
+          ).map(([key, label]) => (
+            <Field key={key}>
+              <FieldLabel htmlFor={prefix + key}>{label}</FieldLabel>
+              <Input
+                id={prefix + key}
+                value={form[key]}
+                required={
+                  key === "measurementBasis" &&
+                  form.measurementKind === "expansion"
+                }
+                type={
+                  key === "periodFrom" || key === "periodTo"
+                    ? "date"
+                    : key === "target" || key === "tradeId"
+                      ? "number"
+                      : "text"
+                }
+                step="any"
+                onChange={(e) => set(key, e.target.value)}
+              />
+            </Field>
+          ))}
+        </FieldGroup>
+        <FieldGroup className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <Choice
+            all={false}
+            label="Handelbarkeit (vorläufig)"
+            value={form.tradability}
+            onChange={(v) => set("tradability", v)}
+            options={choices(["unbekannt", "handelbar", "nicht_handelbar"])}
+          />
+          {(["hypotheticalOutcome", "actualOutcome"] as const).map((key) => (
+            <Choice
+              key={key}
+              all={false}
+              label={
+                key === "hypotheticalOutcome"
+                  ? "Hypothetischer Ausgang"
+                  : "Tatsächlicher Ausgang (Nutzerangabe)"
+              }
+              value={form[key]}
+              onChange={(v) => set(key, v)}
+              options={choices([
+                "unbekannt",
+                "gewinn",
+                "verlust",
+                "breakeven",
+                "ausgelassen",
+              ])}
+            />
+          ))}
+        </FieldGroup>
+        <StopVariantsEditor value={stopVariants} onChange={setStopVariants} />
         <Field data-invalid={!!error}>
-          <FieldLabel htmlFor={prefix + 'note'}>Messnotiz / Quelle</FieldLabel>
+          <FieldLabel htmlFor={prefix + "note"}>Messnotiz / Quelle</FieldLabel>
           <Textarea
-            id={prefix + 'note'}
+            id={prefix + "note"}
             required
             maxLength={2000}
             value={form.note}
-            onChange={(e) => set('note', e.target.value)}
+            onChange={(e) => set("note", e.target.value)}
             placeholder="Welche Welle und welcher Zeitraum? Quelle, Referenzpunkte, Abschlusskriterium …"
             aria-invalid={!!error}
           />
@@ -970,9 +1296,9 @@ function FibForm({
           Abbrechen
         </Button>
         <Button type="submit" disabled={pending}>
-          {pending ? 'Wird gespeichert …' : 'Speichern'}
+          {pending ? "Wird gespeichert …" : "Speichern"}
         </Button>
       </div>
     </form>
-  )
+  );
 }

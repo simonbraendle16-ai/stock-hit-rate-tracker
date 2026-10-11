@@ -1,3 +1,37 @@
+# Erweiterter Forschungsvertrag vom 11.10.2026
+
+Dieser Nachtrag beschreibt den lokal geprüften Ausbau; keine produktive Verfügbarkeit. Migrationen 0048–0050 additiv vor Veröffentlichung anwenden, ausschließlich nach separatem Produktivauftrag. Vorhandene IDs/Anker/Versionen bleiben erhalten; 0049 legt bestehende Revisionen an, weitere Änderungen protokolliert ein Trigger.
+
+## Beobachtungen und Zuordnung
+
+Wellenlabels 1–5/A/B/C/X/Y und eigene nichtleere Labels bis 40 Zeichen. `degree` und `timeframe` dürfen `unbekannt` sein; UI bietet beide Filter einschließlich alle/unbekannt. Status: laufend, abgeschlossen, unklar, ungueltig. Fehlender Prozentwert bleibt null. Retracement 0–500 %, direkt oder aus den bisherigen drei Ankern; Expansion als direkter endlicher nichtnegativer Prozentwert mit `measurementBasis`, keine Ankerformel.
+
+Optionale Felder: sourceKey/sourceRef, periodFrom/periodTo, structure, target, stopDescription, tradability, hypotheticalOutcome/actualOutcome, tradeId, historyId, stopVariants. Trade und Kursdatensatz müssen demselben Besitzer und Instrument gehören. `contextId` ist stabil und kennzeichnet die konkrete Welle. Eindeutig vollständig übereinstimmende Instrument-/Label-/Grad-/Timeframe-/Zeitraumangaben können einen bestehenden Kontext zuordnen; Mehrdeutigkeit ergibt 409. Ohne eindeutigen Bezug keine Zuordnung aus alten Trades erraten. Pro Besitzer/Kontext/Messart und Besitzer/sourceKey/Messart gilt Wiederholungsschutz. Inhaltliche Korrekturen erfolgen per PATCH mit aktueller Version, nicht durch neue IDs.
+
+## API
+
+Alle Pfade unter `/api/assistant/v1`, bestehende Tokenrechte `trades:read`/`trades:write`:
+
+- GET/POST `/fibonacci`, GET/PATCH `/fibonacci/{uuid}`; POST Idempotency-Key, PATCH X-Expected-Version. GET nach jedem Schreiben, zurückgegebene ID verwenden: Inhaltswiederholung kann die bereits vorhandene ID liefern.
+- GET `/fibonacci/context`: Instrument über genaue `instrument`-Bezeichnung/Ticker oder stockId eingrenzen; bestehende Wellenfilter. Antwort instruments/contexts/candidates/total/nextOffset/resolution (`eindeutig`, `mehrdeutig`, `instrument_unklar`, `neuer_fall`).
+- GET `/fibonacci/{uuid}/revisions`: items mit Version, Snapshot ohne userId und recordedAt.
+- GET/POST `/fibonacci/history`, GET `/fibonacci/history/{uuid}`. Liste stockId optional, aktuell höchstens 100 neueste Datensätze. POST CSV-normalisierte candles oder origin=cache mit from/to in Unix-Sekunden; immer Idempotency-Key. Imports unveränderlich, version=1; Korrektur als neuer Datensatz, danach Beobachtungsbezug versioniert ändern.
+- GET `/instruments`: items mit denselben kontoweiten Kartenwerten, separaten research-Kennzahlen, fibonacci-Fallzahlen und quote, basis nennt Gesamtwerte über alle Depots.
+
+Fibonacci-GET liefert items, total, nextOffset, stats, statsByKind, metrics und basis. Filter/Statistik gelten für die vollständige Auswahl vor Pagination. Messarten getrennt; abgeschlossene gültige Wellen je Kontext einmal. `metrics` zählt eindeutig verknüpfte abgeschlossene Trades einmal, dieselbe Berechnung wie UI. Kartenwerte bleiben kontoweit, auch bei Seiten-/Depotfiltern.
+
+## Kurse und Kennzahlen
+
+Vorhandener Kerzenspeicher nur lesend; keine Anbieterabfrage. CSV per Datei oder Einfügen mit Spaltenzuordnung/Vorschau; maximal 8.000.000 Zeichen und 20.000 Kerzen (Datei zusätzlich 8 MB). Quelle, Instrument, Intervall, Zeitzone und Währung erforderlich. UTC normalisieren, OHLC/Volumen prüfen, identische Zeitduplikate zusammenfassen, widersprüchliche ablehnen. DST-Mehrdeutigkeiten benötigen expliziten Offset. Datenlücken als größere Zeitabstände anzeigen, keine fehlenden Börsensitzungen erfinden. Import überschreibt weder gemeinsamen Kerzenspeicher noch frühere Datensätze; identischer normalisierter Inhalt inklusive Metadaten wird wiederverwendet.
+
+Gewinnquote = positive Nettoergebnisse / abgeschlossene Trades mit berechenbarem Nettoergebnis; Break-even/Verlust im Nenner. Geplantes CRV und realisiertes R verwenden belegte ursprüngliche Plan-Snapshots, keine späteren Stops. Fehlende Grundlage null / nicht berechenbar, jeweils eigene Fallzahl. Echtgeld/Demo und Währungen getrennt; dokumentierte hypothetische Stopvarianten sind keine abgerechneten Trades und werden separat ausgewertet.
+
+## Lokale Abnahme
+
+`node node_modules/vitest/vitest.mjs run`, unabhängiges `tsc --noEmit --incremental false`, `next build --webpack`. Lokale flüchtige QA: `node --experimental-strip-types scripts/fibonacci-local-preview.mjs --production`, danach `node scripts/verify-fibonacci-local.mjs`. Kein .env-Import durch den Preview-Runner; Datenbank und Auth-Ziel ausdrücklich Loopback. Vorschau nach Abschluss stoppen; keine synthetischen Daten im echten Konto.
+
+---
+
 # Fibonacci-Beobachtungen und Auswertung
 
 Stand: 08.10.2026. Lokale Erweiterung im führenden Tracker-Repository; produktive Migration und Veröffentlichung sind separat freizugeben.

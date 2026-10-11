@@ -39,12 +39,12 @@ export function apiResponseError(cause: unknown) {
   return NextResponse.json({ error: 'Dienst vorübergehend nicht verfügbar.' }, { status: 503 })
 }
 
-export async function readJsonObject(req: NextRequest) {
+export async function readJsonObject(req: NextRequest, maxLength = 65536) {
   if (!req.headers.get('content-type')?.toLowerCase().includes('application/json')) {
     throw new ApiError(400, 'Content-Type application/json erforderlich.')
   }
   const raw = await req.text()
-  if (raw.length > 65536) throw new ApiError(400, 'Anfrage zu groß.')
+  if (raw.length > maxLength) throw new ApiError(400, 'Anfrage zu groß.')
   let value: unknown
   try { value = JSON.parse(raw) } catch { throw new ApiError(400, 'Ungültiges JSON.') }
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ApiError(400, 'JSON-Objekt erwartet.')
