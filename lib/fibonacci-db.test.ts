@@ -77,6 +77,7 @@ beforeAll(async () => {
       "utf8",
     ),
   );
+  await pg.exec(readFileSync(new URL("../drizzle/0051_fibonacci_two_hour.sql", import.meta.url), "utf8"));
   for (const [key, value] of Object.entries(tokens))
     await pg.query(
       'INSERT INTO assistant_api_token ("userId","tokenHash",scopes) VALUES ($1,$2,$3)',
@@ -285,8 +286,10 @@ describe("Fibonacci isolated PostgreSQL and HTTP contract", () => {
     for (const file of [
       "0049_fibonacci_research.sql",
       "0050_fibonacci_history.sql",
+      "0051_fibonacci_two_hour.sql",
       "0049_fibonacci_research.sql",
       "0050_fibonacci_history.sql",
+      "0051_fibonacci_two_hour.sql",
     ])
       await pg.exec(
         readFileSync(new URL("../drizzle/" + file, import.meta.url), "utf8"),
@@ -310,7 +313,7 @@ describe("Fibonacci isolated PostgreSQL and HTTP contract", () => {
       const id = crypto.randomUUID();
       await legacy.query(`INSERT INTO fibonacci_observation(id,"userId","stockId",wave,degree,timeframe,"observedOn",status,percent,"anchorStart","anchorEnd",extreme,note,version) VALUES($1,'owner',1,'B','Minor','1d','2026-01-01','abgeschlossen',50,100,200,150,'Legacy source',3)`,[id]);
       const before = (await legacy.query('SELECT id,percent,"anchorStart","anchorEnd",extreme,note,version FROM fibonacci_observation')).rows;
-      for (const file of ['0049_fibonacci_research.sql','0050_fibonacci_history.sql','0049_fibonacci_research.sql','0050_fibonacci_history.sql']) await legacy.exec(migration(file));
+      for (const file of ['0049_fibonacci_research.sql','0050_fibonacci_history.sql','0051_fibonacci_two_hour.sql','0049_fibonacci_research.sql','0050_fibonacci_history.sql','0051_fibonacci_two_hour.sql']) await legacy.exec(migration(file));
       expect((await legacy.query('SELECT id,percent,"anchorStart","anchorEnd",extreme,note,version FROM fibonacci_observation')).rows).toEqual(before);
       expect((await legacy.query('SELECT "contextId", "measurementKind" FROM fibonacci_observation')).rows).toEqual([{contextId:id,measurementKind:'retracement'}]);
       expect((await legacy.query('SELECT version FROM fibonacci_revision')).rows).toEqual([{version:3}]);
@@ -464,4 +467,19 @@ describe("Fibonacci isolated PostgreSQL and HTTP contract", () => {
     expect(results[0].id).toBe(results[1].id);
     expect(await listFib("owner")).toHaveLength(1);
   });
+});
+
+it("supports two-hour observations and filters after an idempotent upgrade", async () => {
+  const old = await saveFib("owner", crypto.randomUUID(), input);
+  for (let i=0;i<2;i++) await pg.exec(readFileSync(new URL("../drizzle/0051_fibonacci_two_hour.sql", import.meta.url), "utf8"));
+  const row = await saveFib("owner", crypto.randomUUID(), {...input, timeframe:"2h",wave:"X",percent:70.2,anchorStart:null,anchorEnd:null,extreme:null});
+  expect((await getFib("owner",old.id)).timeframe).toBe(input.timeframe);
+  expect(row.timeframe).toBe("2h");
+  const response=await GET(request("?timeframe=2h&wave=X"));
+  expect(response.status).toBe(200);
+  const data=await response.json();
+  expect(data.items.map((r: {id:string})=>r.id)).toEqual([row.id]);
+  expect(data.stats.n).toBe(1);
+  expect(data.stats.mean).toBe(70.2);
+  await expect(saveFib("owner",crypto.randomUUID(),{...input,timeframe:"3h"})).rejects.toThrow();
 });

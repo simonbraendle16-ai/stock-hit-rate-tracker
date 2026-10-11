@@ -30,6 +30,7 @@ export const FIB_TIMEFRAMES = [
   "15m",
   "30m",
   "1h",
+  "2h",
   "4h",
   "1d",
   "1w",

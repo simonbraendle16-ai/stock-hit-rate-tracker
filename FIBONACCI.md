@@ -1,3 +1,7 @@
+## Nachtrag 11.10.2026: 2h und mobile Tabellen
+
+`2h` wird als Zeiteinheit für Beobachtungen, Filter und historische CSV-Datensätze unterstützt. Migration 0051 erweitert ausschließlich die Zeiteinheitsprüfung; bestehende Werte bleiben erhalten. Bei historischen Kursen ist ein 2h-Abstand 7.200 Sekunden. Die zugängliche Bearbeiten-Spaltenüberschrift bleibt im relativ positionierten Scrollcontainer; gefüllte Tabellen dürfen keine globale Seitenüberbreite erzeugen.
+
 # Erweiterter Forschungsvertrag vom 11.10.2026
 
 Dieser Nachtrag beschreibt den lokal geprüften Ausbau; keine produktive Verfügbarkeit. Migrationen 0048–0050 additiv vor Veröffentlichung anwenden, ausschließlich nach separatem Produktivauftrag. Vorhandene IDs/Anker/Versionen bleiben erhalten; 0049 legt bestehende Revisionen an, weitere Änderungen protokolliert ein Trigger.

@@ -77,3 +77,9 @@ describe("Research CSV without provider access", () => {
     expect(historyCoverage(a.candles, "1h").discontinuities).toBe(1);
   });
 });
+
+it("measures two-hour gaps without treating consecutive two-hour candles as missing", () => {
+  const candles=[{time:1767225600,open:100,high:110,low:95,close:105,volume:1000},{time:1767232800,open:105,high:115,low:100,close:112,volume:1200}];
+  expect(historyCoverage(candles,"2h").discontinuities).toBe(0);
+  expect(historyCoverage([candles[0],{...candles[1],time:1767247200}],"2h").discontinuities).toBe(1);
+});
