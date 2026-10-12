@@ -18,7 +18,9 @@ export function pruefBeginn(t: typeof trade.$inferSelect, events: TradeEventRow[
 /** Never evaluate an unfinished candle or history from before a manual change. */
 export function completedDemoCandles(candles: Candle[], boundary: Date, now: number, candleSeconds = DEMO_CANDLE_SECONDS): Candle[] {
   const first = Math.ceil(boundary.getTime() / (candleSeconds * 1000)) * candleSeconds
-  const result = candles.filter((c) => c.time >= first && (c.time + candleSeconds) * 1000 <= now)
+  // Yahoo can append a live quote at an arbitrary second. That point is not
+  // a completed interval and must never become a simulated execution bar.
+  const result = candles.filter((c) => c.time % candleSeconds === 0 && c.time >= first && (c.time + candleSeconds) * 1000 <= now)
   if (result.some((c) => !Number.isFinite(c.high) || !Number.isFinite(c.low) || c.low > c.high)) {
     throw new Error('Ungültige 5-Minuten-Kerze: Prüfstand bleibt unverändert.')
   }

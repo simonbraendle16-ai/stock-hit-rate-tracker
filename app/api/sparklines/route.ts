@@ -4,7 +4,7 @@ import { quoteSnapshot, stock } from '@/lib/db/schema'
 import { Market, MarketDataError } from '@/lib/market-data'
 import { getCachedCandles } from '@/lib/market-data/cached'
 import { refreshQuotesIfStale } from '@/lib/market-data/sync'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { headers } from 'next/headers'
 import { NextResponse } from 'next/server'
 
@@ -104,7 +104,7 @@ export async function GET(req: Request) {
       fetchedAt: quoteSnapshot.fetchedAt,
     })
     .from(stock)
-    .leftJoin(quoteSnapshot, eq(quoteSnapshot.symbol, stock.providerSymbol))
+    .leftJoin(quoteSnapshot, and(eq(quoteSnapshot.symbol, stock.providerSymbol), eq(quoteSnapshot.provider, stock.provider)))
     .where(eq(stock.userId, session.user.id))
 
   const sparks: Record<number, SparkEntry> = {}

@@ -36,6 +36,11 @@ describe('Dauerhafter Demo-Prüfstand', () => {
 })
 
 describe('Abgeschlossene Kerzen und manuelle Grenzen', () => {
+  it('verwendet einen Live-Kurspunkt zwischen den Intervallgrenzen nicht als vollständige Kerze', () => {
+    const real = candle(date('10:00'))
+    const live = candle(new Date('2026-10-02T10:03:27Z'), { high: 999 })
+    expect(completedDemoCandles([real, live], date('10:00'), date('11:00').getTime())).toEqual([real])
+  })
   it('prüft die laufende Kerze erst nach ihrem Ende', () => {
     const candles = [candle(date('11:55')), candle(date('12:00'))]
     expect(completedDemoCandles(candles, date('11:00'), date('12:03').getTime())).toEqual([candles[0]])

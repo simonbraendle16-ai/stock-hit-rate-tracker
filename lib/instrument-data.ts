@@ -51,7 +51,7 @@ export async function loadInstrumentData(userId: string) {
         .from(stock)
         .innerJoin(
           quoteSnapshot,
-          eq(quoteSnapshot.symbol, stock.providerSymbol),
+          and(eq(quoteSnapshot.symbol, stock.providerSymbol), eq(quoteSnapshot.provider, stock.provider)),
         )
         .where(eq(stock.userId, userId)),
       listFib(userId),

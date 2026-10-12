@@ -9,7 +9,7 @@ import { reviewStatusAfterClose } from './trade-review-state'
 import { brokerOrder, portfolio, stock, trade, tradeEvent, tradeTarget, userSettings } from '@/lib/db/schema'
 import { getCachedCandles } from '@/lib/market-data/cached'
 import { readStoredCandles, pruneStoredCandles } from '@/lib/market-data/candle-store'
-import { createSymbolResolver } from '@/lib/market-data/lookup'
+import { demoSourceIssue } from '@/lib/demo-source'
 import type { Candle, Interval, Market } from '@/lib/market-data/types'
 import { demoFills, type DemoFill } from '@/lib/demo-fill'
 import { effectiveTargets, type TradeTargetRow } from '@/lib/trade-targets'
@@ -69,7 +69,6 @@ export async function runDemoFills(
     const baseline = (t: typeof trade.$inferSelect) =>
       pruefBeginn(t, []).beginn.getTime()
     trades.sort((a, b) => Number(Boolean(a.demoIssue)) - Number(Boolean(b.demoIssue)) || baseline(a) - baseline(b))
-    const resolvers = new Map<string, Awaited<ReturnType<typeof createSymbolResolver>>>()
     const refreshed = new Map<string, number>()
     const pendingSymbols = new Set<string>()
     for (let i = 0; i < trades.length; i++) {
@@ -80,10 +79,17 @@ export async function runDemoFills(
       }
       report.tradesGeprueft++
       try {
-        if (!resolvers.has(before.userId)) {
-          resolvers.set(before.userId, await createSymbolResolver(before.userId))
+        const source = await loadDemoSource(before)
+        const sourceIssue = demoSourceIssue(source, before.market, before.ticker)
+        if (sourceIssue) {
+          report.unvollstaendig.push(before.id)
+          if (!report.trocken) await withTradeLock(before.userId, before.id, async (current) => {
+            const issue = demoSourceIssue(await loadDemoSource(current), current.market, current.ticker)
+            if (issue) await markIssue(current, issue, false)
+          })
+          continue
         }
-        const symbol = resolvers.get(before.userId)!(before.ticker, before.stockId)
+        const symbol = source!.providerSymbol!
         const key = `${before.market}:${symbol}`
         const refreshSince = Math.floor(baseline(before) / 1000)
           - (before.demoCheckedAt ? DEMO_CANDLE_SECONDS : 7 * 24 * 60 * 60)
@@ -102,6 +108,15 @@ export async function runDemoFills(
           if (t.ticker !== before.ticker || t.stockId !== before.stockId || t.market !== before.market) {
             return { issue: null, pending: true }
           }
+          // Recheck the source under the same lock as booking: a provider edit
+          // must not let previously loaded substitute candles execute a fill.
+          const currentSource = await loadDemoSource(t)
+          const currentIssue = demoSourceIssue(currentSource, t.market, t.ticker)
+          if (currentIssue) {
+            await markIssue(t, currentIssue, report.trocken)
+            return { issue: 'coverage' as const }
+          }
+          if (currentSource!.providerSymbol !== symbol) return { issue: null, pending: true }
           // Broker-linked trades use confirmed broker fills, never simulated prices.
           const linked = await db.select({ id: brokerOrder.id }).from(brokerOrder)
             .where(and(eq(brokerOrder.userId, t.userId), eq(brokerOrder.linkedTradeId, t.id))).limit(1)
@@ -137,7 +152,7 @@ export async function runDemoFills(
           }
           const batch = coverage.usable.slice(0, DEMO_BATCH_SIZE)
           const outcome = await verarbeiteTrade({ t, events, targetRows: targets, kerzen: batch,
-            vorherKurs: previous[0]?.close ?? null, trocken: report.trocken })
+            vorherKurs: previous[0]?.close ?? null, trocken: report.trocken, source: { symbol, provider: currentSource!.provider } })
           if (!report.trocken) {
             await db.update(trade).set({
               demoCheckedAt: new Date((batch[batch.length - 1].time + DEMO_CANDLE_SECONDS) * 1000),
@@ -190,6 +205,14 @@ export async function runDemoFills(
   return report
 }
 
+async function loadDemoSource(t: typeof trade.$inferSelect) {
+  const [source] = await db.select().from(stock).where(and(
+    eq(stock.userId, t.userId),
+    t.stockId == null ? eq(stock.ticker, t.ticker.trim().toUpperCase()) : eq(stock.id, t.stockId),
+  )).limit(1)
+  return source
+}
+
 async function markIssue(t: typeof trade.$inferSelect, issue: string, trocken: boolean) {
   if (!trocken) await db.update(trade).set({
     demoIssue: t.demoIssue?.startsWith('Ungeprüfte Historie:') ? t.demoIssue : issue,
@@ -199,7 +222,7 @@ async function markIssue(t: typeof trade.$inferSelect, issue: string, trocken: b
 
 async function verarbeiteTrade(args: {
   t: typeof trade.$inferSelect; events: TradeEventRow[]; targetRows: TradeTargetRow[]
-  kerzen: Candle[]; vorherKurs: number | null; trocken: boolean; archive?: boolean; interval?: Interval
+  kerzen: Candle[]; vorherKurs: number | null; trocken: boolean; archive?: boolean; interval?: Interval; source?: { symbol: string; provider: string | null }
 }) {
   const { t } = args
   let status = t.status
@@ -232,7 +255,7 @@ async function verarbeiteTrade(args: {
           break
         }
       }
-      const next = args.trocken ? trockenFolge({ fill, stufen, status }) : await bucheFill({ t: { ...t, status }, fill, stufen, interval: args.interval, archive: args.archive })
+      const next = args.trocken ? trockenFolge({ fill, stufen, status }) : await bucheFill({ t: { ...t, status }, fill, stufen, interval: args.interval, archive: args.archive, source: args.source })
       stufen = next.stufen
       status = next.status
       events.push({ id: (events[events.length - 1]?.id ?? 0) + 1, tradeId: t.id,
@@ -385,12 +408,14 @@ async function bucheFill(args: {
   stufen: TradeTargetRow[]
   interval?: Interval
   archive?: boolean
+  source?: { symbol: string; provider: string | null }
 }): Promise<{ stufen: TradeTargetRow[]; status: string }> {
   const { t, fill } = args
   const at = new Date(fill.zeit * 1000)
   // Die Herkunft steht im Ereignis, nicht in einer neuen Spalte: Daran erkennt
   // die Oberfläche, bei welchen Trades der Check-in noch nachzuholen ist.
   const payload = JSON.stringify({ auto: true, quelle: 'demo-fill', interval: args.interval ?? FILL_INTERVAL, preisModus: 'plan', art: fill.art,
+    ...(args.source ? { kursquelle: args.source } : {}),
     ...(fill.art === 'einstieg' && !args.archive ? { planningSnapshot: planningSnapshot({ ...t,
       targets: args.stufen.map(z => ({ price: z.price, sharePct: z.sharePct, note: z.note })) }) } : {}),
     ...(args.archive ? { historisch: true, zeitGenauigkeit: args.interval, zeitFensterEnde: new Date((fill.zeit + 900) * 1000).toISOString() } : {}) })
@@ -523,8 +548,10 @@ export async function repairDemoArchive(userId: string, tradeId: number, until: 
     const links = await db.select({ id: brokerOrder.id }).from(brokerOrder)
       .where(and(eq(brokerOrder.userId, userId), eq(brokerOrder.linkedTradeId, tradeId))).limit(1)
     if (links.length) throw new Error('Brokerbelege dürfen nicht historisch simuliert werden.')
-    const resolver = await createSymbolResolver(userId)
-    const symbol = resolver(t.ticker, t.stockId)
+    const source = await loadDemoSource(t)
+    const issue = demoSourceIssue(source, t.market, t.ticker)
+    if (issue) throw new Error(issue)
+    const symbol = source!.providerSymbol!
     const events = await ladeEreignisse(userId, tradeId)
     const targets = await ladeStufen(userId, tradeId)
     const boundary = pruefBeginn(t, events).beginn
@@ -547,7 +574,7 @@ export async function repairDemoArchive(userId: string, tradeId: number, until: 
       throw new Error('Archiv belegt das fehlende Fenster nicht lückenlos; keine Buchung vorgenommen.')
     }
     const outcome = await verarbeiteTrade({ t, events, targetRows: targets, kerzen: candles,
-      vorherKurs: previous[0]?.close ?? null, trocken, archive: true, interval: '15min' })
+      vorherKurs: previous[0]?.close ?? null, trocken, archive: true, interval: '15min', source: { symbol, provider: source!.provider } })
     if (!trocken) {
       await db.update(trade).set({ demoCheckedAt: new Date(until * 1000), demoIssue: null })
         .where(and(eq(trade.id, tradeId), eq(trade.userId, userId)))

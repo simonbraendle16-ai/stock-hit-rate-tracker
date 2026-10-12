@@ -37,6 +37,7 @@ import {
 import { intervalsForStufe, type Interval, type Market, type SammelStufe } from './types'
 import { getStoredCandles, pruneStoredCandles } from './candle-store'
 import { isDueForCollection, orderByStaleness } from './candle-merge'
+import { isSpotGoldTicker } from './spot-gold'
 
 /** Höchstzahl an Anbieter-Abrufen je Lauf. */
 export const MAX_FETCHES_PER_RUN = 150
@@ -273,6 +274,8 @@ export async function runCandleCollect(options: {
     for (const [symbol, market] of jeSymbol) {
       const stufe = stufen.get(symbol) ?? 'C'
       for (const interval of intervalsForStufe(stufe)) {
+        // Keep this limited-credit source below its existing request budget.
+        if (isSpotGoldTicker(symbol) && !['5min', '1h', '1day'].includes(interval)) continue
         const s = stand.get(`${symbol}|${interval}`) ?? { fetchedAt: null, candleCount: 0 }
         if (isDueForCollection(interval, s.fetchedAt)) {
           faellig.push({ symbol, market, interval, stufe, fetchedAt: s.fetchedAt })
@@ -295,7 +298,9 @@ export async function runCandleCollect(options: {
         // Über denselben Weg wie jeder andere Abruf — der Speicher wird beim
         // Holen fortgeschrieben. Ein zweiter Schreibweg wäre eine zweite
         // Wahrheit darüber, wie Kerzen in die Datenbank kommen.
-        await getStoredCandles(reihe.symbol, reihe.market, reihe.interval, { limit: 1 })
+        await getStoredCandles(reihe.symbol, reihe.market, reihe.interval, {
+          limit: 1, forceRefresh: true, requireFresh: true,
+        })
         fetched++
 
         const [nachher] = await db

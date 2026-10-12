@@ -444,7 +444,7 @@ interface RawQuote {
 }
 
 function mapQuote(r: RawQuote): YahooQuote | null {
-  if (!r.symbol || typeof r.regularMarketPrice !== 'number') return null
+  if (!r.symbol || !validPrice(r.regularMarketPrice) || !validTime(r.regularMarketTime)) return null
   const previousClose =
     typeof r.regularMarketPreviousClose === 'number' ? r.regularMarketPreviousClose : null
   const changePct =
@@ -462,7 +462,7 @@ function mapQuote(r: RawQuote): YahooQuote | null {
     financialCurrency: r.financialCurrency ?? null,
     exchange: r.fullExchangeName ?? r.exchange ?? null,
     name: r.longName ?? r.shortName ?? null,
-    time: r.regularMarketTime ?? Math.floor(Date.now() / 1000),
+    time: r.regularMarketTime,
     marketState: r.marketState ?? null,
     quoteType: r.quoteType ?? null,
     // Der Durchschnitt ist die verlässlichere Größe: das Tagesvolumen ist bei
@@ -470,6 +470,14 @@ function mapQuote(r: RawQuote): YahooQuote | null {
     // Heimatbörse fälschlich schlecht aussehen lassen.
     volume: r.averageDailyVolume3Month ?? r.regularMarketVolume ?? null,
   }
+}
+
+function validPrice(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+}
+
+function validTime(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
 }
 
 /** Yahoo verträgt lange Symbollisten nicht beliebig — in Blöcken abfragen. */
@@ -535,8 +543,14 @@ export async function getYahooQuoteViaChart(symbol: string): Promise<YahooQuote>
   const candles = toCandles(result)
   const last = candles[candles.length - 1]
   const price = meta.regularMarketPrice ?? last?.close
-  if (typeof price !== 'number') {
+  if (!validPrice(price)) {
     throw new MarketDataError(`Keine Kursdaten für „${symbol}“ gefunden.`, 'unknown_symbol')
+  }
+  // Preis und Zeit müssen aus derselben Quelle stammen. Ein Kerzenschluss
+  // darf nicht mit der neueren Zeit eines separaten Metadatenkurses erscheinen.
+  const time = meta.regularMarketPrice != null ? meta.regularMarketTime : last?.time
+  if (!validTime(time)) {
+    throw new MarketDataError(`Keine belegte Kurszeit für „${symbol}“ bei Yahoo.`, 'upstream')
   }
   const previousClose =
     meta.chartPreviousClose ??
@@ -551,7 +565,7 @@ export async function getYahooQuoteViaChart(symbol: string): Promise<YahooQuote>
     financialCurrency: null,
     exchange: meta.fullExchangeName ?? meta.exchangeName ?? null,
     name: meta.longName ?? meta.shortName ?? null,
-    time: meta.regularMarketTime ?? last?.time ?? Math.floor(Date.now() / 1000),
+    time,
     marketState: null,
     quoteType: meta.instrumentType ?? null,
     volume: last?.volume ?? null,

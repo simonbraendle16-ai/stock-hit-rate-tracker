@@ -17,6 +17,31 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
+      - name: Fällige Kurskerzen sammeln
+        id: candles
+        continue-on-error: true
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          code=$(curl --silent --show-error --location \
+            --max-time 65 --output candles.json --write-out '%{http_code}' \
+            --header "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/cron/collect-candles")
+          echo "Kerzensammler HTTP $code"
+          if [ "$code" != "200" ]; then
+            echo "::error::Kerzensammler nicht erreichbar."
+            exit 1
+          fi
+          jq '{ok, ran, skipped, seriesDue, seriesFetched, seriesFailed, candlesAdded}' candles.json
+          if ! jq -e '.ok == true and (.ran | type == "boolean") and (.seriesFailed | type == "number")' candles.json > /dev/null; then
+            echo "::error::Kerzensammler meldet einen Fehler oder eine ungültige Antwort."
+            exit 1
+          fi
+          if [ "$(jq -r '.seriesFailed' candles.json)" != "0" ]; then
+            echo "::warning::Einzelne Kursreihen konnten nicht aktualisiert werden."
+            exit 1
+          fi
       - name: Fälligen Demo-Lauf ausführen
         env:
           APP_URL: ${{ secrets.APP_URL }}
@@ -35,3 +60,8 @@ jobs:
           if [ "$(jq -r '.ok' demo.json)" != "true" ]; then
             echo "::warning::Demo-Ausführung meldet fehlende Kursdaten; Details im Bericht."
           fi
+      - name: Sammelfehler sichtbar melden
+        if: always() && steps.candles.outcome == 'failure'
+        run: |
+          echo "::error::Kursversorgung prüfen; Demo-Lauf wurde unabhängig ausgeführt."
+          exit 1

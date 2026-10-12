@@ -17,6 +17,7 @@ import { runSymbolSync, refreshQuotesIfStale } from '@/lib/market-data/sync'
 import { searchYahoo } from '@/lib/market-data/yahoo'
 import { toUserTicker } from '@/lib/market-data/symbol-aliases'
 import { QUOTE_TYPE_MARKET } from '@/lib/market-data/types'
+import { istGueltigesAnbieterSymbol } from '@/lib/market-data/symbol-syntax'
 import type { Market, WatchlistQuote } from '@/lib/market-data/types'
 import { and, eq } from 'drizzle-orm'
 import { headers } from 'next/headers'
@@ -53,7 +54,7 @@ export async function getWatchlistQuotes(): Promise<WatchlistQuote[]> {
       failCount: quoteSnapshot.failCount,
     })
     .from(stock)
-    .leftJoin(quoteSnapshot, eq(quoteSnapshot.symbol, stock.providerSymbol))
+    .leftJoin(quoteSnapshot, and(eq(quoteSnapshot.symbol, stock.providerSymbol), eq(quoteSnapshot.provider, stock.provider)))
     .where(eq(stock.userId, userId))
 
   return rows.map((r) => ({
@@ -136,7 +137,7 @@ export async function reresolveStock(stockId: number): Promise<{
     .update(stock)
     .set({
       providerSymbol: r.symbol,
-      provider: r.symbol ? 'yahoo' : null,
+      provider: r.symbol ? r.provider ?? 'yahoo' : null,
       resolutionStatus: r.status,
       resolutionConfidence: r.confidence,
       resolvedName: r.name,
@@ -223,8 +224,9 @@ export async function pinStockSymbol(
  *   lassen — das war die Quelle der falschen Auflösungen.
  *
  * Schlägt das Festschreiben fehl (kein Kurs bei Yahoo), bleibt das Instrument
- * trotzdem bestehen: Der Klick des Nutzers geht nie verloren, der reguläre
- * Auflösungslauf übernimmt, und die Watchlist weist den Zustand ohnehin aus.
+ * trotzdem mit genau der gewählten Zuordnung bestehen. Es bleibt als ungeprüft
+ * markiert, bis die Auswahl erneut bestätigt wird; die Automatik darf hier
+ * keine andere Notierung einsetzen.
  */
 export async function addStockFromSearch(hit: {
   symbol: string
@@ -234,7 +236,7 @@ export async function addStockFromSearch(hit: {
   const userId = await getUserId()
 
   const providerSymbol = hit.symbol.trim().toUpperCase()
-  if (!providerSymbol) throw new Error('Kein Symbol im Suchtreffer.')
+  if (!istGueltigesAnbieterSymbol(providerSymbol)) throw new Error('Ungültiges Symbol im Suchtreffer.')
 
   const ticker = toUserTicker(providerSymbol)
   const markt = QUOTE_TYPE_MARKET[hit.quoteType?.toUpperCase() ?? ''] ?? 'sonstiges'
@@ -255,7 +257,7 @@ export async function addStockFromSearch(hit: {
     name: hit.name?.trim() || ticker,
     ticker,
     market: markt,
-  })
+  }, { selectedProviderSymbol: providerSymbol })
 
   let hinweis: string | null = null
   try {

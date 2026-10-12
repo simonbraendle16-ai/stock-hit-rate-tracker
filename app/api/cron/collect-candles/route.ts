@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
  * WARUM ER AM 5-MINUTEN-TAKT HÄNGT UND TROTZDEM NICHT ALLE 5 MINUTEN ARBEITET
  * Vercel-Hobby lässt genau EINEN Cron-Lauf pro Tag zu (siehe CLAUDE.md — das
  * hat schon zwei Tage gekostet). Den Takt gibt deshalb derselbe
- * GitHub-Workflow vor, der die Alarme prüft. Damit daraus keine 288 Läufe am
+ * aktive Demo-Workflow vor, unabhängig vom Alarm-Workflow. Damit daraus keine 288 Läufe am
  * Tag werden, entscheidet die Route SELBST, ob sie fällig ist
  * (`RUN_INTERVAL_MS`, eine Stunde) und antwortet sonst mit `ran: false`.
  *

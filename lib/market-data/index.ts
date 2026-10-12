@@ -2,6 +2,7 @@ import { binanceProvider } from './binance'
 import { twelveDataProvider } from './twelvedata'
 import { yahooProvider } from './yahoo'
 import { Market, MarketDataError, MarketDataProvider } from './types'
+import { isSpotGoldTicker } from './spot-gold'
 
 export * from './types'
 
@@ -84,6 +85,8 @@ export function resolveProvider(market: Market): MarketDataProvider {
 
   return {
     async getCandles(symbol, interval, since) {
+      // An exact spot identity has no futures fallback, including on failure.
+      if (isSpotGoldTicker(symbol)) return twelveDataProvider.getCandles('XAU/USD', interval, since)
       // Yahoo cannot return older minute history. Request the actual beginning
       // from an archive-capable source instead of accepting a clipped window.
       if (interval === '5min' && since != null && since < Date.now() / 1000 - 59 * 86400) {

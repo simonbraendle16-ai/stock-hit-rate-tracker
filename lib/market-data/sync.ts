@@ -26,6 +26,7 @@ import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm'
 import { resolveSymbol, Resolution } from './resolve'
 import { getYahooQuotes, getYahooQuoteViaChart, YahooQuote } from './yahoo'
 import { Market } from './types'
+import { getSpotGoldQuote, isSpotGoldTicker } from './spot-gold'
 
 /** Höchstzahl Instrumente, die ein Lauf neu auflöst. Schützt vor Rate-Limits. */
 const MAX_RESOLVES_PER_RUN = 25
@@ -125,7 +126,7 @@ async function persistResolution(id: number, r: Resolution): Promise<void> {
     .update(stock)
     .set({
       providerSymbol: r.symbol,
-      provider: r.symbol ? 'yahoo' : null,
+      provider: r.symbol ? r.provider ?? 'yahoo' : null,
       resolutionStatus: r.status,
       resolutionConfidence: r.confidence,
       resolvedName: r.name,
@@ -165,7 +166,7 @@ async function persistQuotes(
       continue
     }
     rows.push({
-      provider: 'yahoo',
+      provider: isSpotGoldTicker(symbol) ? 'twelvedata' : 'yahoo',
       symbol: q.symbol,
       price: q.price,
       previousClose: q.previousClose,
@@ -221,7 +222,7 @@ async function persistQuotes(
         failCount: sql`${quoteSnapshot.failCount} + 1`,
       })
       .where(
-        and(eq(quoteSnapshot.provider, 'yahoo'), inArray(quoteSnapshot.symbol, failed)),
+        inArray(quoteSnapshot.symbol, failed),
       )
   }
 
@@ -356,14 +357,20 @@ export async function runSymbolSync(options: {
     if (symbols.length > 0) {
       let quotes = new Map<string, YahooQuote>()
       try {
-        quotes = await getYahooQuotes(symbols)
+        quotes = await getYahooQuotes(symbols.filter(s => !isSpotGoldTicker(s)))
       } catch (err) {
         report.error = err instanceof Error ? err.message : 'Kursabruf fehlgeschlagen.'
       }
 
       // Einzelne Lücken über den Chart-Endpunkt nachholen — der braucht keinen
       // Crumb und kommt durch, wenn die Batch-Abfrage klemmt.
-      const missing = symbols.filter((s) => !quotes.has(s.toUpperCase()))
+      if (symbols.some(isSpotGoldTicker)) {
+        try {
+          const q = await getSpotGoldQuote()
+          quotes.set(q.symbol, q)
+        } catch { /* retain the prior spot quote and record this symbol's failure */ }
+      }
+      const missing = symbols.filter((s) => !isSpotGoldTicker(s) && !quotes.has(s.toUpperCase()))
       if (missing.length > 0 && missing.length <= 15) {
         await mapLimit(missing, RESOLVE_CONCURRENCY, async (sym) => {
           try {

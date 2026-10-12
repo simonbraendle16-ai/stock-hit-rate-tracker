@@ -6,7 +6,7 @@ import type { TradeTargetRow } from './trade-targets'
 import type { Candle } from './market-data/types'
 
 const state = vi.hoisted(() => ({
-  brokerOrders: [] as unknown[], trades: [] as unknown[], events: [] as unknown[], targets: [] as unknown[],
+  sources: [] as unknown[], brokerOrders: [] as unknown[], trades: [] as unknown[], events: [] as unknown[], targets: [] as unknown[],
   candles: [] as unknown[], kind: 'demo', fail: false, changeInstrument: false, locked: Promise.resolve(),
 }))
 type Predicate = { kind: string; field?: string; value?: unknown; parts?: Predicate[] }
@@ -25,6 +25,7 @@ vi.mock('@/lib/db', () => {
   }
   const rows = (table: Parameters<typeof getTableName>[0]) => {
     const name = getTableName(table)
+    if (name === 'stock') return state.sources
     if (name === 'broker_order') return state.brokerOrders
     if (name === 'trade') return state.trades
     if (name === 'trade_event') return state.events
@@ -100,7 +101,7 @@ const candle = (time: string, patch: Partial<Candle> = {}): Candle => ({
 })
 const row = () => ({
   id: 1, userId: 'user', portfolioId: 1, ticker: 'TEST', market: 'aktien',
-  stockId: null, status: 'aktiv', direction: 'long', entryPrice: 100, stopLoss: 95,
+  stockId: 1, status: 'aktiv', direction: 'long', entryPrice: 100, stopLoss: 95,
   takeProfit: 120, positionSize: 100, contracts: null, tradedWithMoney: false,
   createdAt: at('09:00'), openedAt: at('10:00'), demoCheckedAt: null,
   demoBoundaryAt: null, demoIssue: null, followedPlan: null, ruleViolations: null,
@@ -119,7 +120,7 @@ const opened = (): TradeEventRow => ({
 beforeEach(() => {
   vi.useFakeTimers()
   vi.setSystemTime(at('12:00'))
-  Object.assign(state, { brokerOrders: [], trades: [row()], events: [opened()],
+  Object.assign(state, { sources: [{ id: 1, userId: 'user', ticker: 'TEST', market: 'aktien', providerSymbol: 'TEST', resolutionStatus: 'ok', resolutionApproximate: false }], brokerOrders: [], trades: [row()], events: [opened()],
     targets: [target(1, 110, 40), target(2, 120, 60)],
     candles: [candle('09:55'), candle('10:00'), candle('10:05', { high: 112 }), candle('10:10', { high: 122 })],
     kind: 'demo', fail: false, changeInstrument: false, locked: Promise.resolve() })
@@ -129,6 +130,24 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers())
 
 describe('Demo-Ausführung mit gespeicherten Positionen', () => {
+  it('bucht weder live noch aus dem Archiv mit einer Näherungsquelle', async () => {
+    Object.assign(state.sources[0] as object, { resolutionApproximate: true })
+    const before = structuredClone(state.events)
+    const report = await runDemoFills()
+    expect(report.unvollstaendig).toEqual([1])
+    expect(state.events).toEqual(before)
+    expect(state.trades[0]).toMatchObject({ status: 'aktiv', demoCheckedAt: null })
+    await expect(repairDemoArchive('user', 1, at('10:30').getTime() / 1000, false)).rejects.toThrow('Näherung')
+    expect(state.events).toEqual(before)
+  })
+  it('führt nach bestätigter exakter Quelle wieder aus und entfernt erst dann die Warnung', async () => {
+    Object.assign(state.sources[0] as object, { resolutionApproximate: true })
+    await runDemoFills()
+    Object.assign(state.sources[0] as object, { resolutionApproximate: false })
+    await runDemoFills()
+    expect(state.trades[0]).toMatchObject({ status: 'abgeschlossen', demoIssue: null })
+    expect(JSON.parse((state.events[1] as TradeEventRow).payload!)).toMatchObject({ kursquelle: { symbol: 'TEST' } })
+  })
   it('bewertet einen ausdrücklich gleichwährungsdeklarierten Demo-Plan und erhält unbekannten Altbestand', async () => {
     Object.assign(state.trades[0] as object, { quoteCurrency: 'EUR', accountCurrency: 'EUR', quoteToAccountRate: 1 })
     await runDemoFills()

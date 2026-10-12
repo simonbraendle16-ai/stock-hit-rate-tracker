@@ -9,6 +9,7 @@ import { and, asc, eq, isNull, type SQL } from 'drizzle-orm'
 import { headers } from 'next/headers'
 import { revalidatePath } from 'next/cache'
 import { specFromStock } from '@/lib/contract-trade'
+import { istGueltigesAnbieterSymbol } from '@/lib/market-data/symbol-syntax'
 import {
   lookupContractSpec,
   type ContractSpec,
@@ -294,8 +295,12 @@ export async function addStock(formData: {
   market?: string
   chartUrl?: string | null
   section?: string | null
-}): Promise<{ id: number }> {
+}, options: { selectedProviderSymbol?: string } = {}): Promise<{ id: number }> {
   const userId = await getUserId()
+  const selectedSymbol = options.selectedProviderSymbol?.trim().toUpperCase()
+  if (selectedSymbol !== undefined && !istGueltigesAnbieterSymbol(selectedSymbol)) {
+    throw new Error('Ungültiges Anbieter-Symbol.')
+  }
   const name = formData.name.trim()
   const ticker = formData.ticker.trim().toUpperCase()
   if (!name || !ticker) throw new Error('Name und Ticker sind erforderlich.')
@@ -311,6 +316,16 @@ export async function addStock(formData: {
     market,
     chartUrl,
     watchlistSection: (formData.section ?? '').trim().slice(0, 40) || null,
+    // Suchauswahl atomar bewahren, auch wenn die Kursbestätigung ausfällt.
+    // Ohne bestätigten Kurs bleibt sie sichtbar klärungsbedürftig und wird
+    // nicht von der Automatik durch ein anderes Instrument ersetzt.
+    ...(selectedSymbol ? {
+      providerSymbol: selectedSymbol,
+      provider: 'yahoo',
+      resolutionPinned: true,
+      resolutionStatus: 'unresolved',
+      resolutionNote: 'Aus Suche gewählt; Kursbestätigung ausstehend. Bitte die Auswahl erneut bestätigen.',
+    } : {}),
   }
   let row: { id: number }
   try {
@@ -348,11 +363,13 @@ export async function addStock(formData: {
   // Fehlschläge sind absichtlich folgenlos: Das Instrument ist angelegt, die
   // Auflösung holt der Hintergrundlauf nach. Ein hängender Anbieter darf das
   // Anlegen nicht verhindern.
-  try {
-    const { runSymbolSync } = await import('@/lib/market-data/sync')
-    await runSymbolSync({ trigger: 'manual', onlyStockIds: [row.id], forceResolve: true })
-  } catch {
-    /* siehe oben — der Hintergrundlauf holt es nach */
+  if (!selectedSymbol) {
+    try {
+      const { runSymbolSync } = await import('@/lib/market-data/sync')
+      await runSymbolSync({ trigger: 'manual', onlyStockIds: [row.id], forceResolve: true })
+    } catch {
+      /* siehe oben — der Hintergrundlauf holt es nach */
+    }
   }
 
   revalidatePath('/')

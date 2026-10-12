@@ -21,8 +21,10 @@ const BINANCE_INTERVAL: Record<Interval, string> = {
 /** `BTC` → `BTCUSDT`; bereits vollständige Paare (`BTCUSDT`, `ETHEUR`) bleiben unverändert. */
 export function toBinanceSymbol(symbol: string): string {
   const clean = symbol.toUpperCase().replace(/[^A-Z0-9]/g, '')
-  const s = clean.endsWith('USD') ? `${clean.slice(0, -3)}USDT` : clean
-  const quoteSuffixes = ['USDT', 'USDC', 'BUSD', 'EUR', 'BTC', 'ETH']
+  // USD und USDT sind verschiedene Notierungen. Eine Rückfallebene darf
+  // USDT-Kerzen nicht unter dem Schlüssel eines USD-Instruments speichern.
+  const s = clean
+  const quoteSuffixes = ['USDT', 'USDC', 'BUSD', 'USD', 'EUR', 'BTC', 'ETH']
   if (quoteSuffixes.some((q) => s.length > q.length && s.endsWith(q))) return s
   return `${s}USDT`
 }
