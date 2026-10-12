@@ -15,6 +15,7 @@ import {
   ResultRow,
 } from '@/components/form-frame'
 import { createTrade, type TradeInput } from '@/app/actions/trades'
+import { manualPositionSize, updateSizeForm } from '@/lib/trade-form-size'
 import { SetupTagsInput } from '@/components/setup-tags-input'
 import {
   TargetStages,
@@ -165,7 +166,7 @@ export function TradeForm({
   })
 
   const set = (k: keyof typeof form, v: string) => {
-    setForm((p) => ({ ...p, [k]: v }))
+    setForm((p) => updateSizeForm(p, k, v))
     setPlanContext(p => ({ ...p, riskConfirmed: false }))
   }
 
@@ -414,7 +415,7 @@ export function TradeForm({
         entryPrice: parseFloat(form.entryPrice),
         stopLoss: parseFloat(form.stopLoss),
         takeProfit: form.takeProfit ? parseFloat(form.takeProfit) : null,
-        positionSize: form.positionSize ? parseFloat(form.positionSize) : null,
+        positionSize: manualPositionSize(form),
         // Auch auf Papier: Einsatz und Hebel ergeben die Positionsgröße, sonst
         // wäre der Hebel im Demo-Trade eine Zahl ohne Wirkung.
         investedAmount: form.investedAmount ? parseFloat(form.investedAmount) : null,
@@ -449,7 +450,9 @@ export function TradeForm({
         planContext: quick ? null : planContext,
         tradeKind,
       }
-      const { id, deckungsHinweis, planReady } = await createTrade(payload)
+      const result = await createTrade(payload)
+      if (!result.ok) { toast.error(result.message); return }
+      const { id, deckungsHinweis, planReady } = result
       // Der Trade ist angelegt, aber die Deckung konnte NICHT geprüft werden
       // (Fremdwährung ohne hinterlegten Umrechnungskurs). Das gehört gesagt:
       // Sonst sieht ein ungeprüfter Trade aus wie einer, der die Prüfung
@@ -1035,11 +1038,14 @@ export function TradeForm({
               ))}
             </select>
           </Field>
-          {tradedWithMoney ? (
+          {tradedWithMoney || form.investedAmount.trim() || form.contracts.trim() ? (
             <Field label="Stückzahl (berechnet)" as="div">
               <div className="input-ocean flex h-11 items-center rounded-lg px-3 font-mono text-sm text-muted-foreground">
-                {money?.shares != null ? num(money.shares) : '—'}
+                {kontrakt ? num(kontrakt.positionSize) : money?.shares != null ? num(money.shares) : '—'}
               </div>
+              {form.investedAmount.trim() && !form.contracts.trim() ? (
+                <p className="note">Die Stückzahl folgt aus Kapitaleinsatz, Einstieg, Hebel und Wechselkurs.</p>
+              ) : null}
             </Field>
           ) : (
             <Field label="Positionsgröße">
@@ -1048,7 +1054,7 @@ export function TradeForm({
                 step="any"
                 value={form.positionSize}
                 onChange={(e) => set('positionSize', e.target.value)}
-                placeholder="Anzahl / Betrag"
+                placeholder="Anzahl der Einheiten"
                 className={inputCls}
               />
             </Field>

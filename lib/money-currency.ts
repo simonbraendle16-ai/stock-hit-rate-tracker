@@ -1,3 +1,5 @@
+import { TradeInputError } from '@/lib/trade-input-error'
+
 /** Prices are in quote currency; capital and fees are in portfolio currency. */
 export type MoneyCurrency = {
   quoteCurrency: string
@@ -27,22 +29,22 @@ export function resolveMoneyCurrency(args: {
   const accountCurrency = currencyCode(args.accountCurrency)
   const declared = currencyCode(args.quoteCurrency)
   const resolved = currencyCode(args.resolvedCurrency)
-  if (args.quoteCurrency && !declared) throw new Error('Ungültige Kurswährung.')
+  if (args.quoteCurrency && !declared) throw new TradeInputError('Ungültige Kurswährung.')
   if (declared && resolved && declared !== resolved) {
-    throw new Error(`Kurswährung ${declared} widerspricht dem aufgelösten Instrument (${resolved}).`)
+    throw new TradeInputError(`Kurswährung ${declared} widerspricht dem aufgelösten Instrument (${resolved}).`)
   }
   const quoteCurrency = resolved ?? declared
-  if (!accountCurrency || !quoteCurrency) throw new Error('Depot- und Kurswährung müssen bekannt sein.')
+  if (!accountCurrency || !quoteCurrency) throw new TradeInputError('Depot- und Kurswährung müssen bekannt sein.')
   if (quoteCurrency === accountCurrency) {
     return { quoteCurrency, accountCurrency, quoteToAccountRate: 1, fxRateAt: null }
   }
   const rate = args.rates[quoteCurrency]
   if (!Number.isFinite(rate) || rate <= 0 || !args.ratesAt || !Number.isFinite(args.ratesAt.getTime())) {
-    throw new Error(`Für ${quoteCurrency} → ${accountCurrency} fehlt ein gültiger Depotkurs mit Zeitpunkt. Keine 1:1-Umrechnung.`)
+    throw new TradeInputError(`Für ${quoteCurrency} → ${accountCurrency} fehlt ein gültiger Depotkurs mit Zeitpunkt. Keine 1:1-Umrechnung.`)
   }
   const age = (args.now ?? new Date()).getTime() - args.ratesAt.getTime()
   if (age < 0 || age > 7 * 24 * 60 * 60 * 1000) {
-    throw new Error('Der FX-Plankurs muss aus den letzten sieben Tagen stammen und darf nicht in der Zukunft liegen.')
+    throw new TradeInputError('Der FX-Plankurs muss aus den letzten sieben Tagen stammen und darf nicht in der Zukunft liegen.')
   }
   return { quoteCurrency, accountCurrency, quoteToAccountRate: rate, fxRateAt: args.ratesAt }
 }

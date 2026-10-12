@@ -1,5 +1,8 @@
 'use server'
 
+import { randomUUID } from 'node:crypto'
+import { TradeInputError, tradeCreationFailure, type CreateTradeResult } from '@/lib/trade-input-error'
+
 import { actualTime, withEventContext } from '@/lib/trade-history'
 
 import { requireFrozenFxRate, portfolioCurrency } from '@/lib/money-currency'
@@ -503,12 +506,28 @@ async function loadTradeTargets(userId: string, tradeId: number): Promise<TradeT
  */
 export async function createTrade(
   input: TradeInput,
-): Promise<{ id: number; deckungsHinweis: string | null; planReady: boolean }> {
-  const result = await createTradeForUser(await getUserId(), input)
+): Promise<CreateTradeResult> {
+  let result: Awaited<ReturnType<typeof createTradeForUser>>
+  try {
+    result = await createTradeForUser(await getUserId(), input)
+  } catch (error) {
+    const reference = randomUUID()
+    if (!(error instanceof TradeInputError)) {
+      // Never log SQL, parameters, credentials or the submitted trade payload.
+      console.error('trade.create.failed', { reference, stage: 'create',
+        errorType: error instanceof Error ? error.name : 'unknown' })
+    }
+    return tradeCreationFailure(error, reference)
+  }
   try { await createPlanAlerts(result.id, { kinds: ['einstieg'] }) } catch { /* Alert ist Beiwerk. */ }
-  revalidatePath('/')
-  revalidatePath('/trades')
-  return result
+  try {
+    revalidatePath('/')
+    revalidatePath('/trades')
+  } catch {
+    // Persistence already succeeded: do not invite a duplicate by reporting failure.
+    console.warn('trade.create.revalidation_failed', { tradeId: result.id })
+  }
+  return { ok: true, ...result }
 }
 
 async function loadOwnedTrade(userId: string, id: number): Promise<TradeRow> {

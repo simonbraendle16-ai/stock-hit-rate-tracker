@@ -13,7 +13,8 @@ import { POST } from '../app/api/assistant/v1/trades/route'
 import { PATCH as declareCurrency } from '../app/api/assistant/v1/portfolios/[id]/route'
 import { assignPortfolioCurrency, updatePortfolioFxRates, moveTrade } from '../app/actions/portfolios'
 import { changeCurrency, updateSettings } from '../app/actions/settings'
-import { activateTrade, updateTradePlan } from '../app/actions/trades'
+import { activateTrade, updateTradePlan, createTrade, type TradeInput } from '../app/actions/trades'
+import { manualPositionSize } from './trade-form-size'
 import { loadScopeContext, schreibeScope } from './portfolio-context'
 
 const state = vi.hoisted(() => ({ db: null as any }))
@@ -78,6 +79,31 @@ beforeAll(async () => {
 afterAll(async () => { await pg?.close() })
 
 describe('isolated PostgreSQL currency integration', () => {
+  it('creates a quick Demo trade from capital without the stale manual quantity and rejects conflicting API input', async () => {
+    const before = await state.db.select({ id: schema.trade.id }).from(schema.trade)
+    const input = { ...body(), tradeKind: 'schnell', positionSize: 7 } as TradeInput
+    const rejected = await createTrade(input)
+    expect(rejected.ok).toBe(false)
+    if (rejected.ok) throw new Error('expected size validation')
+    expect(rejected.message).toContain('Positionsgröße und Kapitaleinsatz')
+    expect(await state.db.select({ id: schema.trade.id }).from(schema.trade)).toHaveLength(before.length)
+    const result = await createTrade({ ...input, positionSize: manualPositionSize({
+      investedAmount: '1056.2', contracts: '', positionSize: '7',
+    }) })
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error(result.message)
+    const saved = await getTrade(result.id)
+    expect(saved.positionSize).toBeCloseTo(1056.2 * 5 / 754.43, 12)
+    expect(saved.investedAmount).toBe(1056.2)
+  })
+  it('creates a quantity-only quick trade without inventing capital', async () => {
+    const result = await createTrade({ ...body(), tradeKind: 'schnell', investedAmount: null, positionSize: 7 } as TradeInput)
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error(result.message)
+    const saved = await getTrade(result.id)
+    expect(saved.positionSize).toBe(7)
+    expect(saved.investedAmount).toBeNull()
+  })
   it('stores an incomplete draft, rejects activation, and supplements it with a versioned API patch', async () => {
     const response = await POST(request({ ...body(), planContext: null }, '20000000-0000-4000-8000-000000000001'))
     expect(response.status).toBe(201)

@@ -1,0 +1,11 @@
+# Schnelle Tradeanlage: lokale Ursachenreparatur
+
+Basis: veröffentlichter Stand `0ce255e`. Produktionsbeleg vom 12.10.2026 19:10 MESZ: POST `/trades/new`, HTTP 500, Digest `2168309124`, „Positionsgröße und Kapitaleinsatz widersprechen sich.“ Das Demoformular sendete zwei unabhängige Mengenquellen; die Server Action verbarg anschließend die konkrete Validierungsmeldung.
+
+Bestätigte Nutzerentscheidung: Kapitaleinsatz führt. Bei Kapital oder Kontrakten zeigt das Formular die abgeleitete Stückzahl und sendet keine zusätzliche manuelle Mengenbehauptung. Beim Wechsel wird eine frühere manuelle Menge entfernt. Ohne Kapital bleibt manuelle Menge möglich; Kontrakte behalten ihren Vorrang. Serverformel und API-Konsistenzprüfung bleiben erhalten.
+
+`createTrade` gibt jetzt eine serialisierbare Union zurück: `ok: true` samt bestehendem Ergebnis oder `ok: false` mit verständlicher bekannter Validierung beziehungsweise neutraler Meldung/Referenz bei unerwartetem Fehler. Der Client prüft `ok` vor Navigation. Bereits erfolgreiche Speicherung bleibt bei nachfolgendem Cachefehler Erfolg, um unnötige erneute Anlage zu vermeiden. Keine Datenbankmigration und keine Bestandsänderung.
+
+Prüfung: vier Dateien/23 Tests und fünf Dateien/109 Tests bestanden; die Läufe überschneiden sich in der Währungsintegration und werden nicht addiert. Abschließend 12 Datenbankfälle erneut bestanden, einschließlich erfolgreicher schneller Anlage/GET, Menge ohne Kapital und Nicht-Schreiben bei widersprüchlicher Mengenbehauptung. Separate TypeScript-Prüfung und Diffprüfung bestanden. Produktionsbuild mit Webpack vollständig Exit 0. Das vorhandene `ignoreBuildErrors` ersetzt nicht die separat durchgeführte Typprüfung. Lokale Auth-Konfigurationswarnungen sind kein Produktionsdefekt.
+
+Keine persönlichen Testtrades, keine Aktivierung, kein Push/Deployment. Sichtprüfung ist noch offen: der freigegebene Codex-Browserzugriff scheitert an Timeout/fehlendem Debugger; Nutzer um Wiederöffnung der Erweiterung gebeten. Auslieferung separat freigeben und gegen den dann aktuellen veröffentlichten Branch integrieren; parallele Reparaturstände erhalten. Rücknahme über den eigenen Commit; keine Datenrückmigration erforderlich.

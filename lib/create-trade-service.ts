@@ -1,3 +1,4 @@
+import { TradeInputError } from '@/lib/trade-input-error'
 import { normalizePlanContext, planGaps } from '@/lib/plan-context'
 import { db } from '@/lib/db'
 import { priceAlert, trade, tradeEvent, tradeTarget, assessment, stock } from '@/lib/db/schema'
@@ -89,7 +90,7 @@ async function resolveZielDepot(
   const { active } = await loadScopeContext(userId)
   if (active) return active
 
-  throw new Error(
+  throw new TradeInputError(
     'Bitte wähle das Depot, in das dieser Trade gebucht werden soll — in die Zusammenfassung „Alle Echtgeld-Depots" kann nicht gebucht werden.',
   )
 }
@@ -134,13 +135,13 @@ async function ladeDeckung(userId: string, portfolioId: number, exceptTradeId?: 
   let realisiertePnl = 0
   for (const t of abgeschlossen) {
     const pnl = tradeNetPnl(t, eventsByTrade.get(t.id) ?? [])
-    if (pnl === null) throw new Error('Deckung nicht prüfbar: Bestands-P&L oder Währungsabrechnung unvollständig.')
+    if (pnl === null) throw new TradeInputError('Deckung nicht prüfbar: Bestands-P&L oder Währungsabrechnung unvollständig.')
     realisiertePnl += pnl
   }
 
   const flows = await loadScopedCashflows(userId, [portfolioId])
   const offene = rows.filter((r) => r.id !== exceptTradeId)
-  if (offene.some(r => r.contracts != null && ['aktiv', 'geplant'].includes(r.status) && r.investedAmount == null)) throw new Error('Gebundener Kontrakteinschuss unbekannt.')
+  if (offene.some(r => r.contracts != null && ['aktiv', 'geplant'].includes(r.status) && r.investedAmount == null)) throw new TradeInputError('Gebundener Kontrakteinschuss unbekannt.')
 
   return {
     depot,
@@ -212,7 +213,7 @@ async function verlangeDeckung(args: {
       : moeglich === 0
         ? ` Im Depot „${depot.name}" geht derzeit kein einziger Kontrakt.`
         : ` Im Depot „${depot.name}" gehen derzeit ${moeglich} Kontrakte.`
-  throw new Error(pruefung.grund + zusatz)
+  throw new TradeInputError(pruefung.grund + zusatz)
 }
 
 /**
@@ -363,9 +364,9 @@ export async function createTradeForUser(
   apiRequest?: { key: string; hash: string; source: { kind: string; capturedAt: string } },
 ): Promise<{ id: number; deckungsHinweis: string | null; planReady: boolean }> {
   const ticker = input.ticker.trim().toUpperCase()
-  if (!ticker) throw new Error('Ticker ist erforderlich.')
+  if (!ticker) throw new TradeInputError('Ticker ist erforderlich.')
   if (!input.entryPrice || !input.stopLoss) {
-    throw new Error('Einstieg und Stop-Loss sind erforderlich.')
+    throw new TradeInputError('Einstieg und Stop-Loss sind erforderlich.')
   }
   // Das Kursziel ist seit dem Umbau der Teilziele PFLICHT.
   //
@@ -376,24 +377,24 @@ export async function createTradeForUser(
   // optional war. Technisch: Es ist zugleich die äußerste Stufe des
   // Staffel-Plans, an der der nicht verteilte Rest der Position hängt.
   if (input.takeProfit == null || !Number.isFinite(input.takeProfit) || input.takeProfit <= 0) {
-    throw new Error('Ein Kursziel ist erforderlich — es ist die äußerste Stufe deines Plans.')
+    throw new TradeInputError('Ein Kursziel ist erforderlich — es ist die äußerste Stufe deines Plans.')
   }
 
   // Plausibilität: Ein Stop-Loss liegt bei Long unter, bei Short über dem Einstieg.
   // Ein Take-Profit liegt bei Long über, bei Short unter dem Einstieg. Sonst wären
   // die Risiko-/Gewinn-Projektionen falsch vorzeichig.
   if (input.direction === 'long' && input.stopLoss >= input.entryPrice) {
-    throw new Error('Bei Long muss der Stop-Loss unter dem Einstieg liegen.')
+    throw new TradeInputError('Bei Long muss der Stop-Loss unter dem Einstieg liegen.')
   }
   if (input.direction === 'short' && input.stopLoss <= input.entryPrice) {
-    throw new Error('Bei Short muss der Stop-Loss über dem Einstieg liegen.')
+    throw new TradeInputError('Bei Short muss der Stop-Loss über dem Einstieg liegen.')
   }
   if (input.takeProfit != null) {
     if (input.direction === 'long' && input.takeProfit <= input.entryPrice) {
-      throw new Error('Bei Long muss der Take-Profit über dem Einstieg liegen.')
+      throw new TradeInputError('Bei Long muss der Take-Profit über dem Einstieg liegen.')
     }
     if (input.direction === 'short' && input.takeProfit >= input.entryPrice) {
-      throw new Error('Bei Short muss der Take-Profit unter dem Einstieg liegen.')
+      throw new TradeInputError('Bei Short muss der Take-Profit unter dem Einstieg liegen.')
     }
   }
 
@@ -511,7 +512,7 @@ export async function createTradeForUser(
   // `loadOwnedPortfolio` wirft bei fremdem oder unbekanntem Depot: Eine
   // `portfolioId` aus dem Browser ist eine Behauptung, keine Tatsache.
   const zielDepot = await resolveZielDepot(userId, input.portfolioId)
-  if (!zielDepot.currency) throw new Error('Die tatsächliche Depotwährung muss zuerst in der Depotverwaltung bestätigt werden.')
+  if (!zielDepot.currency) throw new TradeInputError('Die tatsächliche Depotwährung muss zuerst in der Depotverwaltung bestätigt werden.')
   const withMoney = kindOf(zielDepot) === 'echtgeld'
 
   const leverage = normalizeLeverage(input.leverage)
@@ -537,8 +538,8 @@ export async function createTradeForUser(
     stopLoss: input.stopLoss,
     leverage,
   })
-  if (input.contracts != null && !kontraktFelder) throw new Error('Kontrakte benötigen eine gültige Instrumentspezifikation.')
-  if (kontraktFelder && instrumentCurrency?.currency && instrumentCurrency.currency !== kontraktFelder.contractCurrency) throw new Error('Instrument- und Kontraktwährung widersprechen sich.')
+  if (input.contracts != null && !kontraktFelder) throw new TradeInputError('Kontrakte benötigen eine gültige Instrumentspezifikation.')
+  if (kontraktFelder && instrumentCurrency?.currency && instrumentCurrency.currency !== kontraktFelder.contractCurrency) throw new TradeInputError('Instrument- und Kontraktwährung widersprechen sich.')
   const moneyCurrency = resolveMoneyCurrency({
     accountCurrency: portfolioCurrency(zielDepot, moneySettings?.currency),
     quoteCurrency: input.quoteCurrency,
@@ -571,7 +572,7 @@ export async function createTradeForUser(
       : (input.positionSize ?? null)
   if (input.positionSize != null && positionSize != null &&
       Math.abs(positionSize-input.positionSize)>1e-8*Math.max(1,Math.abs(input.positionSize))) {
-    throw new Error('Positionsgröße und Kapitaleinsatz widersprechen sich. Menge und Kapital gemeinsam korrigieren.')
+    throw new TradeInputError('Positionsgröße und Kapitaleinsatz widersprechen sich. Menge und Kapital gemeinsam korrigieren.')
   }
   const takeProfitPct = zielPlan.takeProfitPct
   const preTradeAnswered = planGaps({ ...input, ...moneyCurrency, planContext, positionSize }).length === 0
