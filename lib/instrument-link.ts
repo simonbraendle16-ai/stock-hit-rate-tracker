@@ -126,7 +126,10 @@ export function matchInstrument(
   //    weiterhin nicht geraten. Auch das nur bei EINDEUTIGKEIT: Führt jemand
   //    dasselbe Papier an zwei Börsen, entscheidet er selbst.
   const wantedBase = grundTicker(wanted)
-  if (wantedBase) {
+  // Eine ausdrücklich gewählte Börse darf nicht vor der Symbolauflösung
+  // durch einen anderen Handelsplatz mit derselben Tickerwurzel ersetzt werden.
+  // Der unqualifizierte Fall RHM → RHM.DE bleibt weiterhin möglich.
+  if (wantedBase && wantedBase === wanted) {
     const byBase = instruments.filter((s) => grundTicker(s.ticker) === wantedBase)
     if (byBase.length === 1) {
       return { stockId: byBase[0].id, reason: 'grundticker', competing: [] }

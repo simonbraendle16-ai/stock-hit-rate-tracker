@@ -34,11 +34,20 @@ describe('Historischer Anfang statt gekürzter aktueller Daten', () => {
   it('fragt Binance ab dem verlangten historischen Anfang an', async () => {
     const fetcher = vi.fn(async () => ({ ok: true, status: 200, json: async () => [[1785247200000,'400','401','399','400','1']] }))
     vi.stubGlobal('fetch', fetcher)
-    await binanceProvider.getCandles('BTC-USD', '5min', 1785247200)
+    await binanceProvider.getCandles('BTC-USDT', '5min', 1785247200)
     const params = (fetcher.mock.calls[0] as unknown as [URL])[0].searchParams
     expect(params.get('startTime')).toBe('1785247200000')
     expect(params.get('symbol')).toBe('BTCUSDT')
     expect(toBinanceSymbol('BTCUSDT')).toBe('BTCUSDT')
     expect(toBinanceSymbol('ETHEUR')).toBe('ETHEUR')
+  })
+
+  it('fragt für USD keine USDT-Ersatzkurse an, auch bei fehlendem Binance-Paar', async () => {
+    const fetcher = vi.fn(async () => ({ ok: false, status: 400 }))
+    vi.stubGlobal('fetch', fetcher)
+    await expect(binanceProvider.getCandles('BTC-USD', '5min')).rejects.toMatchObject({ code: 'unknown_symbol' })
+    const params = (fetcher.mock.calls[0] as unknown as [URL])[0].searchParams
+    expect(params.get('symbol')).toBe('BTCUSD')
+    expect(toBinanceSymbol('BTC-USD')).toBe('BTCUSD')
   })
 })

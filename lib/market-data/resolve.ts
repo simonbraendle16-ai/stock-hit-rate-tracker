@@ -241,6 +241,11 @@ function futuresRoot(ticker: string): string | null {
 export async function buildCandidates(input: ResolveInput): Promise<RawCandidate[]> {
   const rawTicker = input.ticker.trim().toUpperCase()
   const { base, suffix: prefixSuffix } = splitExchangePrefix(rawTicker)
+  // Eine explizite Notierung darf weder durch Namenssuche noch durch die
+  // Heimatbörsen-Heuristik in eine andere Währung/Börse umgebogen werden.
+  let explicitSymbol = prefixSuffix !== null
+    ? `${base}${base.endsWith(prefixSuffix) ? '' : prefixSuffix}`
+    : CANDIDATE_SUFFIXES.some(sfx => sfx && base.endsWith(sfx)) ? base : null
   const out: RawCandidate[] = []
   const seen = new Set<string>()
 
@@ -285,11 +290,10 @@ export async function buildCandidates(input: ResolveInput): Promise<RawCandidate
 
   // 2. Marktspezifische Normalisierung.
   if (input.market === 'krypto') {
-    const coin = base.replace(/(USDT|USDC|BUSD|USD|EUR)$/, '') || base
-    add({ symbol: `${coin}-USD`, via: 'Krypto-Paar', bonus: 50, deterministic: true })
-    if (base.endsWith('EUR')) {
-      add({ symbol: `${coin}-EUR`, via: 'Krypto-Paar', bonus: 35, deterministic: true })
-    }
+    const pair = base.match(/^([A-Z0-9]+?)[/-]?(USDT|USDC|BUSD|USD|EUR)$/)
+    const symbol = pair ? `${pair[1]}-${pair[2]}` : `${base}-USD`
+    if (pair) explicitSymbol = symbol
+    add({ symbol, via: 'Krypto-Paar', bonus: 50, deterministic: true })
   }
   if (input.market === 'forex') {
     const pair = base.replace(/[^A-Z]/g, '')
@@ -314,7 +318,7 @@ export async function buildCandidates(input: ResolveInput): Promise<RawCandidate
   //    das stärkste Indiz für den gemeinten Handelsplatz: Wer „ADS" eintippt,
   //    meint XETRA, nicht die US-Hinterlegung „ADDYY".
   if (prefixSuffix !== null) {
-    add({ symbol: `${base}${prefixSuffix}`, via: 'Börsenkürzel aus der Eingabe', bonus: 35 })
+    add({ symbol: explicitSymbol!, via: 'Börsenkürzel aus der Eingabe', bonus: 35 })
   }
   // Gattungstrenner vereinheitlichen: `NOVO_B` wird bei Yahoo `NOVO-B`.
   const stems = new Set<string>([base])
@@ -364,7 +368,9 @@ export async function buildCandidates(input: ResolveInput): Promise<RawCandidate
     }
   }
 
-  return out
+  return explicitSymbol
+    ? out.filter(c => c.symbol === explicitSymbol || c.deterministic)
+    : out
 }
 
 
@@ -478,7 +484,10 @@ function gatherEvidence(
   candidate: RawCandidate,
   quote: YahooQuote,
 ): Evidence {
-  const typed = splitExchangePrefix(input.ticker.trim().toUpperCase()).base
+  const { base, suffix } = splitExchangePrefix(input.ticker.trim().toUpperCase())
+  // Ein bekanntes Börsenpräfix bezeichnet dieselbe exakte Notierung wie
+  // sein Anbieter-Suffix, auch ohne zusätzlichen Firmennamen am Trade.
+  const typed = suffix !== null && !base.endsWith(suffix) ? `${base}${suffix}` : base
   const providerName = quote.name ?? candidate.searchName ?? ''
   const wanted = MARKET_CLASSES[input.market] ?? []
   return {
@@ -553,14 +562,11 @@ export function instrumentClass(quoteType: string | null): string | null {
  * „Bayerische Motoren Werke Aktiengesellschaft" und in Zürich schlicht
  * „BMW AG". Diese beiden Namen haben keinen einzigen Bestandteil gemeinsam.
  *
- * Tragfähig ist stattdessen die Kombination aus Tickerwurzel und BILANZWÄHRUNG.
- * Die Bilanzwährung gehört zum Unternehmen, nicht zum Handelsplatz, und ist
- * deshalb über alle Notierungen hinweg gleich — sie trennt zugleich das, was
- * sich nur zufällig eine Tickerwurzel teilt: `SAP` steht an der NYSE für die
- * SAP SE (bilanziert in EUR) und in Johannesburg für die Sappi Ltd. (ZAR).
- *
- * Fehlt die Bilanzwährung (bei Regionalbörsen häufig), entscheidet der
- * Namensvergleich als Rückfallebene.
+ * Gleiche Tickerwurzel und Bilanzwährung sind allein kein Identitätsbeweis:
+ * Kürzel können an verschiedenen Börsen unterschiedliche Firmen bezeichnen,
+ * auch wenn beide in derselben Währung bilanzieren. Deshalb muss der Name
+ * mittragen. Abweichende Bilanzwährungen schließen eine Zusammenfassung aus.
+ * Stark abweichende Anbieter-Namen bleiben vorsichtshalber getrennte Kandidaten.
  */
 export function sameInstrument(a: Evaluated, b: Evaluated): boolean {
   if (a.symbol === b.symbol) return true
@@ -580,13 +586,14 @@ export function sameInstrument(a: Evaluated, b: Evaluated): boolean {
   const cb = instrumentClass(b.quoteType)
   if (ca && cb && ca !== cb) return false
 
+  if (a.financialCurrency && b.financialCurrency && a.financialCurrency !== b.financialCurrency) {
+    return false
+  }
+
   if (baseOf(a.symbol) !== baseOf(b.symbol)) {
     // Andere Tickerwurzel — nur bei deutlich gleichem Namen dasselbe Papier
     // (etwa `NVO` und `NOVO-B.CO` für Novo Nordisk).
     return nameSimilarity(a.name, b.name) >= 0.6
-  }
-  if (a.financialCurrency && b.financialCurrency) {
-    return a.financialCurrency === b.financialCurrency
   }
   return nameSimilarity(a.name, b.name) >= 0.4
 }

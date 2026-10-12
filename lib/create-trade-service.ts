@@ -363,8 +363,10 @@ export async function createTradeForUser(
   apiRequest?: { key: string; hash: string; source: { kind: string; capturedAt: string } },
 ): Promise<{ id: number; deckungsHinweis: string | null; planReady: boolean }> {
   const ticker = input.ticker.trim().toUpperCase()
+  const answers = validatePreTradeAnswers(input.preTradeAnswers)
+  const planContext = normalizePlanContext(input.planContext)
   if (!ticker) throw new Error('Ticker ist erforderlich.')
-  if (!input.entryPrice || !input.stopLoss) {
+  if (![input.entryPrice, input.stopLoss].every(value => Number.isFinite(value) && value > 0)) {
     throw new Error('Einstieg und Stop-Loss sind erforderlich.')
   }
   // Das Kursziel ist seit dem Umbau der Teilziele PFLICHT.
@@ -482,8 +484,6 @@ export async function createTradeForUser(
   // beantwortet. Dass der Trade trotzdem aktivierbar ist, entscheidet allein
   // `requiresPreTradeGate(tradeKind)` beim Aktivieren. So bleibt in den Daten
   // sichtbar, was tatsächlich passiert ist.
-  const answers = validatePreTradeAnswers(input.preTradeAnswers)
-  const planContext = normalizePlanContext(input.planContext)
 
   // Live-CRV — bei Teilzielen der nach Anteilen gewichtete Wert (siehe
   // `resolveTargetPlan`), sonst wie bisher das Verhältnis zum einen Ziel.

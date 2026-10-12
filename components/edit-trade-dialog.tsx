@@ -104,11 +104,17 @@ export function EditTradeDialog({
   // lehnt es zusätzlich ab.
   const [targets, setTargets] = useState<TargetDraft[]>([])
   const [lockedCount, setLockedCount] = useState(0)
+  const [targetsReady, setTargetsReady] = useState(false)
+  const [targetsError, setTargetsError] = useState<string | null>(null)
 
   useEffect(() => {
+    setTargetsReady(false)
+    setTargetsError(null)
     if (!open) return
+    let cancelled = false
     listTradeTargets(trade.id)
       .then((rows) => {
+        if (cancelled) return
         // Nur die TEILziele in die Liste — die äußerste Stufe IST das Kursziel
         // und steht in seinem eigenen Feld. Stünde sie zusätzlich hier, sähe
         // man sie doppelt und könnte sie an zwei Stellen widersprüchlich ändern.
@@ -117,11 +123,13 @@ export function EditTradeDialog({
           teilziele.map((r) => ({ price: String(r.price), sharePct: String(r.sharePct) })),
         )
         setLockedCount(teilziele.filter((r) => r.executedAt != null).length)
+        setTargetsReady(true)
       })
-      .catch(() => {
-        setTargets([])
-        setLockedCount(0)
+      .catch((error) => {
+        if (cancelled) return
+        setTargetsError(error instanceof Error ? error.message : 'Teilziele konnten nicht geladen werden.')
       })
+    return () => { cancelled = true }
   }, [open, trade.id])
 
   const zielCheck = useMemo(
@@ -149,6 +157,7 @@ export function EditTradeDialog({
   }, [isActive, stopLoss, elliottInvalidation, trade.stopLoss, trade.elliottInvalidation])
 
   const submit = async () => {
+    if (!targetsReady || busy) return
     if (movesLocked && !managementReason.trim()) {
       toast.error('Bitte die Bewertung oder den offenen Planbezug begründen.')
       return
@@ -272,6 +281,7 @@ export function EditTradeDialog({
           </Field>
         </div>
 
+        {targetsError && <p role="alert" className="text-sm text-destructive">Teilziele konnten nicht geladen werden: {targetsError} Bitte schließen und erneut öffnen.</p>}
         {/* Teilziele (Etappe 13). Ausgeführte Stufen bleiben gesperrt stehen —
             sie sind abgerechnet. */}
         <div className="mt-1">
@@ -327,7 +337,7 @@ export function EditTradeDialog({
         <DialogFooter>
           <Button
             onClick={submit}
-            disabled={busy}
+            disabled={busy || !targetsReady}
             className="btn-teal-glow w-full font-mono text-sm font-bold tracking-wider sm:w-auto"
           >
             {busy ? 'WIRD GESPEICHERT…' : 'SPEICHERN'}

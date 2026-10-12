@@ -129,6 +129,13 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers())
 
 describe('Demo-Ausführung mit gespeicherten Positionen', () => {
+  it('erhält die aktuelle Plansperre trotz historischem Ja-Flag bei Kursberührung', async () => {
+    state.trades = [{ ...row(), status: 'geplant', openedAt: null, tradeKind: 'langfristig', preTradeAnswered: true }]
+    state.events = []
+    await runDemoFills({ userId: 'user', refresh: false })
+    expect(state.trades[0]).toMatchObject({ status: 'geplant' })
+    expect(state.events).toEqual([])
+  })
   it('bewertet einen ausdrücklich gleichwährungsdeklarierten Demo-Plan und erhält unbekannten Altbestand', async () => {
     Object.assign(state.trades[0] as object, { quoteCurrency: 'EUR', accountCurrency: 'EUR', quoteToAccountRate: 1 })
     await runDemoFills()

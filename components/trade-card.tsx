@@ -5,7 +5,7 @@ import { planGaps } from '@/lib/plan-context'
 import { frozenFxRate } from '@/lib/money-currency'
 import { InlineNotice } from '@/components/form-frame'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import type { TradeRow } from '@/lib/trade-stats'
@@ -637,14 +637,19 @@ export function ActivateDialog({
   const [mood, setMood] = useState<MoodDraft>(emptyMoodDraft)
   const [withAlerts, setWithAlerts] = useState(true)
   const [busy, setBusy] = useState(false)
+  const activationTrade = useRef<number | null>(null)
+  const [activationVersion, setActivationVersion] = useState(trade.version)
 
   // Bei jedem Öffnen frisch starten — ein alter Entwurf wäre eine fremde Momentaufnahme.
   useEffect(() => {
-    if (open) {
+    if (!open) { activationTrade.current = null; return }
+    if (activationTrade.current !== trade.id) {
+      activationTrade.current = trade.id
+      setActivationVersion(trade.version)
       setMood(emptyMoodDraft())
       setWithAlerts(true)
     }
-  }, [open])
+  }, [open, trade.id, trade.version])
 
   // Beim schnellen Trade ist der Check-in freiwillig (siehe `lib/trade-kind.ts`).
   const moodRequired = requiresMoodCheck(trade.tradeKind)
@@ -658,6 +663,7 @@ export function ActivateDialog({
     try {
       const { revengeWarning, alertsCreated, deckungsHinweis } = await activateTrade(trade.id, mood, {
         createPlanAlerts: withAlerts,
+        expectedVersion: activationVersion,
       })
       toast.success('Trade aktiviert.')
       if (alertsCreated > 0) {

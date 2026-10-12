@@ -44,6 +44,7 @@ import {
   Search,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { quoteAge } from '@/lib/market-data/quote-age'
 
 /** Yahoos `quoteType` in der Trefferliste — englische Rohwerte zeigt niemand gern. */
 const QUOTE_TYPE_LABELS: Record<string, string> = {
@@ -191,41 +192,6 @@ function useSparklines() {
   return { sparks, reload: () => setReloadKey((k) => k + 1) }
 }
 
-/**
- * „vor 3 Min." statt einer Uhrzeit, die man erst umrechnen muss.
- *
- * Wichtig ist die Ehrlichkeit dahinter: Angezeigt wird, wann der Kurs GEHOLT
- * wurde. Ein Kurs von gestern Abend bleibt sichtbar ein Kurs von gestern Abend —
- * die Alternative wäre, ihn wie einen aktuellen aussehen zu lassen.
- */
-function relativeAge(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime()
-  if (!Number.isFinite(ms) || ms < 0) return ''
-  const min = Math.floor(ms / 60000)
-  if (min < 1) return 'gerade eben'
-  if (min < 60) return `vor ${min} Min.`
-  const h = Math.floor(min / 60)
-  if (h < 24) return `vor ${h} Std.`
-  return `vor ${Math.floor(h / 24)} Tg.`
-}
-
-/**
- * Dieselbe Aussage in wenigen Zeichen — für die schmale Kursspalte auf dem Handy.
- *
- * Kürzen ist erlaubt, Weglassen nicht: Ein Kurs ohne Altersangabe behauptet,
- * aktuell zu sein.
- */
-function shortAge(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime()
-  if (!Number.isFinite(ms) || ms < 0) return ''
-  const min = Math.floor(ms / 60000)
-  if (min < 1) return 'eben'
-  if (min < 60) return `${min} Min.`
-  const h = Math.floor(min / 60)
-  if (h < 24) return `${h} Std.`
-  return `${Math.floor(h / 24)} Tg.`
-}
-
 function Sparkline({ closes, positive }: { closes: number[]; positive: boolean }) {
   const path = useMemo(() => {
     const w = 96
@@ -334,6 +300,7 @@ function WatchlistRow({
   onReview: (id: number, gesehen: boolean) => void
 }) {
   const ok = spark?.status === 'ok' ? spark : null
+  const age = quoteAge(ok?.quotedAt)
   const positive = ok ? ok.changePct >= 0 : true
   const prev = ok && ok.closes.length >= 2 ? ok.closes[ok.closes.length - 2] : null
   const changeAbs = ok && prev !== null ? ok.last - prev : null
@@ -411,7 +378,7 @@ function WatchlistRow({
         </div>
 
         {/* Etappe 14: Auf dem Handy schmaler, damit links Platz für Name und
-            Abstand bleibt. Währung und Abrufalter sind dort Beiwerk — der Kurs
+            Abstand bleibt. Währung und Kursalter sind dort Beiwerk — der Kurs
             ist die Information. */}
         <div className="w-24 shrink-0 text-right sm:w-28">
           {ok ? (
@@ -427,12 +394,10 @@ function WatchlistRow({
                   stand dort eine Zahl, die aussah, als wäre sie live. Genau
                   dagegen ist diese App gebaut. Verkürzt statt verborgen: „2 Min."
                   passt neben den Kurs, „vor 2 Minuten" erst ab `sm`. */}
-              {ok.fetchedAt && (
-                <p className="font-mono text-[9px] text-muted-foreground">
-                  <span className="sm:hidden">{shortAge(ok.fetchedAt)}</span>
-                  <span className="hidden sm:inline">{relativeAge(ok.fetchedAt)}</span>
-                </p>
-              )}
+              <p className="font-mono text-[9px] text-muted-foreground">
+                <span className="sm:hidden">{age.short}</span>
+                <span className="hidden sm:inline">{age.long}</span>
+              </p>
             </>
           ) : needsRepair ? (
             <span className="font-mono text-[10px] text-destructive">kein Symbol</span>
