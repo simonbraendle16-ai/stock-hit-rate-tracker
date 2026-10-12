@@ -1,6 +1,6 @@
 # Abschluss der lokalen Upstream-Integration
 
-Stand: 12.10.2026. **Lokal repariert, integriert und getestet; nicht gepusht oder veröffentlicht.** Keine produktiven Handels- oder Datenbankänderungen.
+Stand: 12.10.2026. **Lokal repariert, integriert, validiert und als Reparaturbranch normal gepusht; kein main-Merge oder Deployment ausgeführt.** Keine produktiven Handels- oder Datenbankänderungen. Aktueller [Validierungs- und Pushnachweis](VALIDIERUNG-PUSH-2026-10-12.md).
 
 ## Branch, Basis und Ursprungssicherung
 
@@ -80,4 +80,4 @@ Dazu dieser Abschluss und zwei als historisch gekennzeichnete Berichte. Keine Sc
 - Produktive UI/API-Prüfung ohne passende Konfiguration offen. Keine Secrets ausgegeben, aus Altpfaden übernommen oder neu eingerichtet. Verfügbare Git-Historie ist kein Nachweis der tatsächlich laufenden Produktionsrevision.
 - Historische lokale echte Edge-Prüfung mit synthetischen Daten bestätigte unter anderem Teilziel-Ladefehler und gesperrtes Speichern. Sie ersetzt keine Browserabnahme dieser neuen Basis.
 - Session-2-Browserinventur wurde automatisch wegen möglicher Offenlegung privater Tabs abgelehnt. Nicht wiederholt/umgangen. Keine neue produktive oder kombinierte Browserabnahme behauptet.
-- Kein Push, Deployment, persönlicher Testtrade, Upgrade, Reset oder Kauf. **Lokal integrationsfertig bedeutet nicht veröffentlicht oder produktiv abgenommen.**
+- Normaler Push der gemeinsamen Reparaturbranch am 12.10.2026 nach neuer ausdrücklicher Autorisierung bestätigt; siehe [Pushnachweis](VALIDIERUNG-PUSH-2026-10-12.md). Kein main-Merge, Deploymentbefehl, persönlicher Testtrade, Upgrade, Reset oder Kauf. **Die gepushte Branch ist weder produktiv abgenommen noch als deploybereit freigegeben.**
