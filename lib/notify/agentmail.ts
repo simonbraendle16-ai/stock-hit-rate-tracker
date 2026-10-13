@@ -58,7 +58,7 @@ export function readMailConfig(): MailConfig | null {
   return { apiKey, inboxId }
 }
 
-export async function sendMail(input: SendMailInput, config: MailConfig): Promise<SendMailResult> {
+export async function sendMail(input: SendMailInput, config: MailConfig, options: { idempotencyKey?: string; timeoutMs?: number } = {}): Promise<SendMailResult> {
   const url = `${apiBase()}/inboxes/${encodeURIComponent(config.inboxId)}/messages/send`
 
   try {
@@ -67,13 +67,14 @@ export async function sendMail(input: SendMailInput, config: MailConfig): Promis
       headers: {
         Authorization: `Bearer ${config.apiKey}`,
         'Content-Type': 'application/json',
+        ...(options.idempotencyKey ? { 'Idempotency-Key': options.idempotencyKey } : {}),
       },
       body: JSON.stringify({
         to: input.to,
         subject: input.subject,
         text: input.text,
       }),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: AbortSignal.timeout(Math.max(1, Math.min(TIMEOUT_MS, options.timeoutMs ?? TIMEOUT_MS))),
       cache: 'no-store',
     })
 

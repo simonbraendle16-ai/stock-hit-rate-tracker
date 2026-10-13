@@ -1,6 +1,9 @@
 'use server'
 
 import { currencyAssignment } from '@/lib/money-currency'
+import { createPlanFxSnapshot } from '@/lib/fx-service'
+import { requireFxDate, type PlanFxSnapshot } from '@/lib/fx-reference'
+import { TradeInputError } from '@/lib/trade-input-error'
 
 // Depot-Aktionen (Etappe 12) — die anrufbare Oberfläche zu `lib/portfolio-*.ts`.
 //
@@ -370,21 +373,43 @@ export async function getPortfolioFxRates(portfolioId: number): Promise<{
 export async function updatePortfolioFxRates(
   portfolioId: number,
   rates: Record<string, number>,
+  referenceAt?: string,
 ): Promise<void> {
   const userId = await getUserId()
   await loadOwnedPortfolio(userId, portfolioId)
 
   const sauber = parseFxRates(JSON.stringify(rates ?? {}))
   const leer = Object.keys(sauber).length === 0
+  const date = referenceAt ? new Date(referenceAt) : null
+  if (!leer) {
+    if (!date) throw new Error('Das tatsächliche Referenzdatum des manuellen Kurses ist erforderlich.')
+    requireFxDate(date)
+  }
 
   await db
     .update(portfolio)
     .set({
       fxRates: leer ? null : JSON.stringify(sauber),
-      fxRatesAt: leer ? null : new Date(),
+      fxRatesAt: leer ? null : date,
+      fxMode: 'manual',
     })
     .where(and(eq(portfolio.id, portfolioId), eq(portfolio.userId, userId)))
 
+  revalidateAll()
+}
+
+export async function getTradePlanFx(portfolioId: number, quoteCurrency: string): Promise<{ ok: true; snapshot: PlanFxSnapshot } | { ok: false; error: string }> {
+  try {
+    return { ok: true, snapshot: await createPlanFxSnapshot(await getUserId(), portfolioId, quoteCurrency) }
+  } catch (error) {
+    return { ok: false, error: error instanceof TradeInputError ? error.message : 'Wechselkurs konnte nicht geladen werden. Anmeldung und Depotzugriff prüfen; Eingaben bleiben erhalten.' }
+  }
+}
+
+export async function useAutomaticPortfolioFx(portfolioId: number): Promise<void> {
+  const userId = await getUserId()
+  await loadOwnedPortfolio(userId, portfolioId)
+  await db.update(portfolio).set({ fxMode: 'automatic' }).where(and(eq(portfolio.id, portfolioId), eq(portfolio.userId, userId)))
   revalidateAll()
 }
 

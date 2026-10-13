@@ -17,6 +17,7 @@ import { lastAlertCheck } from '@/lib/alert-run'
 import { readMailConfig } from '@/lib/notify/agentmail'
 import { resolveRecipient } from '@/lib/notify/alert-mail'
 import { healthFrom, type NotifyStatus } from '@/lib/notify/status'
+import { automaticCheckHealthy } from '@/lib/alert-health'
 
 async function getUserId() {
   const session = await auth.api.getSession({ headers: await headers() })
@@ -45,7 +46,7 @@ export async function getNotifyStatus(): Promise<NotifyStatus> {
     .leftJoin(userSettings, eq(userSettings.userId, user.id))
     .where(eq(user.id, userId))
 
-  const last = await lastAlertCheck()
+  const [last, successful] = await Promise.all([lastAlertCheck(), lastAlertCheck(true)])
   const hasMailConfig = readMailConfig() !== null
 
   // Ohne Einstellungszeile gilt der Vorgabewert (an) — sonst stünde bei einem
@@ -53,10 +54,13 @@ export async function getNotifyStatus(): Promise<NotifyStatus> {
   const notifyByEmail = row?.notifyByEmail ?? true
 
   return {
-    health: healthFrom({ hasMailConfig, lastCheckAt: last?.startedAt ?? null }),
-    lastCheckAt: last ? new Date(last.startedAt).toISOString() : null,
+    health: healthFrom({ hasMailConfig, lastCheckAt: successful?.finishedAt ?? null, lastAttemptAt: last?.startedAt, lastAttemptOk: last ? automaticCheckHealthy(last) : false }),
+    lastCheckAt: successful?.finishedAt ? new Date(successful.finishedAt).toISOString() : null,
+    lastAttemptAt: last ? new Date(last.startedAt).toISOString() : null,
+    lastAttemptFinishedAt: last?.finishedAt ? new Date(last.finishedAt).toISOString() : null,
+    quotesMissing: last?.quotesMissing ?? 0,
     lastTrigger: last?.trigger ?? null,
-    lastError: last?.error ?? null,
+    lastError: last?.error ?? (!hasMailConfig ? 'E-Mail-Versand ist nicht eingerichtet.' : last?.mailsFailed ? 'Mindestens eine E-Mail konnte nicht zugestellt werden.' : last && !last.complete ? 'Prüfung noch nicht vollständig abgeschlossen.' : null),
     recipient: notifyByEmail ? resolveRecipient(row?.notifyEmail, row?.accountEmail) : null,
     notifyEmail: row?.notifyEmail ?? null,
     notifyByEmail,

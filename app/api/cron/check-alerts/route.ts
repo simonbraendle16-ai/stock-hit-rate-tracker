@@ -1,5 +1,6 @@
 import { runAlertCheck } from '@/lib/alert-run'
 import { NextRequest, NextResponse } from 'next/server'
+import { alertCronAuthorized } from '@/lib/alert-cron-auth'
 
 /**
  * Der Lauf, der aus einem Kurs-Alert eine Nachricht macht.
@@ -8,25 +9,25 @@ import { NextRequest, NextResponse } from 'next/server'
  * Vercel-Hobby lässt genau EINEN Cron-Lauf pro Tag zu und lehnt sonst das ganze
  * Deployment ab (siehe CLAUDE.md — hat schon zwei Tage gekostet). Ein Alarm, der
  * einmal täglich prüft, ist keiner. Den Takt gibt deshalb ein externer Dienst
- * vor: `.github/workflows/check-alerts.yml` (alle 5 Minuten) oder ein Job bei
- * cron-job.org auf dieselbe URL. `vercel.json` bleibt unangetastet.
+ * vor: cron-job.org alle fünf Minuten, mit eigenem ALERT_CRON_SECRET.
+ * GitHub-Alarmworkflow bleibt deaktiviert; Demo-Verarbeitung bleibt separat.
  *
  * Von Hand anstoßen (PowerShell):
- *   curl -H "Authorization: Bearer $env:CRON_SECRET" https://<deine-app>/api/cron/check-alerts
+ * Das eigene Alarm-Geheimnis berechtigt ausschließlich diesen Endpunkt.
  */
 
 // Prüft Kurse, schreibt in die Datenbank und verschickt Mail — darf unter keinen
 // Umständen aus einem Cache beantwortet werden.
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
+export const maxDuration = 25
 
 export async function GET(req: NextRequest) {
-  const secret = process.env.CRON_SECRET
+  const secret = process.env.ALERT_CRON_SECRET
   if (!secret) {
     return NextResponse.json(
       {
         error:
-          'CRON_SECRET ist nicht gesetzt. Ohne Geheimnis läuft die Alarm-Prüfung nicht — ' +
+          'ALERT_CRON_SECRET ist nicht gesetzt. Ohne eigenes Alarm-Geheimnis läuft die Prüfung nicht — ' +
           'bitte in den Projekt-Einstellungen (und in .env.local) hinterlegen.',
       },
       { status: 500 },
@@ -34,22 +35,26 @@ export async function GET(req: NextRequest) {
   }
 
   const header = req.headers.get('authorization')
-  if (header !== `Bearer ${secret}`) {
+  if (!alertCronAuthorized(header, secret)) {
     return NextResponse.json({ error: 'Nicht berechtigt.' }, { status: 401 })
   }
 
-  const report = await runAlertCheck({ trigger: 'cron' })
-
-  // Auch ein Lauf mit Teilfehlern (eine Mail ging nicht raus) gilt als
-  // beantwortet — sonst wertet der externe Dienst ihn als Ausfall, obwohl die
-  // Alerts korrekt ausgelöst haben. Der Zustand steht im Rumpf und in
-  // `alert_check_run`; ungesendete Meldungen holt der nächste Lauf nach.
-  return NextResponse.json({
-    ok: report.error === null,
+  try {
+    const report = await runAlertCheck({ trigger: 'cron' })
+    // 202 means persisted work remains. Only 200 confirms a complete successful pass.
+    return NextResponse.json({
+    ok: report.complete,
+    complete: report.complete,
+    busy: report.busy,
+    remaining: report.remaining,
+    quotesMissing: report.quotesMissing,
     alertsOpen: report.alertsOpen,
     triggered: report.triggered,
     mailsSent: report.mailsSent,
     mailsFailed: report.mailsFailed,
     error: report.error,
-  })
+  }, { status: report.complete ? 200 : report.busy ? 409 : report.remaining && !report.error && !report.mailsFailed ? 202 : 503 })
+  } catch {
+    return NextResponse.json({ ok: false, error: 'Alarmprüfung konnte nicht gestartet oder abgeschlossen werden.' }, { status: 503 })
+  }
 }

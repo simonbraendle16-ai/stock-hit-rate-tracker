@@ -108,6 +108,7 @@ async function getUserId() {
 // reine Typ-Re-Exports, was den Build bricht.
 
 export type TradeInput = {
+  fxSnapshotId?: string
   quoteCurrency?: string | null
   ticker: string
   market?: string

@@ -51,6 +51,12 @@ export function NotifyPanel({ initial }: { initial: NotifyStatus }) {
         hint="Wenn ein Kurs deine Marke erreicht — auch, wenn die App gerade zu ist."
       >
         <StatusRow status={initial} />
+        {initial.lastAttemptAt && <p className="note">
+          Letzter automatischer Versuch: {new Date(initial.lastAttemptAt).toLocaleString('de-DE')}.
+          {' '}{initial.lastAttemptFinishedAt ? 'Versuch beendet.' : 'Kein Abschluss nachgewiesen.'}
+          {' '}{initial.quotesMissing ? `${initial.quotesMissing} Alarmprüfungen ohne gültige Kursdaten.` : ''}
+          {' '}{initial.lastError}
+        </p>}
 
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="E-Mail-Adresse">
@@ -100,10 +106,7 @@ function StatusRow({ status }: { status: NotifyStatus }) {
   if (status.health === 'nie_gelaufen') {
     return (
       <InlineNotice tone="warning">
-        Es wurde noch nie geprüft. Der Takt kommt von einem externen Dienst — richte den
-        GitHub-Actions-Workflow <span className="font-mono">check-alerts.yml</span> ein oder
-        rufe <span className="font-mono">/api/cron/check-alerts</span> regelmäßig mit dem
-        CRON_SECRET auf.
+        Noch keine erfolgreiche automatische Prüfung nachgewiesen. Der externe Alarm-Zeitgeber muss eingerichtet und geprüft sein.
       </InlineNotice>
     )
   }
@@ -111,11 +114,14 @@ function StatusRow({ status }: { status: NotifyStatus }) {
   if (status.health === 'takt_fehlt') {
     return (
       <InlineNotice tone="warning">
-        Letzter Prüflauf vor {seit}. Das ist zu lange her — der externe Takt läuft
-        vermutlich nicht, und erreichte Kursmarken melden sich gerade nicht von selbst.
+        Letzte erfolgreiche automatische Prüfung vor {seit}. Seit mehr als 20 Minuten ist keine vollständige erfolgreiche Prüfung nachgewiesen. Takt, Kursversorgung oder Versand können gestört sein; Kursmeldungen sind derzeit nicht verlässlich.
       </InlineNotice>
     )
   }
+
+  if (status.health === 'pruefung_fehler') return <InlineNotice tone="warning">
+    Der letzte automatische Versuch ist unvollständig oder fehlgeschlagen. {seit ? `Letzter erfolgreicher Abschluss vor ${seit}.` : 'Noch kein erfolgreicher Abschluss nachgewiesen.'}
+  </InlineNotice>
 
   if (status.health === 'kein_versand') {
     return (
@@ -129,7 +135,7 @@ function StatusRow({ status }: { status: NotifyStatus }) {
 
   return (
     <div className="font-mono text-xs text-muted-foreground">
-      Letzter Prüflauf vor {seit}
+      Letzte erfolgreiche automatische Prüfung vor {seit}
       {status.recipient ? (
         <> · Meldungen gehen an {status.recipient}</>
       ) : (

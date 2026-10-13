@@ -28,7 +28,7 @@ export const PORTFOLIO_KINDS = ['echtgeld', 'demo'] as const
 export type PortfolioKind = (typeof PORTFOLIO_KINDS)[number]
 
 /** Eine Depot-Zeile, wie sie aus der Datenbank kommt. */
-export type PortfolioRow = Omit<typeof portfolio.$inferSelect, 'currency'> & { currency?: string | null }
+export type PortfolioRow = Omit<typeof portfolio.$inferSelect, 'currency' | 'fxMode'> & { currency?: string | null; fxMode?: string }
 
 /**
  * Das Depot, wie es ein Formular braucht — nur die Felder, die die Eingabe

@@ -12,11 +12,15 @@ export type NotifyHealth =
   | 'takt_fehlt'
   /** Noch nie geprüft. */
   | 'nie_gelaufen'
+  | 'pruefung_fehler'
 
 export interface NotifyStatus {
   health: NotifyHealth
   /** Beginn des letzten Prüflaufs, ISO — null, wenn noch keiner lief. */
   lastCheckAt: string | null
+  lastAttemptAt?: string | null
+  lastAttemptFinishedAt?: string | null
+  quotesMissing?: number
   lastTrigger: string | null
   lastError: string | null
   /** Adresse, an die gemeldet würde (aus den Einstellungen oder vom Konto). */
@@ -40,10 +44,14 @@ export function healthFrom(input: {
   hasMailConfig: boolean
   lastCheckAt: Date | null
   now?: Date
+  lastAttemptAt?: Date | null
+  lastAttemptOk?: boolean
 }): NotifyHealth {
-  if (!input.lastCheckAt) return 'nie_gelaufen'
+  if (!input.lastCheckAt) return input.lastAttemptAt ? 'pruefung_fehler' : 'nie_gelaufen'
   const now = input.now ?? new Date()
-  if (now.getTime() - input.lastCheckAt.getTime() > CHECK_STALE_MS) return 'takt_fehlt'
+  const age = now.getTime() - input.lastCheckAt.getTime()
+  if (!Number.isFinite(age) || age < 0 || age > CHECK_STALE_MS) return 'takt_fehlt'
+  if (input.lastAttemptAt && input.lastAttemptOk === false) return 'pruefung_fehler'
   if (!input.hasMailConfig) return 'kein_versand'
   return 'ok'
 }

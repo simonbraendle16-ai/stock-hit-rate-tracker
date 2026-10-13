@@ -3,8 +3,9 @@
 import type React from 'react'
 import { formNumber } from '@/lib/form-number'
 import { tradeFormPreview } from '@/lib/trade-form-preview'
-import { getPortfolioFxRates } from '@/app/actions/portfolios'
-import { useEffect, useMemo, useState } from 'react'
+import { getTradePlanFx } from '@/app/actions/portfolios'
+import { useEffect, useMemo, useState, useRef } from 'react'
+import type { PlanFxSnapshot } from '@/lib/fx-reference'
 import { useRouter } from 'next/navigation'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -205,28 +206,40 @@ export function TradeForm({
   // Übung, wenn Positionswert und Stückzahl dieselben sind wie später mit
   // echtem Geld. Der Unterschied bleibt, dass auf Papier keine Gebühren
   // anfallen — dieselbe Regel wie in `tradeFees`.
-  const [fxSnapshots, setFxSnapshots] = useState<Record<number, { rates: Record<string, number>; stand: Date | null }>>({})
+  const [fxSnapshot, setFxSnapshot] = useState<PlanFxSnapshot | null>(null)
+  const [fxError, setFxError] = useState<string | null>(null)
   const [fxBusy, setFxBusy] = useState(false)
-  const fxSnapshot = portfolioId == null ? null : fxSnapshots[portfolioId]
-  const reloadFx = async () => {
-    if (portfolioId == null) return
-    const id = portfolioId
+  const [fxRetry, setFxRetry] = useState(0)
+  const fxRequest = useRef(0)
+  const fxQuote = instrumentCurrency?.ticker === form.ticker.trim().toUpperCase() && instrumentCurrency.market === form.market
+    ? instrumentCurrency.currency ?? form.quoteCurrency : form.quoteCurrency
+  useEffect(() => {
+    const request = ++fxRequest.current
+    setFxSnapshot(null); setFxError(null)
+    setPlanContext(previous => ({ ...previous, riskConfirmed: false }))
+    if (portfolioId == null || !/^[A-Z]{3}$/.test(fxQuote)) { setFxBusy(false); return }
     setFxBusy(true)
-    try {
-      const snapshot = await getPortfolioFxRates(id)
-      setFxSnapshots(previous => ({ ...previous, [id]: snapshot }))
-      setPlanContext(previous => ({ ...previous, riskConfirmed: false }))
-    } catch { toast.error('Depotkurse konnten nicht gelesen werden. Eingaben bleiben erhalten.') }
-    finally { setFxBusy(false) }
-  }
+    getTradePlanFx(portfolioId, fxQuote).then(result => {
+      if (request !== fxRequest.current) return
+      if (result.ok) setFxSnapshot(result.snapshot)
+      else setFxError(result.error)
+    }).catch(err => {
+      if (request === fxRequest.current) setFxError(err instanceof Error ? err.message : 'Wechselkurs konnte nicht geladen werden.')
+    }).finally(() => { if (request === fxRequest.current) setFxBusy(false) })
+    return () => { fxRequest.current++ }
+  }, [portfolioId, fxQuote, fxRetry])
+  const reloadFx = () => { setFxSnapshot(null); setFxRetry(value => value + 1) }
   // Revalidate age on every render, including after a long pause or a new input.
   const conversion = (() => {
     try {
+      if (!fxSnapshot || fxSnapshot.portfolioId !== portfolioId || fxSnapshot.quoteCurrency !== fxQuote || fxSnapshot.accountCurrency !== currency) {
+        return { value: null, error: fxError ?? (fxBusy ? 'Wechselkurs wird geladen …' : 'Depot und Kurswährung wählen; Wechselkurs laden.') }
+      }
       return { value: resolveMoneyCurrency({
         accountCurrency: currency, quoteCurrency: form.quoteCurrency,
         resolvedCurrency: instrumentCurrency?.ticker === form.ticker.trim().toUpperCase() && instrumentCurrency.market === form.market ? instrumentCurrency.currency : null,
-        rates: fxSnapshot?.rates ?? parseFxRates(depot?.fxRates),
-        ratesAt: fxSnapshot ? (fxSnapshot.stand ? new Date(fxSnapshot.stand) : null) : depot?.fxRatesAt ? new Date(depot.fxRatesAt) : null,
+        rates: { [fxSnapshot.quoteCurrency]: fxSnapshot.rate },
+        ratesAt: new Date(fxSnapshot.referenceAt),
       }), error: null }
     } catch (err) {
       return { value: null, error: err instanceof Error ? err.message : 'Umrechnung fehlt.' }
@@ -377,6 +390,7 @@ export function TradeForm({
     setLoading(true)
     try {
       const payload: TradeInput = {
+        fxSnapshotId: fxSnapshot?.id,
         quoteCurrency: form.quoteCurrency,
         ticker: form.ticker,
         direction: form.direction,
@@ -880,16 +894,16 @@ export function TradeForm({
           <div aria-live="polite" className="flex flex-col gap-3">
             <p className="eyebrow">Gewinn-/Verlustvorschau · {currency}</p>
             {preview.error && <InlineNotice tone="warning" icon={AlertTriangle}>Vorschau fehlt: {preview.error}</InlineNotice>}
-            {conversion.error && portfolioId != null && (
+            {portfolioId != null && (
               <div className="flex flex-col gap-2">
                 <p className="note">
-                  Depot {depot?.name}: Für {form.quoteCurrency || instrumentCurrency?.currency || 'die Kurswährung'} → {currency} einen belegten aktuellen Kurs unter Einstellungen → Depots → Umrechnungskurse hinterlegen.
-                  Hinterlegter Zeitpunkt: {(fxSnapshot ? fxSnapshot.stand : depot?.fxRatesAt) ? new Date((fxSnapshot ? fxSnapshot.stand : depot?.fxRatesAt)!).toLocaleString('de-DE') : 'fehlt'}.
-                  Danach hier die Depotkurse neu lesen. Die Formulareingaben bleiben erhalten.
+                  {fxSnapshot ? `Quelle: ${fxSnapshot.source === 'ecb' ? 'EZB-Referenzkurs' : fxSnapshot.source === 'manual' ? 'Manueller Depotkurs' : 'Gleiche Währung'}. Referenzstand: ${new Date(fxSnapshot.referenceAt).toLocaleDateString('de-DE')}. Abgerufen: ${new Date(fxSnapshot.fetchedAt).toLocaleString('de-DE')}.` : 'Aktuellen Referenzkurs automatisch laden oder einen belegten manuellen Ersatz in den Depoteinstellungen wählen.'}
+                  {' '}Die Formulareingaben bleiben erhalten. Neue Kurse erfordern eine erneute Risikobestätigung.
                 </p>
+                {fxSnapshot?.warning && <InlineNotice tone="warning">{fxSnapshot.warning}</InlineNotice>}
                 <a href="/settings" target="_blank" rel="noopener noreferrer" className="text-sm underline">Depoteinstellungen in neuem Tab öffnen</a>
                 <Button type="button" variant="outline" disabled={fxBusy} onClick={() => void reloadFx()}>
-                  {fxBusy ? 'Lese Depotkurse …' : 'Depotkurse neu lesen'}
+                  {fxBusy ? 'Lade Wechselkurs …' : 'Wechselkurs aktualisieren'}
                 </Button>
               </div>
             )}
@@ -1063,7 +1077,7 @@ export function TradeForm({
       <div className="flex flex-col gap-3 pt-1 sm:flex-row">
         <Button
           type="submit"
-          disabled={loading || instrumentStatus !== 'ready'}
+          disabled={loading || instrumentStatus !== 'ready' || !conversion.value || fxBusy}
           className="btn-teal-glow h-11 flex-1 font-mono text-sm font-bold tracking-wider"
         >
           {loading

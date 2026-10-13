@@ -30,6 +30,7 @@ import {
   unarchivePortfolio,
   updatePortfolioMoney,
   updatePortfolioFxRates,
+  useAutomaticPortfolioFx,
 } from '@/app/actions/portfolios'
 import {
   MAX_PORTFOLIO_NAME,
@@ -534,6 +535,8 @@ function FxKurse({
   })
   const [offen, setOffen] = useState(false)
 
+  const [referenceDate, setReferenceDate] = useState(depot.fxRatesAt ? new Date(depot.fxRatesAt).toISOString().slice(0, 10) : '')
+
   const setZeile = (i: number, patch: Partial<{ code: string; kurs: string }>) =>
     setZeilen((p) => p.map((z, k) => (k === i ? { ...z, ...patch } : z)))
 
@@ -547,7 +550,7 @@ function FxKurse({
       if (!code || !Number.isFinite(kurs) || kurs <= 0) continue
       rates[code] = kurs
     }
-    return lauf(() => updatePortfolioFxRates(depot.id, rates), 'Umrechnungskurse gespeichert.')
+    return lauf(() => updatePortfolioFxRates(depot.id, rates, referenceDate ? `${referenceDate}T00:00:00.000Z` : undefined), 'Manuelle Umrechnungskurse mit Referenzdatum gespeichert.')
   }
 
   const codes = Object.keys(bestand)
@@ -572,12 +575,17 @@ function FxKurse({
       </button>
 
       {offen && (
-        <div className="mt-3 space-y-3">
+        <div className="mt-3 flex flex-col gap-3">
           <p className="note">
-            Nur nötig, wenn du Kontrakte handelst, die in einer anderen Währung notieren als
-            dein Konto ({sym}). Ohne Kurs wird der Einschuss <strong>nicht</strong> gegen die
-            Deckung geprüft — geraten wird nicht.
+            Für neue Trade-Pläne: {depot.fxMode === 'manual' ? 'manueller Ersatz' : 'automatische EZB-Referenzkurse'}.
+            Referenzkurse sind Planwerte, keine Brokerabrechnung. Historische Trades behalten ihren eingefrorenen Kurs.
           </p>
+          <Button type="button" variant="outline" disabled={busy} onClick={() => void lauf(() => useAutomaticPortfolioFx(depot.id), 'Automatische EZB-Referenzkurse ausgewählt.')}>
+            Automatische Referenzkurse verwenden
+          </Button>
+          <Field label="Referenzdatum des manuellen Ersatzkurses (UTC)">
+            <Input type="date" value={referenceDate} onChange={e => setReferenceDate(e.target.value)} className={inputCls} />
+          </Field>
 
           {zeilen.map((z, i) => (
             <div key={i} className="grid grid-cols-1 items-end gap-3 sm:grid-cols-3">
@@ -627,7 +635,7 @@ function FxKurse({
               className="h-10 font-mono text-xs font-bold tracking-wider"
               onClick={() => void speichern()}
             >
-              {busy ? 'WIRD GESPEICHERT…' : 'KURSE SPEICHERN'}
+              {busy ? 'WIRD GESPEICHERT…' : 'MANUELLEN ERSATZ VERWENDEN'}
             </Button>
           </div>
         </div>

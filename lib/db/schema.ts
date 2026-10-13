@@ -108,6 +108,7 @@ export const portfolio = pgTable('portfolio', {
   fxRates: text('fxRates'),
   // Von wann die Kurse sind. Ein Kurs ohne Datum ist ein Gerücht.
   fxRatesAt: timestamp('fxRatesAt'),
+  fxMode: text('fxMode').notNull().default('automatic'),
   // Stillgelegt: fällt aus Umschalter und Echtgeld-Aggregat, Historie bleibt
   // lesbar. Ein befülltes Depot wird nie gelöscht, nur archiviert.
   archivedAt: timestamp('archivedAt'),
@@ -350,6 +351,7 @@ export const trade = pgTable('trade', {
   accountCurrency: text('accountCurrency'),
   quoteToAccountRate: doublePrecision('quoteToAccountRate'),
   fxRateAt: timestamp('fxRateAt'),
+  fxSnapshotId: uuid('fxSnapshotId'),
   // Kapitaleinsatz in Kontowährung (Echtgeld); die Stückzahl in positionSize
   // wird daraus abgeleitet — bei Hebel aus Einsatz × Hebel.
   investedAmount: doublePrecision('investedAmount'),
@@ -620,6 +622,47 @@ export const alertCheckRun = pgTable('alert_check_run', {
   triggered: integer('triggered').notNull().default(0),
   mailsSent: integer('mailsSent').notNull().default(0),
   mailsFailed: integer('mailsFailed').notNull().default(0),
+  error: text('error'),
+  complete: boolean('complete').notNull().default(false),
+  quotesMissing: integer('quotesMissing').notNull().default(0),
+})
+
+export const fxReferenceCache = pgTable('fx_reference_cache', {
+  id: text('id').primaryKey(),
+  rates: jsonb('rates').$type<Record<string, number>>().notNull(),
+  referenceAt: timestamp('referenceAt', { withTimezone: true }).notNull(),
+  fetchedAt: timestamp('fetchedAt', { withTimezone: true }).notNull(),
+})
+
+export const planFxSnapshot = pgTable('plan_fx_snapshot', {
+  id: uuid('id').primaryKey(),
+  userId: text('userId').notNull(),
+  portfolioId: integer('portfolioId').notNull(),
+  quoteCurrency: text('quoteCurrency').notNull(),
+  accountCurrency: text('accountCurrency').notNull(),
+  rate: doublePrecision('rate').notNull(),
+  referenceAt: timestamp('referenceAt', { withTimezone: true }).notNull(),
+  fetchedAt: timestamp('fetchedAt', { withTimezone: true }).notNull(),
+  source: text('source').notNull(),
+})
+
+export const alertCheckState = pgTable('alert_check_state', {
+  id: text('id').primaryKey(),
+  cursor: integer('cursor').notNull().default(0),
+  cycleFailed: boolean('cycleFailed').notNull().default(false),
+  leaseToken: uuid('leaseToken'),
+  leaseUntil: timestamp('leaseUntil', { withTimezone: true }),
+})
+
+export const alertMailDelivery = pgTable('alert_mail_delivery', {
+  id: uuid('id').primaryKey(),
+  userId: text('userId').notNull(),
+  alertIds: jsonb('alertIds').$type<number[]>().notNull(),
+  recipient: text('recipient').notNull(),
+  subject: text('subject').notNull(),
+  body: text('body').notNull(),
+  createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
+  sentAt: timestamp('sentAt', { withTimezone: true }),
   error: text('error'),
 })
 

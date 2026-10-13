@@ -1,4 +1,5 @@
 import { TradeInputError } from '@/lib/trade-input-error'
+import { readPlanFxSnapshot } from '@/lib/fx-service'
 import { normalizePlanContext, planGaps } from '@/lib/plan-context'
 import { db } from '@/lib/db'
 import { priceAlert, trade, tradeEvent, tradeTarget, assessment, stock } from '@/lib/db/schema'
@@ -13,7 +14,7 @@ import {
 } from '@/lib/emotions'
 import type { Market } from '@/lib/market-data/types'
 import { computeRiskReward, computeShares } from '@/lib/trade-math'
-import { portfolioCurrency, resolveMoneyCurrency } from '@/lib/money-currency'
+import { currencyCode, portfolioCurrency, resolveMoneyCurrency } from '@/lib/money-currency'
 import {
   contractTradeFelder,
   gebundeneMargin,
@@ -169,6 +170,7 @@ async function verlangeDeckung(args: {
   felder: ContractTradeFelder
   ticker: string
   exceptTradeId?: number
+  planRates?: Record<string, number>
 }): Promise<{ einschussKonto: number | null; hinweis: string | null }> {
   const { deckung, depot, rates } = await ladeDeckung(
     args.userId,
@@ -183,7 +185,7 @@ async function verlangeDeckung(args: {
     einschuss: args.felder.contractInitialMargin,
     waehrung: args.felder.contractCurrency,
     kontowaehrung,
-    rates,
+    rates: args.planRates ?? rates,
     deckung,
     label: `${args.ticker} · ${args.felder.contracts} Kontrakte`,
   })
@@ -204,7 +206,7 @@ async function verlangeDeckung(args: {
     einschussJeKontrakt: args.felder.contractInitialMargin / args.felder.contracts,
     waehrung: args.felder.contractCurrency,
     kontowaehrung,
-    rates,
+    rates: args.planRates ?? rates,
     frei: deckung.frei,
   })
   const zusatz =
@@ -540,7 +542,10 @@ export async function createTradeForUser(
   })
   if (input.contracts != null && !kontraktFelder) throw new TradeInputError('Kontrakte benötigen eine gültige Instrumentspezifikation.')
   if (kontraktFelder && instrumentCurrency?.currency && instrumentCurrency.currency !== kontraktFelder.contractCurrency) throw new TradeInputError('Instrument- und Kontraktwährung widersprechen sich.')
-  const moneyCurrency = resolveMoneyCurrency({
+  const resolvedQuote = kontraktFelder?.contractCurrency ?? (instrumentCurrency?.status === 'ok' ? instrumentCurrency.currency : null)
+  if (resolvedQuote && input.quoteCurrency && currencyCode(input.quoteCurrency) !== resolvedQuote) throw new TradeInputError('Kurswährung widerspricht dem aufgelösten Instrument.')
+  const moneyCurrency = input.fxSnapshotId ? await readPlanFxSnapshot(userId, zielDepot.id, input.fxSnapshotId,
+    currencyCode(resolvedQuote ?? input.quoteCurrency) ?? '', portfolioCurrency(zielDepot, moneySettings?.currency)) : resolveMoneyCurrency({
     accountCurrency: portfolioCurrency(zielDepot, moneySettings?.currency),
     quoteCurrency: input.quoteCurrency,
     resolvedCurrency: kontraktFelder?.contractCurrency ?? (instrumentCurrency?.status === 'ok' ? instrumentCurrency.currency : null),
@@ -559,6 +564,7 @@ export async function createTradeForUser(
         portfolioId: zielDepot.id,
         felder: kontraktFelder,
         ticker,
+        planRates: { [moneyCurrency.quoteCurrency]: moneyCurrency.quoteToAccountRate },
       })
     : null
 
@@ -602,6 +608,7 @@ export async function createTradeForUser(
         takeProfit: zielPlan.takeProfit,
         positionSize,
         ...moneyCurrency,
+        fxSnapshotId: input.fxSnapshotId ?? null,
         investedAmount,
         leverage,
         // Die Spezifikation wird EINGEFROREN — dieselbe Haltung wie bei den

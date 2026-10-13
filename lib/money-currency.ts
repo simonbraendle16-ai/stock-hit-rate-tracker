@@ -1,4 +1,5 @@
 import { TradeInputError } from '@/lib/trade-input-error'
+import { requireFxDate } from './fx-reference'
 
 /** Prices are in quote currency; capital and fees are in portfolio currency. */
 export type MoneyCurrency = {
@@ -42,10 +43,7 @@ export function resolveMoneyCurrency(args: {
   if (!Number.isFinite(rate) || rate <= 0 || !args.ratesAt || !Number.isFinite(args.ratesAt.getTime())) {
     throw new TradeInputError(`Für ${quoteCurrency} → ${accountCurrency} fehlt ein gültiger Depotkurs mit Zeitpunkt. Keine 1:1-Umrechnung.`)
   }
-  const age = (args.now ?? new Date()).getTime() - args.ratesAt.getTime()
-  if (age < 0 || age > 7 * 24 * 60 * 60 * 1000) {
-    throw new TradeInputError('Der FX-Plankurs muss aus den letzten sieben Tagen stammen und darf nicht in der Zukunft liegen.')
-  }
+  requireFxDate(args.ratesAt, args.now)
   return { quoteCurrency, accountCurrency, quoteToAccountRate: rate, fxRateAt: args.ratesAt }
 }
 

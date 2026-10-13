@@ -14,6 +14,7 @@ import { PATCH as declareCurrency } from '../app/api/assistant/v1/portfolios/[id
 import { assignPortfolioCurrency, updatePortfolioFxRates, moveTrade } from '../app/actions/portfolios'
 import { changeCurrency, updateSettings } from '../app/actions/settings'
 import { activateTrade, updateTradePlan, createTrade, type TradeInput } from '../app/actions/trades'
+import { getTradePlanFx } from '../app/actions/portfolios'
 import { manualPositionSize } from './trade-form-size'
 import { revalidatePath } from 'next/cache'
 import { loadScopeContext, schreibeScope } from './portfolio-context'
@@ -199,16 +200,32 @@ describe('isolated PostgreSQL currency integration', () => {
     expect((await POST(request(body(), '10000000-0000-4000-8000-000000000004', readOnly))).status).toBe(403)
   })
   it('freezes FX snapshots across depot rate edits and repeated currency assignment', async () => {
-    await updatePortfolioFxRates(real, { USD: 0.9 })
+    await expect(updatePortfolioFxRates(real, { USD: 0.9 })).rejects.toThrow('Referenzdatum')
+    await updatePortfolioFxRates(real, { USD: 0.9 }, new Date().toISOString())
     const response = await POST(request({ ...body(), portfolioId: real, entryPrice: 100, stopLoss: 110, takeProfit: 80, investedAmount: 900, leverage: 1, feeEntry: 2, feeExit: 3 }, '10000000-0000-4000-8000-000000000005'))
     expect(response.status).toBe(201)
     const t = await response.json()
     expect(t.positionSize).toBe(10)
     await assignPortfolioCurrency(real, 'EUR')
     expect((await state.db.select().from(schema.portfolio).where(eq(schema.portfolio.id, real)))[0].fxRates).toBe('{"USD":0.9}')
-    await updatePortfolioFxRates(real, { USD: 0.8 })
+    await updatePortfolioFxRates(real, { USD: 0.8 }, new Date().toISOString())
     expect((await getTrade(t.id)).quoteToAccountRate).toBe(0.9)
     await expect(moveTrade(t.id, demo)).rejects.toThrow('verschiedenen Depotwährungen')
+  })
+  it('persists exactly the server-issued preview snapshot even after a depot rate changes', async () => {
+    await updatePortfolioFxRates(real, { USD: 0.9 }, new Date().toISOString())
+    const fx = await getTradePlanFx(real, 'USD')
+    expect(fx.ok).toBe(true)
+    if (!fx.ok) throw new Error(fx.error)
+    await updatePortfolioFxRates(real, { USD: 0.8 }, new Date().toISOString())
+    const input = { ...body(), portfolioId: real, entryPrice: 100, stopLoss: 110, takeProfit: 80,
+      investedAmount: 900, leverage: 1, feeEntry: 0, feeExit: 0, tradeKind: 'schnell', fxSnapshotId: fx.snapshot.id } as TradeInput
+    const saved = await createTrade(input)
+    expect(saved.ok).toBe(true)
+    if (!saved.ok) throw new Error(saved.message)
+    expect(await getTrade(saved.id)).toMatchObject({ positionSize: 10, quoteToAccountRate: 0.9, fxSnapshotId: fx.snapshot.id })
+    expect((await createTrade({ ...input, portfolioId: demo })).ok).toBe(false)
+    expect((await getTradePlanFx(foreign, 'USD')).ok).toBe(false)
   })
   it('blocks global conversion and legacy size recalculation before writes', async () => {
     await expect(changeCurrency({ currency: 'USD', rate: 0.8, defaultRiskPct: 1, maxRiskPct: 2 })).rejects.toThrow('gesperrt')
