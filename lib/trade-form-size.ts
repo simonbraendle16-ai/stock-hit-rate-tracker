@@ -1,7 +1,9 @@
+import { formNumber } from './form-number'
+
 /** Capital or contracts determine quantity; never submit a stale manual assertion too. */
 export function manualPositionSize(form: { investedAmount: string; contracts: string; positionSize: string }): number | null {
   if (form.investedAmount.trim() || form.contracts.trim()) return null
-  return form.positionSize.trim() ? Number(form.positionSize) : null
+  return form.positionSize.trim() ? formNumber(form.positionSize) : null
 }
 
 /** Switching to a derived quantity must not leave a hidden manual value behind. */

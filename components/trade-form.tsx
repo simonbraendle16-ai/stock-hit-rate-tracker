@@ -1,6 +1,9 @@
 'use client'
 
 import type React from 'react'
+import { formNumber } from '@/lib/form-number'
+import { tradeFormPreview } from '@/lib/trade-form-preview'
+import { getPortfolioFxRates } from '@/app/actions/portfolios'
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Input } from '@/components/ui/input'
@@ -45,13 +48,7 @@ import {
   Zap,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import {
-  computePositionValue,
-  computeShares,
-  projectStopLoss,
-  projectTakeProfit,
-  ticksBetween,
-} from '@/lib/trade-math'
+import { ticksBetween } from '@/lib/trade-math'
 import { getTradeFormInstrumentFor } from '@/app/actions/stocks'
 import { contractTradeFelder } from '@/lib/contract-trade'
 import type { ContractSpec } from '@/lib/contract-specs'
@@ -182,10 +179,10 @@ export function TradeForm({
   const zielCheck = useMemo(
     () =>
       checkTargets({
-        entry: parseFloat(form.entryPrice),
-        stopLoss: parseFloat(form.stopLoss),
+        entry: formNumber(form.entryPrice),
+        stopLoss: formNumber(form.stopLoss),
         direction: form.direction,
-        kursziel: parseFloat(form.takeProfit),
+        kursziel: formNumber(form.takeProfit),
         drafts: targets,
       }),
     [form.entryPrice, form.stopLoss, form.direction, form.takeProfit, targets],
@@ -193,9 +190,9 @@ export function TradeForm({
 
   const rr = useMemo(() => {
     if (zielCheck.targets.length > 1) return zielCheck.rr
-    const entry = parseFloat(form.entryPrice)
-    const sl = parseFloat(form.stopLoss)
-    const tp = parseFloat(form.takeProfit)
+    const entry = formNumber(form.entryPrice)
+    const sl = formNumber(form.stopLoss)
+    const tp = formNumber(form.takeProfit)
     if (!entry || !sl || !tp) return null
     const risk = Math.abs(entry - sl)
     if (risk === 0) return null
@@ -208,70 +205,42 @@ export function TradeForm({
   // Übung, wenn Positionswert und Stückzahl dieselben sind wie später mit
   // echtem Geld. Der Unterschied bleibt, dass auf Papier keine Gebühren
   // anfallen — dieselbe Regel wie in `tradeFees`.
-  const conversion = useMemo(() => {
+  const [fxSnapshots, setFxSnapshots] = useState<Record<number, { rates: Record<string, number>; stand: Date | null }>>({})
+  const [fxBusy, setFxBusy] = useState(false)
+  const fxSnapshot = portfolioId == null ? null : fxSnapshots[portfolioId]
+  const reloadFx = async () => {
+    if (portfolioId == null) return
+    const id = portfolioId
+    setFxBusy(true)
+    try {
+      const snapshot = await getPortfolioFxRates(id)
+      setFxSnapshots(previous => ({ ...previous, [id]: snapshot }))
+      setPlanContext(previous => ({ ...previous, riskConfirmed: false }))
+    } catch { toast.error('Depotkurse konnten nicht gelesen werden. Eingaben bleiben erhalten.') }
+    finally { setFxBusy(false) }
+  }
+  // Revalidate age on every render, including after a long pause or a new input.
+  const conversion = (() => {
     try {
       return { value: resolveMoneyCurrency({
         accountCurrency: currency, quoteCurrency: form.quoteCurrency,
         resolvedCurrency: instrumentCurrency?.ticker === form.ticker.trim().toUpperCase() && instrumentCurrency.market === form.market ? instrumentCurrency.currency : null,
-        rates: parseFxRates(depot?.fxRates),
-        ratesAt: depot?.fxRatesAt ? new Date(depot.fxRatesAt) : null,
+        rates: fxSnapshot?.rates ?? parseFxRates(depot?.fxRates),
+        ratesAt: fxSnapshot ? (fxSnapshot.stand ? new Date(fxSnapshot.stand) : null) : depot?.fxRatesAt ? new Date(depot.fxRatesAt) : null,
       }), error: null }
     } catch (err) {
       return { value: null, error: err instanceof Error ? err.message : 'Umrechnung fehlt.' }
     }
-  }, [currency, form.quoteCurrency, form.ticker, form.market, instrumentCurrency, depot?.fxRates, depot?.fxRatesAt])
-  const money = useMemo(() => {
-    if (instrumentStatus !== 'ready' || !conversion.value || spec) return null
-    const quoteToAccountRate = conversion.value.quoteToAccountRate
-    const invested = parseFloat(form.investedAmount)
-    const entry = parseFloat(form.entryPrice)
-    if (!invested || !entry) return null
-    const sl = parseFloat(form.stopLoss)
-    // Mit Teilzielen zeigt die Projektion die ERSTE Stufe — das ist der Betrag,
-    // der als Nächstes tatsächlich hereinkommt. Ohne Teilziele ist die erste
-    // Stufe das Kursziel selbst mit 100 %. Die Gesamtaussage über den Plan
-    // steht daneben im gewichteten CRV.
-    const erste = zielCheck.targets[0]
-    const tp = erste ? erste.price : parseFloat(form.takeProfit)
-    const sellPct = erste ? erste.sharePct : parseFloat(form.takeProfitPct) || 100
-    const leverage = parseFloat(form.leverage) || 1
-    // Gebühren aus dem Formular — 0 ist ein gültiger Wert (gebührenfreier Broker).
-    const feeEntry = form.feeEntry.trim() === '' ? defaultFeeEntry : parseFloat(form.feeEntry)
-    const feeExit = form.feeExit.trim() === '' ? defaultFeeExit : parseFloat(form.feeExit)
-    const fees = tradedWithMoney
-      ? { entry: feeEntry, exit: feeExit }
-      : { entry: 0, exit: 0 }
-    return {
-      shares: computeShares(invested, entry, leverage, quoteToAccountRate),
-      positionValue: computePositionValue(invested, leverage),
-      leverage,
-      tp:
-        tp > 0
-          ? projectTakeProfit({ invested, entry, tp, direction: form.direction, sellPct, leverage, fees, quoteToAccountRate })
-          : null,
-      sl:
-        sl > 0
-          ? projectStopLoss({ invested, entry, sl, direction: form.direction, leverage, fees, quoteToAccountRate })
-          : null,
-    }
-  }, [
-    spec,
-    instrumentStatus,
-    conversion,
-    tradedWithMoney,
-    form.investedAmount,
-    form.entryPrice,
-    form.stopLoss,
-    form.takeProfit,
-    form.takeProfitPct,
-    form.leverage,
-    form.feeEntry,
-    form.feeExit,
-    form.direction,
-    defaultFeeEntry,
-    defaultFeeExit,
-    zielCheck,
-  ])
+  })()
+  const preview = tradeFormPreview({
+    form, targets: parseTargetDrafts(targets), conversion: conversion.value,
+    conversionError: conversion.error, instrumentStatus, spec,
+    fees: tradedWithMoney ? {
+      entry: quick || !form.feeEntry.trim() ? defaultFeeEntry : formNumber(form.feeEntry),
+      exit: quick || !form.feeExit.trim() ? defaultFeeExit : formNumber(form.feeExit),
+    } : { entry: 0, exit: 0 },
+  })
+  const money = preview.value ? { ...preview.value, sl: preview.value.stop } : null
 
   // --- Kontrakt-Spezifikation (Teil 3) --------------------------------------
   //
@@ -322,16 +291,16 @@ export function TradeForm({
   /** Live-Werte des Kontrakt-Trades: Risiko, Einschuss, Positionsgröße. */
   const kontrakt = useMemo(() => {
     if (!spec) return null
-    const n = parseFloat(form.contracts)
-    const entry = parseFloat(form.entryPrice)
-    const sl = parseFloat(form.stopLoss)
+    const n = formNumber(form.contracts)
+    const entry = formNumber(form.entryPrice)
+    const sl = formNumber(form.stopLoss)
     if (!n || n <= 0 || !entry) return null
     const felder = contractTradeFelder({
       spec,
       contracts: n,
       entryPrice: entry,
       stopLoss: sl || entry,
-      leverage: parseFloat(form.leverage) || 1,
+      leverage: formNumber(form.leverage) || 1,
     })
     if (!felder) return null
     const ticks = sl ? ticksBetween(entry, sl, spec.tickSize) : 0
@@ -412,25 +381,25 @@ export function TradeForm({
         ticker: form.ticker,
         direction: form.direction,
         market: form.market,
-        entryPrice: parseFloat(form.entryPrice),
-        stopLoss: parseFloat(form.stopLoss),
-        takeProfit: form.takeProfit ? parseFloat(form.takeProfit) : null,
-        positionSize: manualPositionSize(form),
+        entryPrice: formNumber(form.entryPrice),
+        stopLoss: formNumber(form.stopLoss),
+        takeProfit: form.takeProfit ? formNumber(form.takeProfit) : null,
+        positionSize: manualPositionSize({ ...form, contracts: spec ? form.contracts : '' }),
         // Auch auf Papier: Einsatz und Hebel ergeben die Positionsgröße, sonst
         // wäre der Hebel im Demo-Trade eine Zahl ohne Wirkung.
-        investedAmount: form.investedAmount ? parseFloat(form.investedAmount) : null,
+        investedAmount: form.investedAmount ? formNumber(form.investedAmount) : null,
         // Kontrakte (Teil 3): Sind sie gesetzt UND hat das Instrument eine
         // Spezifikation, bestimmen SIE die Positionsgröße, und `investedAmount`
         // wird auf dem Server zum Einschuss. Der Server entscheidet das noch
         // einmal selbst — eine Zahl aus dem Browser ist eine Behauptung.
-        contracts: form.contracts ? parseFloat(form.contracts) : null,
-        leverage: form.leverage ? parseFloat(form.leverage) : 1,
+        contracts: spec && form.contracts ? formNumber(form.contracts) : null,
+        leverage: form.leverage ? formNumber(form.leverage) : 1,
         // Beim schnellen Trade bleiben Gebühren, Setup, Begründung und Elliott
         // ungefragt: die Gebühren zieht der Server aus den Einstellungen, der
         // Rest bleibt leer statt hastig ausgefüllt.
-        feeEntry: quick || form.feeEntry.trim() === '' ? null : parseFloat(form.feeEntry),
-        feeExit: quick || form.feeExit.trim() === '' ? null : parseFloat(form.feeExit),
-        takeProfitPct: !quick && form.takeProfitPct ? parseFloat(form.takeProfitPct) : 100,
+        feeEntry: quick || form.feeEntry.trim() === '' ? null : formNumber(form.feeEntry),
+        feeExit: quick || form.feeExit.trim() === '' ? null : formNumber(form.feeExit),
+        takeProfitPct: !quick && form.takeProfitPct ? formNumber(form.takeProfitPct) : 100,
         // Nur die TEILziele. Das Kursziel geht als `takeProfit` mit und wird
         // vom Server selbst ans Ende des Plans gesetzt (`buildTargetPlan`) —
         // schickte man den vollen Plan, läge es doppelt vor.
@@ -442,7 +411,7 @@ export function TradeForm({
         elliottWaveCount: quick ? null : form.elliottWaveCount || null,
         waveDegree: quick ? null : form.waveDegree || null,
         elliottInvalidation:
-          !quick && form.elliottInvalidation ? parseFloat(form.elliottInvalidation) : null,
+          !quick && form.elliottInvalidation ? formNumber(form.elliottInvalidation) : null,
         // Das Depot geht mit, die Handelsart NICHT: Der Server leitet sie daraus
         // ab (`createTrade`). Der Browser kann sie damit nicht mehr behaupten.
         portfolioId,
@@ -579,7 +548,7 @@ export function TradeForm({
               <option value="">Währung des Instrumentkurses wählen</option>
               {['USD', 'EUR', 'CHF', 'GBP', 'JPY', 'CAD', 'AUD'].map(code => <option key={code} value={code}>{code}</option>)}
             </select>
-            <p className="note">Depot: {currency}. {conversion.error ?? `Plankurs: 1 ${form.quoteCurrency} = ${conversion.value?.quoteToAccountRate} ${currency}.`}</p>
+            <p className="note">Depot: {currency}. {conversion.error ?? `Plankurs: 1 ${conversion.value?.quoteCurrency} = ${conversion.value?.quoteToAccountRate} ${currency}.`}</p>
           </Field>
           <Field label="Ticker / Symbol *">
             <Input
@@ -615,7 +584,8 @@ export function TradeForm({
         <div className="grid grid-cols-1 items-end gap-4 md:grid-cols-3">
           <Field label="Einstiegskurs *">
             <Input
-              type="number"
+              type="text"
+              inputMode="decimal"
               step="any"
               value={form.entryPrice}
               onChange={(e) => set('entryPrice', e.target.value)}
@@ -626,7 +596,8 @@ export function TradeForm({
           </Field>
           <Field label="Stop-Loss *" icon={AlertTriangle} tone="destructive">
             <Input
-              type="number"
+              type="text"
+              inputMode="decimal"
               step="any"
               value={form.stopLoss}
               onChange={(e) => set('stopLoss', e.target.value)}
@@ -651,7 +622,8 @@ export function TradeForm({
             }
           >
             <Input
-              type="number"
+              type="text"
+              inputMode="decimal"
               step="any"
               value={form.takeProfit}
               onChange={(e) => set('takeProfit', e.target.value)}
@@ -666,10 +638,10 @@ export function TradeForm({
             die Position steht. Auch auf dem schnellen Weg: Stufen sind ein Teil
             des vordefinierten Risikos, nicht des Beiwerks. */}
         <TargetStages
-          entry={parseFloat(form.entryPrice)}
-          stopLoss={parseFloat(form.stopLoss)}
+          entry={formNumber(form.entryPrice)}
+          stopLoss={formNumber(form.stopLoss)}
           direction={form.direction}
-          kursziel={parseFloat(form.takeProfit)}
+          kursziel={formNumber(form.takeProfit)}
           drafts={targets}
           onChange={next => { setTargets(next); setPlanContext(c => ({ ...c, riskConfirmed: false })) }}
           disabled={loading}
@@ -742,7 +714,8 @@ export function TradeForm({
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <Field label="Kontrakte">
                   <Input
-                    type="number"
+                    type="text"
+                    inputMode="decimal"
                     step="1"
                     min="0"
                     value={form.contracts}
@@ -799,7 +772,8 @@ export function TradeForm({
               }
             >
               <Input
-                type="number"
+                type="text"
+                inputMode="decimal"
                 step="any"
                 min="0"
                 value={form.investedAmount}
@@ -810,7 +784,8 @@ export function TradeForm({
             </Field>
             <Field label="Hebel">
               <Input
-                type="number"
+                type="text"
+                inputMode="decimal"
                 step="any"
                 min="1"
                 value={form.leverage}
@@ -823,12 +798,12 @@ export function TradeForm({
 
           {/* Hebel wirkt auf die Positionsgröße, nicht auf das gebundene Kapital.
               Das Risiko bleibt der Stop — genau so wird es hier auch gezeigt. */}
-          {money && money.leverage > 1 && (
+          {money && !spec && form.investedAmount.trim() && money.leverage > 1 && (
             <ResultBlock tone="warning">
               <dl className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
                 <ResultRow
                   label={tradedWithMoney ? 'Gebundenes Kapital' : 'Gebundenes Papiergeld'}
-                  value={money$(parseFloat(form.investedAmount))}
+                  value={money$(money.invested)}
                 />
                 <ResultRow label="Positionswert" value={money$(money.positionValue)} strong />
                 <ResultRow label="Stückzahl" value={num(money.shares)} />
@@ -851,7 +826,8 @@ export function TradeForm({
             <div className="grid grid-cols-1 items-end gap-4 md:grid-cols-3">
               <Field label={`Gebühr Kauf (${currencySymbol(currency)})`}>
                 <Input
-                  type="number"
+                  type="text"
+                  inputMode="decimal"
                   step="any"
                   min="0"
                   value={form.feeEntry}
@@ -861,7 +837,8 @@ export function TradeForm({
               </Field>
               <Field label={`Gebühr Verkauf (${currencySymbol(currency)})`}>
                 <Input
-                  type="number"
+                  type="text"
+                  inputMode="decimal"
                   step="any"
                   min="0"
                   value={form.feeExit}
@@ -883,7 +860,8 @@ export function TradeForm({
                     Zahl zu führen — und der eingetippte Wert würde beim
                     Speichern ohnehin von `buildTargetPlan` überschrieben. */}
                 <Input
-                  type="number"
+                  type="text"
+                  inputMode="decimal"
                   step="any"
                   value={
                     zielCheck.targets.length > 0
@@ -899,73 +877,47 @@ export function TradeForm({
             </div>
           )}
 
-          {money && (money.tp || money.sl) && (
-            <div className="space-y-3">
-              {money.tp && (
-                <ResultBlock
-                  tone="positive"
-                  icon={TrendingUp}
-                  title={
-                    tradedWithMoney ? 'Beim Take-Profit' : 'Beim Take-Profit (Papiergeld)'
-                  }
-                >
-                  <dl className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
-                    <ResultRow label="Stückzahl gesamt" value={num(money.tp.shares)} />
-                    <ResultRow label="Davon verkauft" value={num(money.tp.soldShares)} />
-                    <ResultRow label="Restposition" value={num(money.tp.remainingShares)} />
-                    <ResultRow label="Kurswert verkaufter Menge" value={money$(money.tp.proceeds)} />
-                    <ResultRow label="Brutto-Gewinn" value={money$(money.tp.grossProfit)} />
-                    {/* Auf Papier wären das immer 0 € — eine Zeile, die nichts sagt. */}
-                    {tradedWithMoney && (
-                      <ResultRow
-                        label="Gebühren"
-                        value={`−${money$(money.tp.fees)}`}
-                        tone="destructive"
-                      />
-                    )}
-                    <ResultRow
-                      label={tradedWithMoney ? 'Netto-Gewinn' : 'Gewinn'}
-                      value={money$(money.tp.netProfit)}
-                      tone={money.tp.netProfit >= 0 ? 'positive' : 'destructive'}
-                      strong
-                    />
-                  </dl>
-                </ResultBlock>
-              )}
-              {money.sl && (
-                <ResultBlock
-                  tone="destructive"
-                  icon={TrendingDown}
-                  title={
-                    tradedWithMoney
-                      ? 'Beim Stop-Loss (volle Position)'
-                      : 'Beim Stop-Loss (volle Position, Papiergeld)'
-                  }
-                >
-                  <dl className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
-                    <ResultRow
-                      label="Kursverlust"
-                      value={money$(money.sl.grossLoss)}
-                      tone="destructive"
-                    />
-                    {tradedWithMoney && (
-                      <ResultRow
-                        label="Gebühren"
-                        value={`−${money$(money.sl.fees)}`}
-                        tone="destructive"
-                      />
-                    )}
-                    <ResultRow
-                      label={tradedWithMoney ? 'Netto-Verlust' : 'Verlust'}
-                      value={money$(money.sl.netLoss)}
-                      tone="destructive"
-                      strong
-                    />
-                  </dl>
-                </ResultBlock>
-              )}
-            </div>
-          )}
+          <div aria-live="polite" className="flex flex-col gap-3">
+            <p className="eyebrow">Gewinn-/Verlustvorschau · {currency}</p>
+            {preview.error && <InlineNotice tone="warning" icon={AlertTriangle}>Vorschau fehlt: {preview.error}</InlineNotice>}
+            {conversion.error && portfolioId != null && (
+              <div className="flex flex-col gap-2">
+                <p className="note">
+                  Depot {depot?.name}: Für {form.quoteCurrency || instrumentCurrency?.currency || 'die Kurswährung'} → {currency} einen belegten aktuellen Kurs unter Einstellungen → Depots → Umrechnungskurse hinterlegen.
+                  Hinterlegter Zeitpunkt: {(fxSnapshot ? fxSnapshot.stand : depot?.fxRatesAt) ? new Date((fxSnapshot ? fxSnapshot.stand : depot?.fxRatesAt)!).toLocaleString('de-DE') : 'fehlt'}.
+                  Danach hier die Depotkurse neu lesen. Die Formulareingaben bleiben erhalten.
+                </p>
+                <a href="/settings" target="_blank" rel="noopener noreferrer" className="text-sm underline">Depoteinstellungen in neuem Tab öffnen</a>
+                <Button type="button" variant="outline" disabled={fxBusy} onClick={() => void reloadFx()}>
+                  {fxBusy ? 'Lese Depotkurse …' : 'Depotkurse neu lesen'}
+                </Button>
+              </div>
+            )}
+            {money && <>
+              <ResultBlock tone="destructive" icon={TrendingDown} title={`Beim Stop-Loss · ${currency} · volle Position vor Teilverkäufen`}>
+                <dl className="grid grid-cols-2 gap-3">
+                  <ResultRow label="Menge gesamt" value={num(money.shares)} />
+                  <ResultRow label={`Kursverlust (${currency})`} value={money$(money.stop.grossLoss)} strong />
+                  <ResultRow label={`Mit erfassten Gebühren (${currency})`} value={money$(money.stop.netLoss)} />
+                </dl>
+              </ResultBlock>
+              {money.stages.map((stage, index) => <ResultBlock key={index} tone="positive" icon={TrendingUp} title={`${index === money.stages.length - 1 ? 'Kursziel' : `Teilziel ${index + 1}`} · ${num(stage.price)} ${conversion.value?.quoteCurrency}`}>
+                <dl className="grid grid-cols-2 gap-3">
+                  <ResultRow label="Anteil der Anfangsposition" value={`${num(stage.sharePct)} %`} />
+                  <ResultRow label="Menge am Ziel" value={num(stage.projection.soldShares)} />
+                  <ResultRow label={`Brutto-Gewinn (${currency})`} value={money$(stage.projection.grossProfit)} strong />
+                </dl>
+              </ResultBlock>)}
+              <ResultBlock tone={money.netProfit >= 0 ? 'positive' : 'destructive'} title={`Alle Ziele zusammen · ${currency}`}>
+                <dl className="grid grid-cols-2 gap-3">
+                  <ResultRow label="Brutto-Gewinn" value={money$(money.grossProfit)} />
+                  <ResultRow label="Erfasste Gebühren (Einstieg einmal, je Ziel ein Ausstieg)" value={money$(money.totalFees)} />
+                  <ResultRow label="Gewinn nach erfassten Gebühren" value={money$(money.netProfit)} tone={money.netProfit >= 0 ? 'positive' : 'destructive'} strong />
+                </dl>
+              </ResultBlock>
+              <p className="note">Planwerte bei Ausführung zu den eingegebenen Kursen und konstantem FX-Plankurs. {tradedWithMoney ? 'Nur die erfassten Ordergebühren sind abgezogen.' : 'Papiergeld: gemäß Demo-Abrechnung ohne Ordergebühren.'} Spread, Slippage, Finanzierung und sonstige unbekannte Kosten sind nicht berücksichtigt. Keine vollständige Nettoprognose.</p>
+            </>}
+          </div>
         </FormSection>
 
       {/* Elliott-Block — die Zählung ist Arbeit am Chart, nicht am Ticket. */}
@@ -1001,7 +953,8 @@ export function TradeForm({
           </Field>
           <Field label="Invalidierung des erwarteten Verlaufs" tone="warning">
             <Input
-              type="number"
+              type="text"
+              inputMode="decimal"
               step="any"
               value={form.elliottInvalidation}
               onChange={(e) => set('elliottInvalidation', e.target.value)}
@@ -1038,7 +991,7 @@ export function TradeForm({
               ))}
             </select>
           </Field>
-          {tradedWithMoney || form.investedAmount.trim() || form.contracts.trim() ? (
+          {spec || form.investedAmount.trim() ? (
             <Field label="Stückzahl (berechnet)" as="div">
               <div className="input-ocean flex h-11 items-center rounded-lg px-3 font-mono text-sm text-muted-foreground">
                 {kontrakt ? num(kontrakt.positionSize) : money?.shares != null ? num(money.shares) : '—'}
@@ -1050,7 +1003,8 @@ export function TradeForm({
           ) : (
             <Field label="Positionsgröße">
               <Input
-                type="number"
+                type="text"
+                inputMode="decimal"
                 step="any"
                 value={form.positionSize}
                 onChange={(e) => set('positionSize', e.target.value)}

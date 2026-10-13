@@ -11,6 +11,7 @@
 // Server-Action anwendet. Hier steht nur, was davon zu sehen ist. Der Hinweis
 // erscheint deshalb schon beim Tippen und nicht erst nach dem Absenden.
 
+import { formNumber } from '@/lib/form-number'
 import { Trash2, Plus, Target } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -38,8 +39,8 @@ export function parseTargetDrafts(drafts: TargetDraft[]): TargetPlanInput[] {
   return drafts
     .filter((d) => d.price.trim() !== '' || d.sharePct.trim() !== '')
     .map((d) => ({
-      price: parseFloat(d.price),
-      sharePct: parseFloat(d.sharePct),
+      price: formNumber(d.price),
+      sharePct: formNumber(d.sharePct),
     }))
 }
 
@@ -160,7 +161,7 @@ export function TargetStages({
       ) : (
         <div className="space-y-2">
           {drafts.map((d, i) => {
-            const kurs = parseFloat(d.price)
+            const kurs = formNumber(d.price)
             const stufenR = kurs && risiko ? Math.abs(kurs - entry) / risiko : null
             const fest = i < lockedCount
             return (
@@ -173,7 +174,8 @@ export function TargetStages({
                     Stufe {i + 1} · Kurs{fest && ' (ausgeführt)'}
                   </span>
                   <Input
-                    type="number"
+                    type="text"
+                    inputMode="decimal"
                     step="any"
                     value={d.price}
                     disabled={disabled || fest}
@@ -187,7 +189,8 @@ export function TargetStages({
                     Anteil %{stufenR != null && ` · ${num(stufenR)} R`}
                   </span>
                   <Input
-                    type="number"
+                    type="text"
+                    inputMode="decimal"
                     step="any"
                     min="0"
                     max="100"
