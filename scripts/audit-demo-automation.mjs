@@ -1,4 +1,7 @@
-import { Client } from 'pg'
+import { Client, types } from 'pg'
+
+// App timestamps are written as UTC. Match the server interpretation on Windows too.
+types.setTypeParser(1114, value => new Date(value.replace(' ', 'T') + 'Z'))
 
 // Read-only evidence; no prices, quantities, notes, credentials or raw payloads.
 const anchor = Number(process.argv[2])
