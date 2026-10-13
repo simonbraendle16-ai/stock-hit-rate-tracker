@@ -1,4 +1,5 @@
 import { requireFrozenFxRate, portfolioCurrency } from '@/lib/money-currency'
+import { TradeInputError } from '@/lib/trade-input-error'
 
 import { normalizePlanContext, planGaps, requireCompletePlan, planningSnapshot, type PlanContext } from '@/lib/plan-context'
 import { createTradeForUser } from '@/lib/create-trade-service'
@@ -617,11 +618,11 @@ export async function updateTradePlanForUser(
   const t = await loadOwnedTrade(userId, id)
 
   if (expectedVersion !== undefined && expectedVersion !== t.version) {
-    throw new Error('Trade wurde inzwischen geändert. Bitte erneut laden.')
+    throw new TradeInputError('Trade wurde inzwischen geändert. Bitte erneut laden.')
   }
 
   if (!['geplant', 'aktiv'].includes(t.status)) {
-    throw new Error('Abgeschlossene Trades können nicht mehr geändert werden.')
+    throw new TradeInputError('Abgeschlossene Trades können nicht mehr geändert werden.')
   }
 
   // --- Teilziele (Etappe 13) ------------------------------------------------
@@ -652,7 +653,7 @@ export async function updateTradePlanForUser(
   if (zielBeruehrt) {
     const kursziel = patch.takeProfit !== undefined ? patch.takeProfit : t.takeProfit
     if (kursziel == null) {
-      throw new Error('Ein Kursziel ist erforderlich — es ist die äußerste Stufe deines Plans.')
+      throw new TradeInputError('Ein Kursziel ist erforderlich — es ist die äußerste Stufe deines Plans.')
     }
     const gewuenschteTeilziele =
       patch.targets !== undefined
@@ -759,13 +760,16 @@ export async function updateTradePlanForUser(
     patch.investedAmount !== undefined ? patch.investedAmount : t.investedAmount
   const nextLeverage =
     patch.leverage !== undefined ? normalizeLeverage(patch.leverage) : (t.leverage ?? 1)
-  const changesSize = patch.investedAmount !== undefined || patch.entryPrice !== undefined || patch.leverage !== undefined || patch.positionSize !== undefined
-  if (changesSize && t.contracts != null) throw new Error('Kontraktgröße und Einschuss bleiben eingefroren. Größenänderungen brauchen eine neue geprüfte Kontraktspezifikation.')
+  const changesSize = (patch.investedAmount !== undefined && patch.investedAmount !== t.investedAmount) ||
+    (patch.entryPrice !== undefined && patch.entryPrice !== t.entryPrice) ||
+    (patch.leverage !== undefined && nextLeverage !== (t.leverage ?? 1)) ||
+    (patch.positionSize !== undefined && patch.positionSize !== t.positionSize)
+  if (changesSize && t.contracts != null) throw new TradeInputError('Kontraktgröße und Einschuss bleiben eingefroren. Größenänderungen brauchen eine neue geprüfte Kontraktspezifikation.')
   const derivedSize = changesSize && nextInvested != null
     ? computeShares(nextInvested, nextEntry, nextLeverage, requireFrozenFxRate(t)) : undefined
   if (derivedSize !== undefined && patch.positionSize != null &&
       Math.abs(derivedSize - patch.positionSize) > 1e-8 * Math.max(1, Math.abs(patch.positionSize))) {
-    throw new Error('Positionsgröße und Kapitaleinsatz widersprechen sich beim eingefrorenen Plan-FX. Menge und Kapital gemeinsam korrigieren.')
+    throw new TradeInputError('Positionsgröße und Kapitaleinsatz widersprechen sich beim eingefrorenen Plan-FX. Menge und Kapital gemeinsam korrigieren.')
   }
 
   let nextContext = patch.planContext !== undefined ? normalizePlanContext(patch.planContext) : t.planContext
@@ -901,16 +905,19 @@ export async function updateTradePlanForUser(
   //
   // Nur nicht ausgelöste: Ein Wecker, der schon geklingelt hat, ist Geschichte
   // und wird nicht rückwirkend umgeschrieben.
-  await syncPlanAlertsAfterEdit(userId, id, {
-    entryChanged: patch.entryPrice != null && patch.entryPrice !== t.entryPrice,
-    exitChanged:
-      (patch.stopLoss != null && patch.stopLoss !== t.stopLoss) ||
-      patch.takeProfit !== undefined ||
-      patch.targets !== undefined,
-  })
-
-  revalidatePath('/')
-  revalidatePath('/trades')
+  try {
+    await syncPlanAlertsAfterEdit(userId, id, {
+      entryChanged: patch.entryPrice != null && patch.entryPrice !== t.entryPrice,
+      exitChanged:
+        (patch.stopLoss != null && patch.stopLoss !== t.stopLoss) ||
+        patch.takeProfit !== undefined ||
+        patch.targets !== undefined,
+    })
+    revalidatePath('/')
+    revalidatePath('/trades')
+  } catch {
+    console.warn('trade.plan.followup_failed', { tradeId: id })
+  }
 }
 
 /**

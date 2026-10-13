@@ -214,6 +214,7 @@ async function loadDemoSource(t: typeof trade.$inferSelect) {
 }
 
 async function markIssue(t: typeof trade.$inferSelect, issue: string, trocken: boolean) {
+  if (t.demoIssue === issue || t.demoIssue?.startsWith('Ungeprüfte Historie:')) return
   if (!trocken) await db.update(trade).set({
     demoIssue: t.demoIssue?.startsWith('Ungeprüfte Historie:') ? t.demoIssue : issue,
   })

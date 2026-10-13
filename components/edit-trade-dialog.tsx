@@ -6,7 +6,7 @@ import { PlanContextFields } from '@/components/plan-context-fields'
 import type { ManagementReview } from '@/lib/management-review'
 import type { TradeRow } from '@/lib/trade-stats'
 import { currencySymbol } from '@/lib/format'
-import { listTradeTargets, updateTradePlan } from '@/app/actions/trades'
+import { listTradeTargets, saveTradePlan } from '@/app/actions/trades'
 import {
   TargetStages,
   checkTargets,
@@ -104,11 +104,15 @@ export function EditTradeDialog({
   // lehnt es zusätzlich ab.
   const [targets, setTargets] = useState<TargetDraft[]>([])
   const [lockedCount, setLockedCount] = useState(0)
+  const [targetsReady, setTargetsReady] = useState(false)
 
   useEffect(() => {
     if (!open) return
+    let cancelled = false
+    setTargetsReady(false)
     listTradeTargets(trade.id)
       .then((rows) => {
+        if (cancelled) return
         // Nur die TEILziele in die Liste — die äußerste Stufe IST das Kursziel
         // und steht in seinem eigenen Feld. Stünde sie zusätzlich hier, sähe
         // man sie doppelt und könnte sie an zwei Stellen widersprüchlich ändern.
@@ -117,11 +121,12 @@ export function EditTradeDialog({
           teilziele.map((r) => ({ price: String(r.price), sharePct: String(r.sharePct) })),
         )
         setLockedCount(teilziele.filter((r) => r.executedAt != null).length)
+        setTargetsReady(true)
       })
       .catch(() => {
-        setTargets([])
-        setLockedCount(0)
+        if (!cancelled) toast.error('Teilziele konnten nicht geladen werden. Bitte den Dialog erneut öffnen; der bestehende Plan wird nicht überschrieben.')
       })
+    return () => { cancelled = true }
   }, [open, trade.id])
 
   const zielCheck = useMemo(
@@ -149,6 +154,7 @@ export function EditTradeDialog({
   }, [isActive, stopLoss, elliottInvalidation, trade.stopLoss, trade.elliottInvalidation])
 
   const submit = async () => {
+    if (!targetsReady) return
     if (movesLocked && !managementReason.trim()) {
       toast.error('Bitte die Bewertung oder den offenen Planbezug begründen.')
       return
@@ -159,7 +165,7 @@ export function EditTradeDialog({
     }
     setBusy(true)
     try {
-      await updateTradePlan(
+      const result = await saveTradePlan(
         trade.id,
         {
           entryPrice: numOrNull(entryPrice) ?? undefined,
@@ -189,6 +195,11 @@ export function EditTradeDialog({
         movesLocked ? { assessment: managementAssessment, reason: managementReason } : undefined,
         editVersion,
       )
+      if (!result.ok) {
+        toast.error(result.message)
+        onDone()
+        return
+      }
       toast.success(
         movesLocked ? managementAssessment === 'unknown' ? 'Änderung gespeichert — Planbewertung offen.' : managementAssessment === 'violation' ? 'Änderung und bestätigte Abweichung gespeichert.' : 'Änderung laut deiner Angabe planmäßig gespeichert.' : 'Trade aktualisiert.',
       )
@@ -327,7 +338,7 @@ export function EditTradeDialog({
         <DialogFooter>
           <Button
             onClick={submit}
-            disabled={busy}
+            disabled={busy || !targetsReady}
             className="btn-teal-glow w-full font-mono text-sm font-bold tracking-wider sm:w-auto"
           >
             {busy ? 'WIRD GESPEICHERT…' : 'SPEICHERN'}

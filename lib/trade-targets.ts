@@ -1,3 +1,5 @@
+import { TradeInputError } from '@/lib/trade-input-error'
+
 // Teilziele (Etappe 13) — reine Logik über die geplanten Ausstiegsstufen eines
 // Trades. Bewusst OHNE 'use server', ohne DB und ohne React, damit sie direkt
 // testbar ist (`lib/trade-targets.test.ts`) und Formular (Live-Vorschau) und
@@ -97,15 +99,15 @@ export function normalizeTargets(args: {
     // „Stufen", nicht „Teilziele": Seit das Kursziel die letzte Stufe ist,
     // zählt es hier mit. Der alte Text nannte eine Obergrenze, die es so nicht
     // gibt, und schickte den Nutzer damit auf die falsche Fährte.
-    throw new Error(
+    throw new TradeInputError(
       `Höchstens ${MAX_TARGETS} Stufen je Trade — das Kursziel zählt als eine davon.`,
     )
   }
   if (!Number.isFinite(entry) || entry <= 0) {
-    throw new Error('Teilziele brauchen einen gültigen Einstiegskurs.')
+    throw new TradeInputError('Teilziele brauchen einen gültigen Einstiegskurs.')
   }
   if (!Number.isFinite(stopLoss) || stopLoss <= 0) {
-    throw new Error('Teilziele brauchen einen gültigen Stop-Loss.')
+    throw new TradeInputError('Teilziele brauchen einen gültigen Stop-Loss.')
   }
 
   const seiten = direction === 'short' ? 'unter' : 'über'
@@ -114,23 +116,23 @@ export function normalizeTargets(args: {
   const geprueft = targets.map((t, i) => {
     const nr = i + 1
     if (!Number.isFinite(t.price) || t.price <= 0) {
-      throw new Error(`Teilziel ${nr}: Bitte einen Kurs größer als 0 eintragen.`)
+      throw new TradeInputError(`Teilziel ${nr}: Bitte einen Kurs größer als 0 eintragen.`)
     }
     if (!isProfitSide(direction, entry, t.price)) {
-      throw new Error(`Teilziel ${nr} muss ${seiten} dem Einstieg liegen.`)
+      throw new TradeInputError(`Teilziel ${nr} muss ${seiten} dem Einstieg liegen.`)
     }
     if (!Number.isFinite(t.sharePct) || t.sharePct <= 0) {
-      throw new Error(`Teilziel ${nr}: Bitte einen Anteil größer als 0 % eintragen.`)
+      throw new TradeInputError(`Teilziel ${nr}: Bitte einen Anteil größer als 0 % eintragen.`)
     }
     if (t.sharePct > 100) {
-      throw new Error(`Teilziel ${nr}: Mehr als 100 % der Position gibt es nicht.`)
+      throw new TradeInputError(`Teilziel ${nr}: Mehr als 100 % der Position gibt es nicht.`)
     }
     summe += t.sharePct
     return { price: t.price, sharePct: t.sharePct, note: t.note?.trim() || null }
   })
 
   if (summe > 100 + EPS) {
-    throw new Error(
+    throw new TradeInputError(
       `Die Teilziele geben zusammen ${summe.toLocaleString('de-DE', {
         maximumFractionDigits: 2,
       })} % der Position ab — mehr als die Position groß ist.`,
@@ -143,7 +145,7 @@ export function normalizeTargets(args: {
 
   for (let i = 1; i < sortiert.length; i++) {
     if (Math.abs(sortiert[i].price - sortiert[i - 1].price) < EPS) {
-      throw new Error(
+      throw new TradeInputError(
         `Zwei Teilziele auf demselben Kurs (${sortiert[i].price}) — bitte zusammenfassen.`,
       )
     }
@@ -201,20 +203,20 @@ export function buildTargetPlan(args: {
   const teilziele = args.teilziele ?? []
 
   if (!Number.isFinite(kursziel) || kursziel <= 0) {
-    throw new Error('Bitte ein Kursziel größer als 0 eintragen.')
+    throw new TradeInputError('Bitte ein Kursziel größer als 0 eintragen.')
   }
   // Vor `normalizeTargets` geprüft, damit die Meldung die Grenze nennt, die
   // den Nutzer betrifft: Er gibt TEILziele ein, das Kursziel steht im Feld
   // darüber. „Höchstens 4 Stufen" wäre richtig gerechnet und trotzdem eine
   // Zahl, die er nirgends abzählen kann.
   if (teilziele.length > MAX_TEILZIELE) {
-    throw new Error(
+    throw new TradeInputError(
       `Höchstens ${MAX_TEILZIELE} Teilziele — zusammen mit dem Kursziel sind das ` +
         `${MAX_TARGETS} Stufen.`,
     )
   }
   if (!isProfitSide(direction, entry, kursziel)) {
-    throw new Error(
+    throw new TradeInputError(
       direction === 'short'
         ? 'Bei Short muss das Kursziel unter dem Einstieg liegen.'
         : 'Bei Long muss das Kursziel über dem Einstieg liegen.',
@@ -226,7 +228,7 @@ export function buildTargetPlan(args: {
   const zielAbstand = distance(entry, kursziel)
   teilziele.forEach((t, i) => {
     if (Number.isFinite(t.price) && distance(entry, t.price) > zielAbstand + EPS) {
-      throw new Error(
+      throw new TradeInputError(
         `Teilziel ${i + 1} liegt weiter vom Einstieg entfernt als das Kursziel — ` +
           'dann ist es das Kursziel. Bitte die beiden tauschen.',
       )
@@ -244,7 +246,7 @@ export function buildTargetPlan(args: {
     0,
   )
   if (teilSumme >= 100 - EPS) {
-    throw new Error(
+    throw new TradeInputError(
       'Die Teilziele geben schon die ganze Position ab — für das Kursziel bleibt nichts übrig.',
     )
   }
@@ -264,7 +266,7 @@ export function buildTargetPlan(args: {
   })
 
   const idx = alle.findIndex((t) => Math.abs(t.price - kursziel) < EPS)
-  if (idx < 0) throw new Error('Das Kursziel ist aus dem Plan gefallen.')
+  if (idx < 0) throw new TradeInputError('Das Kursziel ist aus dem Plan gefallen.')
 
   const vergeben = alle.reduce((a, t, i) => (i === idx ? a : a + t.sharePct), 0)
   return alle.map((t, i) => (i === idx ? { ...t, sharePct: 100 - vergeben } : t))

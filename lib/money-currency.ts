@@ -57,7 +57,7 @@ export function settledFxRate(t: MoneyMetadata): number | null {
 
 export function requireFrozenFxRate(t: MoneyMetadata): number {
   const rate = frozenFxRate(t)
-  if (rate === null) throw new Error('Währungsangaben und gültiger FX-Snapshot fehlen. Keine automatische Neuberechnung des Altbestands.')
+  if (rate === null) throw new TradeInputError('Währungsangaben und gültiger FX-Snapshot fehlen. Keine automatische Neuberechnung des Altbestands.')
   return rate
 }
 

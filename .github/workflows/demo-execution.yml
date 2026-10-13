@@ -58,7 +58,8 @@ jobs:
             exit 1
           fi
           if [ "$(jq -r '.ok' demo.json)" != "true" ]; then
-            echo "::warning::Demo-Ausführung meldet fehlende Kursdaten; Details im Bericht."
+            echo "::error::Demo-Ausführung unvollständig; Details im Bericht."
+            exit 1
           fi
       - name: Sammelfehler sichtbar melden
         if: always() && steps.candles.outcome == 'failure'

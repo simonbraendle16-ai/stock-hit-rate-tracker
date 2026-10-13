@@ -89,6 +89,15 @@ export default async function TradesPage() {
           </Link>
         </div>
 
+        {kontext.isPaper && (
+          <p className="note mb-6 text-sm">
+            Demo-Ausführungen werden regulär stündlich anhand abgeschlossener 5-Minuten-Kerzen geprüft:
+            Einstieg, Teilziele, Kursziel und Stop. Hintergrundaufrufe können sich verzögern.
+            Unvollständige Pläne, ungeprüfte Quellen oder Kurslücken können die Ausführung verhindern.
+            Mit Brokerbelegen verknüpfte Trades werden nicht zusätzlich simuliert.
+          </p>
+        )}
+
         {brokerOrders.length > 0 && (
           <section className="mb-6 rounded-xl border border-border bg-card p-4 sm:p-5" aria-label="AvaTrade-Demo-Brokerbelege">
             <div className="flex flex-wrap items-baseline justify-between gap-2">

@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
   }
   try {
     const report = await runScheduledDemoFills(req.nextUrl.searchParams.get('force') === '1')
-    const ok = !report.error && !report.unvollstaendig.length && !report.ohneKerzen.length
+    const ok = !report.error && !report.unvollstaendig.length && !report.ohneKerzen.length && !report.ausstehend.length
     return NextResponse.json({ ok, ...report }, { status: report.error ? 503 : 200 })
   } catch (error) {
     return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, { status: 503 })

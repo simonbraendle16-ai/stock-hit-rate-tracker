@@ -38,4 +38,8 @@ describe('Geschützter Hintergrund-Endpunkt', () => {
     scheduled.mockRejectedValue(new Error('database offline'))
     expect(await (await GET(request('test-only-secret'))).json()).toMatchObject({ ok: false, error: 'database offline' })
   })
+  it('meldet einen verbleibenden Rückstau nicht als vollständigen Erfolg', async () => {
+    scheduled.mockResolvedValue({ ...report(), ausstehend: [1] })
+    expect(await (await GET(request('test-only-secret'))).json()).toMatchObject({ ok: false, ausstehend: [1] })
+  })
 })

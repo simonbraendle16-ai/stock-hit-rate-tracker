@@ -144,7 +144,8 @@ export function TradeCard({
 
   // Sperrt das Fragen-Gate diesen Trade? Beim schnellen Trade gibt es keines —
   // dieselbe Entscheidung wie serverseitig in `activateTrade`.
-  const gateOpen = requiresPreTradeGate(t.tradeKind) && planGaps(t).length > 0
+  const missingPlanFields = requiresPreTradeGate(t.tradeKind) ? planGaps(t) : []
+  const gateOpen = missingPlanFields.length > 0
 
   // Nach dem Löschen auf die Liste navigieren — sonst lädt eine offene
   // Detailseite (/trades/[id]) den geloeschten Trade neu und stürzt via notFound() ab.
@@ -172,6 +173,14 @@ export function TradeCard({
     >
       {t.demoIssue && !t.tradedWithMoney && (
         <InlineNotice tone="warning" className="mb-3">{t.demoIssue}</InlineNotice>
+      )}
+      {!t.tradedWithMoney && ['geplant', 'aktiv'].includes(t.status) && (
+        <p className="note mb-3 text-xs">
+          {t.demoCheckedAt
+            ? `Kurskerzen geprüft bis ${new Date(t.demoCheckedAt).toLocaleString('de-DE')}.`
+            : 'Noch keine abgeschlossene Kursprüfung protokolliert.'}
+          {t.status === 'geplant' && gateOpen && ` Automatischer Einstieg wartet auf: ${missingPlanFields.join('; ')}.`}
+        </p>
       )}
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-2">

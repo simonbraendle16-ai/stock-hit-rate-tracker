@@ -15,6 +15,7 @@ import { assignPortfolioCurrency, updatePortfolioFxRates, moveTrade } from '../a
 import { changeCurrency, updateSettings } from '../app/actions/settings'
 import { activateTrade, updateTradePlan, createTrade, type TradeInput } from '../app/actions/trades'
 import { manualPositionSize } from './trade-form-size'
+import { revalidatePath } from 'next/cache'
 import { loadScopeContext, schreibeScope } from './portfolio-context'
 
 const state = vi.hoisted(() => ({ db: null as any }))
@@ -214,6 +215,25 @@ describe('isolated PostgreSQL currency integration', () => {
     await expect(updateSettings({ currency: 'USD', defaultRiskPct: 1, maxRiskPct: 2 })).rejects.toThrow('umetikettieren')
     await expect(updateTradePlan(original, { investedAmount: 1200 })).rejects.toThrow('FX-Snapshot')
     expect((await getTrade(original)).investedAmount).toBe(1056.2)
+  })
+  it('saves legacy notes with unchanged editor size inputs without recalculating missing FX', async () => {
+    const before = await getTrade(original)
+    await updateTradePlan(original, { notes: 'Edited note', entryPrice: before.entryPrice,
+      investedAmount: before.investedAmount, leverage: before.leverage ?? 1 })
+    const after = await getTrade(original)
+    expect(after.notes).toBe('Edited note')
+    expect(after.positionSize).toBe(before.positionSize)
+    expect(after.quoteToAccountRate).toBeNull()
+    await expect(updateTradePlan(original, { entryPrice: before.entryPrice + 1 })).rejects.toThrow('FX-Snapshot')
+  })
+  it('does not report a saved note as failed when the following cache refresh fails', async () => {
+    const log = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.mocked(revalidatePath).mockImplementationOnce(() => { throw new Error('isolated cache failure') })
+    try {
+      await expect(updateTradePlan(original, { notes: 'Persisted before cache failure' })).resolves.toBeUndefined()
+      expect((await getTrade(original)).notes).toBe('Persisted before cache failure')
+      expect(log).toHaveBeenCalledWith('trade.plan.followup_failed', { tradeId: original })
+    } finally { log.mockRestore() }
   })
   it('uses contract quantities and currency rather than invested amount times leverage', async () => {
     const response = await POST(request({ ...body(), ticker: 'ES1!', market: 'rohstoffe', portfolioId: demo, direction: 'long', entryPrice: 5000, stopLoss: 4990, takeProfit: 5020, contracts: 1, investedAmount: 1, leverage: 1 }, '10000000-0000-4000-8000-000000000006'))

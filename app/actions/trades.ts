@@ -1248,6 +1248,27 @@ export async function updateTradePlan(...args: Parameters<typeof updateTradePlan
   return withManualTrade(userId, args[0], () => updateTradePlanForUser(userId, ...args))
 }
 
+/** Explicit result boundary for the editor; never expose server/SQL exceptions. */
+export async function saveTradePlan(...args: Parameters<typeof updateTradePlanForUser> extends [string, ...infer A] ? A : never): Promise<
+  { ok: true } | { ok: false; message: string; reference?: string }
+> {
+  try {
+    const userId = await getUserId()
+    if (!Number.isSafeInteger(args[4]) || (args[4] as number) < 1) {
+      throw new TradeInputError('Aktuelle Trade-Version fehlt. Bitte den Dialog erneut öffnen.')
+    }
+    await withManualTrade(userId, args[0], (version) =>
+      updateTradePlanForUser(userId, args[0], args[1], args[2], args[3], version),
+      { expectedVersion: args[4] })
+    return { ok: true }
+  } catch (error) {
+    if (error instanceof TradeInputError) return { ok: false, message: error.message }
+    const reference = randomUUID()
+    console.error('trade.plan.failed', { reference, errorType: error instanceof Error ? error.name : 'unknown' })
+    return { ok: false, message: `Die Änderung konnte nicht gespeichert werden. Fehlerreferenz: ${reference}.`, reference }
+  }
+}
+
 export async function closeTrade(...args: Parameters<typeof closeTradeForUser> extends [string, ...infer A] ? A : never) {
   const userId = await getUserId()
   return withManualTrade(userId, args[0], () => withEventContext(args[1].at ? actualTime(args[1].at) : new Date(), {kind: 'user_statement', capturedAt: new Date().toISOString(), confirmedByUser: true}, undefined, () => closeTradeForUser(userId, ...args)))
