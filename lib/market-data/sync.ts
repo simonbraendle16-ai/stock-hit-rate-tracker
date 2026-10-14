@@ -178,6 +178,8 @@ async function persistQuotes(
       fetchedAt: now,
       lastError: null,
       failCount: 0,
+      marketState: q.marketState,
+      quoteType: q.quoteType,
     })
   }
 
@@ -207,6 +209,8 @@ async function persistQuotes(
           fetchedAt: sql`excluded."fetchedAt"`,
           lastError: sql`NULL`,
           failCount: sql`0`,
+          marketState: sql`excluded."marketState"`,
+          quoteType: sql`excluded."quoteType"`,
         },
       })
   }

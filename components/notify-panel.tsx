@@ -55,6 +55,7 @@ export function NotifyPanel({ initial }: { initial: NotifyStatus }) {
           Letzter automatischer Versuch: {new Date(initial.lastAttemptAt).toLocaleString('de-DE')}.
           {' '}{initial.lastAttemptFinishedAt ? 'Versuch beendet.' : 'Kein Abschluss nachgewiesen.'}
           {' '}{initial.quotesMissing ? `${initial.quotesMissing} Alarmprüfungen ohne gültige Kursdaten.` : ''}
+          {' '}{initial.quotesPaused ? `${initial.quotesPaused} Alarme warten auf den regulären Datenfeed. Die Pause ist frisch vom Kursanbieter bestätigt; alte Schlusskurse lösen keine Meldung aus.` : ''}
           {' '}{initial.lastError}
         </p>}
 

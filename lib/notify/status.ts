@@ -21,6 +21,7 @@ export interface NotifyStatus {
   lastAttemptAt?: string | null
   lastAttemptFinishedAt?: string | null
   quotesMissing?: number
+  quotesPaused?: number
   lastTrigger: string | null
   lastError: string | null
   /** Adresse, an die gemeldet würde (aus den Einstellungen oder vom Konto). */

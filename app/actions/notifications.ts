@@ -59,6 +59,7 @@ export async function getNotifyStatus(): Promise<NotifyStatus> {
     lastAttemptAt: last ? new Date(last.startedAt).toISOString() : null,
     lastAttemptFinishedAt: last?.finishedAt ? new Date(last.finishedAt).toISOString() : null,
     quotesMissing: last?.quotesMissing ?? 0,
+    quotesPaused: last?.quotesPaused ?? 0,
     lastTrigger: last?.trigger ?? null,
     lastError: last?.error ?? (!hasMailConfig ? 'E-Mail-Versand ist nicht eingerichtet.' : last?.mailsFailed ? 'Mindestens eine E-Mail konnte nicht zugestellt werden.' : last && !last.complete ? 'Prüfung noch nicht vollständig abgeschlossen.' : null),
     recipient: notifyByEmail ? resolveRecipient(row?.notifyEmail, row?.accountEmail) : null,

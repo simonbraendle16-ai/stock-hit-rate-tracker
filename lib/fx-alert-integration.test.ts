@@ -33,7 +33,7 @@ beforeAll(async () => {
   pg = new PGlite(); state.database = drizzle(pg, { schema })
   for (const table of [schema.user, schema.portfolio, schema.trade, schema.stock, schema.priceAlert, schema.quoteSnapshot, schema.userSettings, schema.alertCheckRun]) {
     const config = getTableConfig(table)
-    const columns = config.columns.filter(c => !['fxMode', 'fxSnapshotId', 'complete', 'quotesMissing'].includes(c.name)).map(c => {
+    const columns = config.columns.filter(c => !['fxMode', 'fxSnapshotId', 'complete', 'quotesMissing', 'quotesPaused', 'marketState', 'quoteType'].includes(c.name)).map(c => {
       let d = ''
       if (c.default !== undefined) {
         const v = c.default
@@ -49,6 +49,8 @@ beforeAll(async () => {
   await pg.exec(`INSERT INTO portfolio (id,"userId",name,currency,"fxRates","fxRatesAt") VALUES (1,'owner','Isolated','EUR','{"USD":0.5}','2020-01-01');
     INSERT INTO trade (id,"userId",ticker,direction,"entryPrice","stopLoss") VALUES (1,'owner','LEGACY','long',100,90);`)
   await pg.exec(migration); await pg.exec(migration)
+  const pauseMigration = readFileSync(new URL('../drizzle/0053_alert_feed_pause.sql', import.meta.url), 'utf8')
+  await pg.exec(pauseMigration); await pg.exec(pauseMigration)
   const old = await state.database.select().from(schema.portfolio)
   expect(old[0].fxRatesAt.toISOString()).toBe('2020-01-01T00:00:00.000Z')
   const legacy = await state.database.select().from(schema.trade)
@@ -59,6 +61,7 @@ beforeEach(async () => {
   vi.restoreAllMocks(); vi.unstubAllGlobals()
   state.mailConfig = true
   state.refresh.mockResolvedValue(true)
+  state.quote.mockReset()
   state.quote.mockResolvedValue({ price: 100, high: 101, low: 99, time: Math.floor(Date.now() / 1000), interval: '1h' })
   state.mail.mockReset(); state.mail.mockResolvedValue({ ok: true, messageId: 'isolated' })
   await pg.exec('TRUNCATE stock,price_alert,quote_snapshot,alert_check_run,alert_check_state,alert_mail_delivery,fx_reference_cache,plan_fx_snapshot,user_settings RESTART IDENTITY')
@@ -148,6 +151,33 @@ describe('bounded alarm checks on PostgreSQL', () => {
     state.quote.mockResolvedValue({ price: 100, high: 101, low: 99, time: Math.floor(Date.now() / 1000), interval: '1h' })
     const recovered = await runAlertCheck({ trigger: 'cron' })
     expect(recovered.complete).toBe(true); expect(recovered.triggered).toBe(1); expect(recovered.mailsSent).toBe(1)
+  })
+  it('records a freshly confirmed regular-feed pause without firing an old closing price', async () => {
+    const now=Date.parse('2026-10-14T13:00:00Z')
+    vi.spyOn(Date,'now').mockReturnValue(now)
+    await alert({price:90})
+    await state.database.insert(schema.quoteSnapshot).values({provider:'yahoo',symbol:'ISOLATED',price:100,
+      quotedAt:Date.parse('2026-10-13T20:00:00Z')/1000,fetchedAt:new Date(now),marketState:'PRE',quoteType:'EQUITY',exchange:'NYSE'})
+    const result=await runAlertCheck({trigger:'cron'})
+    expect(result).toMatchObject({complete:true,quotesPaused:1,quotesMissing:0,triggered:0})
+    expect(state.quote).not.toHaveBeenCalled()
+    expect((await state.database.select().from(schema.priceAlert))[0].triggeredAt).toBeNull()
+    expect((await lastAlertCheck(true)).quotesPaused).toBe(1)
+    // An outage after regular open must not inherit the earlier PRE exception.
+    const opened=Date.parse('2026-10-14T13:31:00Z')
+    vi.spyOn(Date,'now').mockReturnValue(opened)
+    await state.database.update(schema.quoteSnapshot).set({fetchedAt:new Date(opened)})
+    state.quote.mockRejectedValue(new Error('offline'))
+    expect(await runAlertCheck({trigger:'cron'})).toMatchObject({complete:false,quotesMissing:1,quotesPaused:0})
+  })
+  it('does not use another provider snapshot to excuse an unavailable source',async()=>{
+    const now=Date.parse('2026-10-14T13:00:00Z')
+    vi.spyOn(Date,'now').mockReturnValue(now)
+    await alert({price:90})
+    state.quote.mockRejectedValue(new Error('offline'))
+    await state.database.insert(schema.quoteSnapshot).values({provider:'twelvedata',symbol:'ISOLATED',price:100,
+      quotedAt:Date.parse('2026-10-13T20:00:00Z')/1000,fetchedAt:new Date(now),marketState:'PRE',quoteType:'EQUITY',exchange:'NYSE'})
+    expect(await runAlertCheck({trigger:'cron'})).toMatchObject({complete:false,quotesMissing:1,quotesPaused:0,triggered:0})
   })
   it('rejects raw ticker, foreign instrument and approximate-source fallbacks', async () => {
     await alert({ price: 90, ticker: 'UNRESOLVED' }); await alert({ price: 90, stockId: 999 })

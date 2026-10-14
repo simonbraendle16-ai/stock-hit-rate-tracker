@@ -48,6 +48,7 @@ export async function GET(req: NextRequest) {
     busy: report.busy,
     remaining: report.remaining,
     quotesMissing: report.quotesMissing,
+    quotesPaused: report.quotesPaused,
     alertsOpen: report.alertsOpen,
     triggered: report.triggered,
     mailsSent: report.mailsSent,

@@ -269,6 +269,8 @@ export const quoteSnapshot = pgTable(
     fetchedAt: timestamp('fetchedAt', { withTimezone: true }).notNull().defaultNow(),
     lastError: text('lastError'),
     failCount: integer('failCount').notNull().default(0),
+    marketState: text('marketState'),
+    quoteType: text('quoteType'),
   },
   (t) => [primaryKey({ columns: [t.provider, t.symbol] })],
 )
@@ -625,6 +627,7 @@ export const alertCheckRun = pgTable('alert_check_run', {
   error: text('error'),
   complete: boolean('complete').notNull().default(false),
   quotesMissing: integer('quotesMissing').notNull().default(0),
+  quotesPaused: integer('quotesPaused').notNull().default(0),
 })
 
 export const fxReferenceCache = pgTable('fx_reference_cache', {

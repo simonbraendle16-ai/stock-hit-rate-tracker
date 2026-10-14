@@ -6,32 +6,32 @@ import { revalidatePath } from 'next/cache'
 import { getCachedQuote } from '@/lib/market-data/quote'
 import { refreshQuotesIfStale } from '@/lib/market-data/sync'
 import type { Market } from '@/lib/market-data'
-import { createAlertSymbolResolver } from './alert-symbols'
+import { createAlertSourceResolver } from './alert-symbols'
 import { candleReachesLevel, isAlertDirection, isLevelReached, type AlertKind } from '@/lib/alerts'
 import { buildAlertMail, resolveRecipient, type AlertMailItem } from '@/lib/notify/alert-mail'
 import { readMailConfig, sendMail } from '@/lib/notify/agentmail'
 import { acquireAlertLease, checkpointAlertLease, releaseAlertLease } from './alert-lease'
 import { boundedRead, usableAlertPrice } from './alert-health'
+import { confirmedRegularFeedPause } from './alert-feed-pause'
 
 const BATCH_SIZE = 25
 const WORK_MS = 20_000 // reserve five seconds for final DB writes
 export interface AlertCheckReport {
   alertsOpen: number; triggered: number; mailsSent: number; mailsFailed: number
-  triggeredIds: number[]; quotesMissing: number; complete: boolean; busy: boolean; remaining: boolean; error: string | null
+  triggeredIds: number[]; quotesMissing: number; quotesPaused: number; complete: boolean; busy: boolean; remaining: boolean; error: string | null
 }
 
-async function loadSnapshots(symbols: string[]) {
-  const out = new Map<string, { price: number; quotedAt: number }>()
-  if (!symbols.length) return out
-  const rows = await db.select({ symbol: quoteSnapshot.symbol, price: quoteSnapshot.price, quotedAt: quoteSnapshot.quotedAt })
-    .from(quoteSnapshot).where(inArray(quoteSnapshot.symbol, symbols)).orderBy(desc(quoteSnapshot.quotedAt))
-  for (const r of rows) if (!out.has(r.symbol) && usableAlertPrice(r.price, r.quotedAt)) out.set(r.symbol, r)
-  return out
+async function loadSnapshot(source: { symbol: string; provider: string }) {
+  const [row] = await db.select({ price: quoteSnapshot.price, quotedAt: quoteSnapshot.quotedAt,
+    fetchedAt: quoteSnapshot.fetchedAt, marketState: quoteSnapshot.marketState,
+    quoteType: quoteSnapshot.quoteType, exchange: quoteSnapshot.exchange, lastError: quoteSnapshot.lastError })
+    .from(quoteSnapshot).where(and(eq(quoteSnapshot.symbol, source.symbol), eq(quoteSnapshot.provider, source.provider))).limit(1)
+  return row ?? null
 }
 
 /** Resume a bounded pass. Only a whole successful automatic pass is healthy. */
 export async function runAlertCheck(opts: { userId?: string; trigger: 'cron' | 'client'; notify?: boolean }): Promise<AlertCheckReport> {
-  const report: AlertCheckReport = { alertsOpen: 0, triggered: 0, mailsSent: 0, mailsFailed: 0, triggeredIds: [], quotesMissing: 0, complete: false, busy: false, remaining: false, error: null }
+  const report: AlertCheckReport = { alertsOpen: 0, triggered: 0, mailsSent: 0, mailsFailed: 0, triggeredIds: [], quotesMissing: 0, quotesPaused: 0, complete: false, busy: false, remaining: false, error: null }
   const lease = await acquireAlertLease()
   if (!lease) return { ...report, busy: true, remaining: true }
   const deadline = Date.now() + WORK_MS
@@ -45,21 +45,27 @@ export async function runAlertCheck(opts: { userId?: string; trigger: 'cron' | '
     const open = await db.select().from(priceAlert).where(and(eq(priceAlert.active, true), isNull(priceAlert.triggeredAt),
       gt(priceAlert.id, cursor), opts.userId ? eq(priceAlert.userId, opts.userId) : undefined)).orderBy(asc(priceAlert.id)).limit(BATCH_SIZE)
     report.alertsOpen = open.length
-    const resolvers = new Map<string, Awaited<ReturnType<typeof createAlertSymbolResolver>>>()
-    const snapshots = new Map<string, { price: number; quotedAt: number } | null>()
+    const resolvers = new Map<string, Awaited<ReturnType<typeof createAlertSourceResolver>>>()
+    const snapshots = new Map<string, Awaited<ReturnType<typeof loadSnapshot>>>()
     const candles = new Map<string, Awaited<ReturnType<typeof getCachedQuote>> | null>()
     for (const a of open) {
       if (Date.now() >= deadline - 5_000) { report.remaining = true; break }
-      if (!resolvers.has(a.userId)) resolvers.set(a.userId, await boundedRead(createAlertSymbolResolver(a.userId), Math.min(2_000, deadline - Date.now())))
-      const symbol = resolvers.get(a.userId)!(a.ticker, a.stockId, a.market)
-      if (!symbol) {
+      if (!resolvers.has(a.userId)) resolvers.set(a.userId, await boundedRead(createAlertSourceResolver(a.userId), Math.min(2_000, deadline - Date.now())))
+      const source = resolvers.get(a.userId)!(a.ticker, a.stockId, a.market)
+      if (!source) {
         report.quotesMissing++; failed = true; cursor = a.id
         if (opts.trigger === 'cron') await checkpointAlertLease(lease.token, cursor, failed)
         continue
       }
-      const key = `${symbol}|${a.market}`
-      if (!snapshots.has(key)) snapshots.set(key, (await loadSnapshots([symbol])).get(symbol) ?? null)
-      const snapshot = snapshots.get(key)
+      const symbol = source.symbol, key = `${source.provider}|${symbol}|${a.market}`
+      if (!snapshots.has(key)) snapshots.set(key, await loadSnapshot(source))
+      const rawSnapshot = snapshots.get(key)
+      const snapshot = rawSnapshot && !rawSnapshot.lastError && usableAlertPrice(rawSnapshot.price, rawSnapshot.quotedAt) ? rawSnapshot : null
+      if (!snapshot && rawSnapshot && confirmedRegularFeedPause(rawSnapshot, a.market)) {
+        report.quotesPaused++; cursor = a.id
+        if (opts.trigger === 'cron') await checkpointAlertLease(lease.token, cursor, failed)
+        continue
+      }
       if (!candles.has(key)) {
         const c = await boundedRead(getCachedQuote(symbol, a.market as Market), Math.min(2_000, deadline - Date.now())).catch(() => null)
         // Source time is the start of the hourly candle, not the fetch time.
@@ -94,7 +100,7 @@ export async function runAlertCheck(opts: { userId?: string; trigger: 'cron' | '
     try {
       if (runId != null) await db.update(alertCheckRun).set({ finishedAt: new Date(), alertsOpen: report.alertsOpen,
         triggered: report.triggeredIds.length, mailsSent: report.mailsSent, mailsFailed: report.mailsFailed,
-        error: report.error, complete: report.complete, quotesMissing: report.quotesMissing }).where(eq(alertCheckRun.id, runId))
+        error: report.error, complete: report.complete, quotesMissing: report.quotesMissing, quotesPaused: report.quotesPaused }).where(eq(alertCheckRun.id, runId))
     } finally { await releaseAlertLease(lease.token) }
   }
   report.triggered = report.triggeredIds.length
@@ -121,10 +127,18 @@ async function sendPending(userId: string | undefined, deadline: number): Promis
     if (Date.now() >= deadline - 2_000) break
     const recipient = await recipientFor(uid)
     if (!recipient) { await markNotified(rows.map(r => r.id)); continue }
-    const resolve = await createAlertSymbolResolver(uid)
-    const snapshots = await loadSnapshots([...new Set(rows.map(r => resolve(r.ticker, r.stockId, r.market)).filter((s): s is string => !!s))])
+    const resolve = await createAlertSourceResolver(uid)
+    const snapshots = new Map<string, Awaited<ReturnType<typeof loadSnapshot>>>()
+    for (const row of rows) {
+      const source = resolve(row.ticker, row.stockId, row.market)
+      if (!source) continue
+      const key = `${source.provider}|${source.symbol}`
+      if (!snapshots.has(key)) snapshots.set(key, await loadSnapshot(source))
+    }
     const items: AlertMailItem[] = rows.map(r => {
-      const snap = snapshots.get(resolve(r.ticker, r.stockId, r.market) ?? '')
+      const source = resolve(r.ticker, r.stockId, r.market)
+      const raw = source ? snapshots.get(`${source.provider}|${source.symbol}`) : null
+      const snap = raw && !raw.lastError && usableAlertPrice(raw.price, raw.quotedAt) ? raw : null
       return { ticker: r.ticker, kind: r.kind as AlertKind, direction: isAlertDirection(r.direction) ? r.direction : 'above',
         level: r.price, price: snap?.price ?? null, quotedAtSec: snap?.quotedAt ?? null, tradeId: r.tradeId, entry: r.entry, stop: r.stop, target: r.target }
     })
