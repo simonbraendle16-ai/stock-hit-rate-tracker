@@ -12,6 +12,8 @@ Basis: veröffentlichter Stand 754eae8. Bestätigter Auftrag: ältere noch offen
 
 ## Prüfungen
 
-89 Testdateien / 1.343 Tests bestanden, 15 Sekunden Testlimit und zwei Worker. Separate Typprüfung bestanden. Lokaler Build und Veröffentlichungsnachweis werden nach Abschluss ergänzt. Keine persönlichen Schreibtests. Build ohne produktive Auth-/DB-Zugangsdaten; entsprechende lokale Authhinweise beweisen keine Produktionsstörung.
+89 Testdateien / 1.343 Tests bestanden, 15 Sekunden Testlimit und zwei Worker. Finale separate Typprüfung, Produktionsbuild (next build --webpack, Exit 0) und Diffprüfung bestanden. Keine persönlichen Schreibtests. Build ohne produktive Auth-/DB-Zugangsdaten; entsprechende lokale Authhinweise beweisen keine Produktionsstörung.
+
+Codecommit 3de1dbe normal nach main gepusht und Remote-SHA zurückgelesen. Vercel-Deployment dpl_ErMhTxYPxASqTiy8n385pMt1jAqE Ready und dem produktiven Alias zugeordnet. Produktionsvorschau mit ungespeicherten Dezimalkomma-Prüfwerten gelesen und anschließend verworfen. Vollständiger projektspezifischer Bericht und historisches Patcharchiv separat im privaten Trading-Assistent veröffentlicht; Skills und AstraQuest nicht mitgenommen. Alarmaktivierung wartet auf Anmeldung bei cron-job.org; zwei automatische Läufe und 24-Stunden-Betrieb sind noch nicht abgenommen. Assistenten-API-Zugang bleibt lokal unvollständig.
 
 Öffentlicher Assistenten-API-Vertrag bleibt erhalten. Interne Aktivierungsoption ergänzt optional expectedVersion; die UI nutzt sie bei jeder Aktivierung. Kein Datenbankschema geändert.
