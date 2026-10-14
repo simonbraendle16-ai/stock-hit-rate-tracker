@@ -16,6 +16,7 @@ import { mutateTrade,performTradeAction,reviseExecution,saveTradeReview,patchPla
 import { pendingReview } from './trade-review-state'
 import { settlePosition } from './trade-events'
 import { planningSnapshot } from './plan-context'
+import { activateTradeForUser } from './trade-position-service'
 
 let pg:PGlite,tradeId:number,version:number,base:number,source:Record<string,unknown>
 const dialect=new PgDialect()
@@ -58,6 +59,29 @@ async function revision(eventId:number,patch:Record<string,unknown>){const body=
 async function review(extra:Record<string,unknown>){const body={source,...extra};const result:any=await mutateTrade('isolated',tradeId,version,crypto.randomUUID(),'review',body,()=>saveTradeReview('isolated',tradeId,body));version=result.version;return result}
 
 describe('shared position actions, history and review on PostgreSQL',()=>{
+  it('rejects activation from a stale dialog without writes',async()=>{
+    await expect(activateTradeForUser('isolated',tradeId,{score:null,tags:[]},
+      {expectedVersion:version-1,createPlanAlerts:false})).rejects.toThrow('inzwischen geändert')
+    expect(await events()).toHaveLength(0)
+    expect((await state.database.select().from(schema.trade))[0]).toMatchObject({status:'geplant',version})
+  })
+  it('activates the current complete long-term plan without reintroducing historical answer consent',async()=>{
+    await state.database.update(schema.trade).set({tradeKind:'langfristig',preTradeAnswered:false,elliottInvalidation:89,
+      planContext:{version:1,expectedMove:'Synthetic move',entryTrigger:'At 100',stopManagement:'Initial stop',
+        targetManagement:'At 120',riskConfirmed:true}}).where(eq(schema.trade.id,tradeId))
+    version=(await state.database.select().from(schema.trade))[0].version
+    await activateTradeForUser('isolated',tradeId,{score:null,tags:[],note:'Synthetic calm check-in'},
+      {expectedVersion:version,createPlanAlerts:false})
+    expect((await state.database.select().from(schema.trade))[0].status).toBe('aktiv')
+    expect((await events()).filter((e:any)=>e.type==='eroeffnet')).toHaveLength(1)
+  })
+  it('retains incomplete-plan rejection even with a historical affirmative flag',async()=>{
+    await state.database.update(schema.trade).set({tradeKind:'langfristig',preTradeAnswered:true}).where(eq(schema.trade.id,tradeId))
+    await expect(activateTradeForUser('isolated',tradeId,{score:null,tags:[],note:'Synthetic check-in'},
+      {createPlanAlerts:false})).rejects.toThrow('Plan noch unvollständig')
+    expect(await events()).toHaveLength(0)
+    expect((await state.database.select().from(schema.trade))[0].status).toBe('geplant')
+  })
   it('changes a foreign-currency plan atomically while retaining exact quantity, frozen FX and prior text',async()=>{
     await state.database.update(schema.trade).set({entryPrice:39.41,stopLoss:36,takeProfit:48.5,positionSize:20,investedAmount:883.09928,leverage:1,
       quoteCurrency:'EUR',accountCurrency:'USD',quoteToAccountRate:1.1204,fxRateAt:new Date(base),notes:'Historical entry 39.41',

@@ -489,10 +489,13 @@ export async function activateTradeForUser(
   mood: MoodCheckInput,
   // Etappe 3: auf Wunsch beim Aktivieren Kurs-Alerts aus dem Plan ableiten
   // (Stop/Ziel/Einstieg). Bewusst optional — der Kernvorgang bleibt unverändert.
-  opts?: { createPlanAlerts?: boolean; execution?: { price: number; quantity: number; fee?: number } },
+  opts?: { createPlanAlerts?: boolean; expectedVersion?: number; execution?: { price: number; quantity: number; fee?: number } },
 ): Promise<{ revengeWarning: boolean; alertsCreated: number; deckungsHinweis: string | null }> {
   const t = await loadOwnedTrade(userId, id)
   if (t.status !== 'geplant') throw new Error('Nur geplante Trades können aktiviert werden.')
+  if (opts?.expectedVersion !== undefined && t.version !== opts.expectedVersion) {
+    throw new Error('Trade wurde inzwischen geändert. Bitte erneut laden.')
+  }
   // Das Fragen-Gate gilt nur auf dem vollen Weg. Ein schneller Trade überspringt
   // es bewusst (siehe `lib/trade-kind.ts`) — er bleibt aber als solcher
   // gekennzeichnet, damit später niemand Disziplin unterstellt, wo keine

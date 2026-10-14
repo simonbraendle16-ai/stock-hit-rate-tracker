@@ -1241,7 +1241,9 @@ export async function exportTradesCsv(): Promise<string> {
 // Shared ordering and transaction lock for manual position/plan changes.
 export async function activateTrade(...args: Parameters<typeof activateTradeForUser> extends [string, ...infer A] ? A : never) {
   const userId = await getUserId()
-  return withManualTrade(userId, args[0], () => activateTradeForUser(userId, ...args))
+  return withManualTrade(userId, args[0], (version) =>
+    activateTradeForUser(userId, args[0], args[1], { ...args[2], expectedVersion: version }),
+    { expectedVersion: args[2]?.expectedVersion })
 }
 
 export async function updateTradePlan(...args: Parameters<typeof updateTradePlanForUser> extends [string, ...infer A] ? A : never) {

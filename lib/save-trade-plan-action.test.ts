@@ -1,18 +1,29 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TradeInputError } from './trade-input-error'
-const fake = vi.hoisted(() => ({ update: vi.fn(), manual: vi.fn() }))
-vi.mock('@/lib/trade-position-service', () => ({ updateTradePlanForUser: fake.update }))
+const fake = vi.hoisted(() => ({ update: vi.fn(), activate: vi.fn(), manual: vi.fn() }))
+vi.mock('@/lib/trade-position-service', () => ({ updateTradePlanForUser: fake.update, activateTradeForUser: fake.activate }))
 vi.mock('@/lib/manual-trade', () => ({ withManualTrade: (...args: unknown[]) => fake.manual(...args) }))
 vi.mock('@/lib/auth', () => ({ auth: { api: { getSession: async () => ({ user: { id: 'isolated' } }) } } }))
 vi.mock('@/lib/db', () => ({ db: {} }))
 vi.mock('next/headers', () => ({ headers: async () => new Headers() }))
-import { saveTradePlan } from '@/app/actions/trades'
+import { saveTradePlan, activateTrade } from '@/app/actions/trades'
 
 beforeEach(() => {
   vi.resetAllMocks()
   fake.manual.mockImplementation(async (_user, _id, callback) => callback(8))
 })
 describe('Plan editor action boundary', () => {
+  it('guards activation before reconciliation and forwards the guarded current version', async () => {
+    const mood = { score: null, tags: [] }
+    await activateTrade(1, mood, { expectedVersion: 7, createPlanAlerts: false })
+    expect(fake.manual).toHaveBeenCalledWith('isolated', 1, expect.any(Function), { expectedVersion: 7 })
+    expect(fake.activate).toHaveBeenCalledWith('isolated', 1, mood, { expectedVersion: 8, createPlanAlerts: false })
+  })
+  it('does not activate when the dialog version is already stale', async () => {
+    fake.manual.mockRejectedValueOnce(new TradeInputError('Trade wurde inzwischen geändert.'))
+    await expect(activateTrade(1, { score: null, tags: [] }, { expectedVersion: 7 })).rejects.toThrow('inzwischen geändert')
+    expect(fake.activate).not.toHaveBeenCalled()
+  })
   it('requires a current expected version before reconciling or saving', async () => {
     expect(await saveTradePlan(1, {})).toMatchObject({ ok: false, message: expect.stringContaining('Trade-Version') })
     expect(fake.manual).not.toHaveBeenCalled()
