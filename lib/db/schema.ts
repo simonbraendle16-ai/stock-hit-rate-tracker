@@ -565,6 +565,7 @@ export const brokerOrder = pgTable('broker_order', {
   brokerAccountId: text('brokerAccountId').notNull(),
   brokerOrderId: text('brokerOrderId').notNull(),
   brokerPositionId: text('brokerPositionId'),
+  brokerDetails: jsonb('brokerDetails').$type<import('../broker-source').BrokerDetails>(),
   linkedTradeId: integer('linkedTradeId').references(() => trade.id, { onDelete: 'set null' }),
   ticker: text('ticker').notNull(),
   direction: text('direction').notNull(),

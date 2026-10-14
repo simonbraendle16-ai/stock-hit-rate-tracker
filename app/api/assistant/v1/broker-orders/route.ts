@@ -2,6 +2,7 @@ import { db } from '@/lib/db'
 import { brokerOrder, portfolio, trade } from '@/lib/db/schema'
 import { ApiError, apiResponseError, positiveId, readJsonObject, requireApiScope } from '@/lib/assistant-api'
 import { matchingPlannedTradeId, normalizeBrokerOrder } from '@/lib/assistant-broker-order'
+import { assertBrokerBinding } from '@/lib/broker-source'
 import { and, desc, eq, lt } from 'drizzle-orm'
 import { NextRequest, NextResponse } from 'next/server'
 
@@ -44,11 +45,9 @@ export async function POST(req: NextRequest) {
     const raw = await readJsonObject(req)
     const input = normalizeBrokerOrder(raw)
     await assertDemoPortfolio(userId, input.portfolioId)
-    const configuredAccount = process.env.AVATRADE_DEMO_ACCOUNT_ID
-    if (!configuredAccount) throw new ApiError(503, 'Demo-Brokerkonto ist noch nicht konfiguriert.')
-    if (input.brokerAccountId !== configuredAccount) throw new ApiError(403, 'Brokerkonto nicht freigegeben.')
+    assertBrokerBinding(input.broker, input.brokerAccountId, input.portfolioId)
 
-    const identity = and(eq(brokerOrder.userId, userId), eq(brokerOrder.broker, 'avatrade'),
+    const identity = and(eq(brokerOrder.userId, userId), eq(brokerOrder.broker, input.broker),
       eq(brokerOrder.brokerAccountId, input.brokerAccountId),
       eq(brokerOrder.brokerOrderId, input.brokerOrderId))
     const [existing] = await db.select().from(brokerOrder).where(identity).limit(1)
@@ -66,13 +65,14 @@ export async function POST(req: NextRequest) {
       const state = existing.state === 'filled' || existing.state === 'cancelled' ? existing.state : input.state
       const [updated] = await db.update(brokerOrder).set({
         state,
+        brokerDetails: input.brokerDetails ?? existing.brokerDetails,
         brokerPositionId: input.brokerPositionId ?? existing.brokerPositionId,
         limitPrice: input.limitPrice ?? existing.limitPrice,
         executionPrice: input.executionPrice ?? existing.executionPrice,
         quantity: input.quantity ?? existing.quantity,
-        stopLoss: input.state === 'accepted' && Object.hasOwn(raw, 'stopLoss')
+        stopLoss: (input.state === 'accepted' || input.broker === 'ctrader') && Object.hasOwn(raw, 'stopLoss')
           ? input.stopLoss : (input.stopLoss ?? existing.stopLoss),
-        takeProfit: input.state === 'accepted' && Object.hasOwn(raw, 'takeProfit')
+        takeProfit: (input.state === 'accepted' || input.broker === 'ctrader') && Object.hasOwn(raw, 'takeProfit')
           ? input.takeProfit : (input.takeProfit ?? existing.takeProfit),
         placedAt: input.placedAt ?? existing.placedAt,
         filledAt: input.filledAt ?? existing.filledAt,
@@ -84,7 +84,7 @@ export async function POST(req: NextRequest) {
     }
 
     let linkedTradeId: number | null = null
-    if (input.limitPrice != null) {
+    if (input.broker === 'avatrade' && input.limitPrice != null) {
       const plans = await db.select({ id: trade.id, ticker: trade.ticker,
         direction: trade.direction, entryPrice: trade.entryPrice }).from(trade).where(and(
         eq(trade.userId, userId), eq(trade.portfolioId, input.portfolioId), eq(trade.status, 'geplant'),

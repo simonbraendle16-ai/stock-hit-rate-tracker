@@ -1,6 +1,7 @@
 import { ApiError, onlyKeys, positiveId } from '@/lib/assistant-api'
+import { normalizeBrokerSource, normalizeBrokerDetails } from '@/lib/broker-source'
 
-const fields = ['portfolioId', 'brokerAccountId', 'brokerOrderId', 'brokerPositionId',
+const fields = ['broker', 'brokerDetails', 'portfolioId', 'brokerAccountId', 'brokerOrderId', 'brokerPositionId',
   'ticker', 'direction', 'orderType', 'state', 'limitPrice', 'executionPrice',
   'quantity', 'stopLoss', 'takeProfit', 'placedAt', 'filledAt', 'observedAt'] as const
 
@@ -57,8 +58,9 @@ export function normalizeBrokerOrder(raw: Record<string, unknown>) {
   const placedAt = optionalDate(raw.placedAt, 'Auftragszeit')
   const filledAt = optionalDate(raw.filledAt, 'Ausführungszeit')
   const executionPrice = optionalNumber(raw.executionPrice, 'Ausführungskurs')
+  const broker = normalizeBrokerSource(raw.broker)
   return {
-    portfolioId, broker: 'avatrade', brokerAccountId, brokerOrderId,
+    portfolioId, broker, brokerDetails: normalizeBrokerDetails(raw.brokerDetails, broker), brokerAccountId, brokerOrderId,
     brokerPositionId: optionalText(raw.brokerPositionId, 'Broker-Positions-ID', 100),
     ticker, direction, orderType, state,
     limitPrice: optionalNumber(raw.limitPrice, 'Limitkurs'), executionPrice,

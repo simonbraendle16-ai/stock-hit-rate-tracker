@@ -28,7 +28,7 @@ export default async function BrokerOrdersPage() {
       <CockpitHeader userLabel={session.user.name || session.user.email} />
       <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
         <div className="mb-7">
-          <p className="eyebrow">Demo · AvaTrade</p>
+          <p className="eyebrow">Demo · Brokeraufträge</p>
           <h1 className="mt-1 font-heading text-2xl font-semibold tracking-tight sm:text-3xl">Brokeraufträge</h1>
           <p className="note mt-2">Angenommene Orders und Ausführungen aus dem Broker. Fehlende Planangaben bleiben offen.</p>
           <Link className="mt-3 inline-block text-sm underline" href="/trades">Zurück zu Trades</Link>
@@ -43,7 +43,7 @@ export default async function BrokerOrdersPage() {
                   <h2 className="font-heading text-lg font-semibold">{order.ticker} · {order.direction === 'long' ? 'Kauf' : 'Verkauf'}</h2>
                   <span className="text-xs">{stateLabel[order.state] ?? order.state}</span>
                 </div>
-                <p className="note mt-1 text-xs">{depotName} · Order-ID {order.brokerOrderId}</p>
+                <p className="note mt-1 text-xs">{order.broker === 'ctrader' ? 'cTrader' : 'AvaTrade'} · {depotName} · Order-ID {order.brokerOrderId}</p>
                 <dl className="mt-4 grid gap-2 text-sm sm:grid-cols-3">
                   <div><dt className="text-muted-foreground">Limit</dt><dd>{order.limitPrice ?? 'Nicht belegt'}</dd></div>
                   <div><dt className="text-muted-foreground">Stop</dt><dd>{order.stopLoss ?? 'Fehlt'}</dd></div>

@@ -15,7 +15,7 @@ export function SettlementReceipts({ events, currency }: { events: TradeEventRow
       return <details key={event.id} className="mt-3 rounded border border-border p-3">
         <summary>Ausstieg {new Date(event.at).toLocaleString('de-DE')} · {receipt
           ? `${receipt.netAmount.toLocaleString('de-DE')} ${receipt.currency} netto · Belegversion ${version}` : 'Abrechnung offen'}</summary>
-        {receipt ? <p className="mt-2 whitespace-pre-wrap text-sm">{receipt.source === 'avatrade_history' ? 'AvaTrade-Verlauf' : 'Manueller Brokerbeleg'}: {receipt.evidence}</p> : null}
+        {receipt ? <p className="mt-2 whitespace-pre-wrap text-sm">{receipt.source === 'avatrade_history' ? 'AvaTrade-Verlauf' : receipt.source === 'ctrader_history' ? 'cTrader-Verlauf' : 'Manueller Brokerbeleg'}: {receipt.evidence}</p> : null}
         {currency ? <SettlementReceiptForm eventId={event.id} currency={currency} receipt={receipt} version={version} />
           : <p className="mt-2 text-sm">Zuerst die Depotwährung bestätigen.</p>}
       </details>

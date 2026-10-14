@@ -12,7 +12,7 @@ export type SettlementReceipt = {
   fxRateAt: string | null
   evidence: string
   capturedAt: string
-  source: 'manual_broker_receipt' | 'avatrade_history'
+  source: 'manual_broker_receipt' | 'avatrade_history' | 'ctrader_history'
 }
 
 export function normalizeSettlementReceipt(raw: unknown): SettlementReceipt {
@@ -36,7 +36,7 @@ export function normalizeSettlementReceipt(raw: unknown): SettlementReceipt {
   if (r.entryFeesTreatment !== 'included' && r.entryFeesTreatment !== 'excluded') {
     throw new Error('Es muss belegt sein, ob Einstiegsgebühren im Nettobetrag enthalten sind.')
   }
-  if (r.source !== 'manual_broker_receipt' && r.source !== 'avatrade_history') throw new Error('Belegquelle ist ungültig.')
+  if (r.source !== 'manual_broker_receipt' && r.source !== 'avatrade_history' && r.source !== 'ctrader_history') throw new Error('Belegquelle ist ungültig.')
   if (typeof r.evidence !== 'string' || !r.evidence.trim() || r.evidence.length > 4000) throw new Error('Belegreferenz fehlt oder ist zu lang.')
   if (typeof r.capturedAt !== 'string' || !Number.isFinite(Date.parse(r.capturedAt))) throw new Error('Belegzeitpunkt fehlt.')
   const quoteToAccountRate = amount('quoteToAccountRate')

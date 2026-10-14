@@ -6,10 +6,11 @@ import { reviewStatusAfterClose } from '@/lib/trade-review-state'
 import { classifyBrokerExit, hasConfirmedBrokerEntry } from '@/lib/broker-exit-guard'
 import { normalizeSettlementReceipt, receiptSignature } from '@/lib/settlement-receipt'
 import { saveSettlementReceipt } from '@/lib/settlement-service'
+import { assertBrokerBinding, brokerLabel, normalizeBrokerSource } from '@/lib/broker-source'
 import { and, desc, eq, sql } from 'drizzle-orm'
 import { NextRequest, NextResponse } from 'next/server'
 
-const keys = ['portfolioId', 'brokerAccountId', 'brokerPositionId', 'brokerExitId',
+const keys = ['broker', 'portfolioId', 'brokerAccountId', 'brokerPositionId', 'brokerExitId',
   'quantity', 'price', 'exitedAt', 'observedAt', 'settlementReceipt'] as const
 
 function requiredText(value: unknown, label: string) {
@@ -48,6 +49,7 @@ export async function POST(req: NextRequest) {
     const raw = await readJsonObject(req)
     onlyKeys(raw, keys)
     const input = {
+      broker: normalizeBrokerSource(raw.broker),
       portfolioId: positiveId(String(raw.portfolioId ?? '')),
       brokerAccountId: requiredText(raw.brokerAccountId, 'Brokerkonto'),
       brokerPositionId: requiredText(raw.brokerPositionId, 'Positions-ID'),
@@ -61,12 +63,10 @@ export async function POST(req: NextRequest) {
     if (raw.settlementReceipt != null) {
       try { settlementReceipt = normalizeSettlementReceipt(raw.settlementReceipt) }
       catch (e) { throw new ApiError(422, e instanceof Error ? e.message : 'Abrechnung ist ungültig.') }
-      if (settlementReceipt.source !== 'avatrade_history') throw new ApiError(422, 'Collector-Belegquelle ist ungültig.')
+      if (settlementReceipt.source !== `${input.broker}_history`) throw new ApiError(422, 'Collector-Belegquelle ist ungültig.')
     }
     if (input.exitedAt > input.observedAt) throw new ApiError(422, 'Ausstieg liegt nach der Beobachtung.')
-    if (!process.env.AVATRADE_DEMO_ACCOUNT_ID || input.brokerAccountId !== process.env.AVATRADE_DEMO_ACCOUNT_ID) {
-      throw new ApiError(403, 'Brokerkonto nicht freigegeben.')
-    }
+    assertBrokerBinding(input.broker, input.brokerAccountId, input.portfolioId)
     const [depot] = await db.select({ id: portfolio.id }).from(portfolio).where(and(
       eq(portfolio.id, input.portfolioId), eq(portfolio.userId, userId), eq(portfolio.kind, 'demo'))).limit(1)
     if (!depot) throw new ApiError(404, 'Demo-Depot nicht gefunden.')
@@ -75,9 +75,9 @@ export async function POST(req: NextRequest) {
       await tx.execute(sql`SELECT id FROM portfolio WHERE id = ${input.portfolioId}
         AND "userId" = ${userId} FOR UPDATE`)
       // Eine Positions-ID serialisiert ihre Ausstiege, auch wenn zwei Beobachtungen parallel eintreffen.
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${userId + ':' + input.brokerAccountId + ':' + input.brokerPositionId}, 0))`)
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${userId + ':' + input.broker + ':' + input.brokerAccountId + ':' + input.brokerPositionId}, 0))`)
       const [existing] = await tx.select().from(brokerExit).where(and(eq(brokerExit.userId, userId),
-        eq(brokerExit.broker, 'avatrade'), eq(brokerExit.brokerAccountId, input.brokerAccountId),
+        eq(brokerExit.broker, input.broker), eq(brokerExit.brokerAccountId, input.brokerAccountId),
         eq(brokerExit.brokerExitId, input.brokerExitId))).limit(1)
       if (existing) {
         if (existing.brokerPositionId !== input.brokerPositionId || existing.portfolioId !== input.portfolioId ||
@@ -102,7 +102,7 @@ export async function POST(req: NextRequest) {
         }
       }
       const orders = await tx.select().from(brokerOrder).where(and(eq(brokerOrder.userId, userId),
-        eq(brokerOrder.portfolioId, input.portfolioId), eq(brokerOrder.broker, 'avatrade'),
+        eq(brokerOrder.portfolioId, input.portfolioId), eq(brokerOrder.broker, input.broker),
         eq(brokerOrder.brokerAccountId, input.brokerAccountId),
         eq(brokerOrder.brokerPositionId, input.brokerPositionId))).limit(2)
       const order = orders.length === 1 ? orders[0] : null
@@ -133,13 +133,13 @@ export async function POST(req: NextRequest) {
         settlementReceipt: settlementReceipt ?? existing.settlementReceipt,
         processedAt: eventType ? new Date() : null,
       }).where(eq(brokerExit.id, existing.id)).returning()
-        : await tx.insert(brokerExit).values({ ...input, settlementReceipt, userId, broker: 'avatrade',
+        : await tx.insert(brokerExit).values({ ...input, settlementReceipt, userId,
           brokerOrderId: order?.id ?? null, linkedTradeId, processedAt: eventType ? new Date() : null,
         }).returning()
       if (eventType && linkedTradeId) {
         const [event] = await tx.insert(tradeEvent).values({ tradeId: linkedTradeId, userId, type: eventType,
           at: input.exitedAt, quantity: input.quantity, price: input.price,
-          note: `Broker-Ausstieg: AvaTrade ${input.brokerExitId}`,
+          note: `Broker-Ausstieg: ${brokerLabel(input.broker)} ${input.brokerExitId}`,
           payload: JSON.stringify({ source: 'broker', brokerExitId: saved.id }),
         }).returning()
         const receipt = settlementReceipt ?? saved.settlementReceipt
