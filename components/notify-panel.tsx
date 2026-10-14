@@ -115,7 +115,9 @@ function StatusRow({ status }: { status: NotifyStatus }) {
   if (status.health === 'takt_fehlt') {
     return (
       <InlineNotice tone="warning">
-        Letzte erfolgreiche automatische Prüfung vor {seit}. Seit mehr als 20 Minuten ist keine vollständige erfolgreiche Prüfung nachgewiesen. Takt, Kursversorgung oder Versand können gestört sein; Kursmeldungen sind derzeit nicht verlässlich.
+        Seit mehr als 20 Minuten ist kein aktueller automatischer Prüfversuch nachgewiesen.
+        {' '}{status.lastAttemptAt ? `Letzter Versuch vor ${relativeMinutes(status.lastAttemptAt)}.` : 'Der externe Alarm-Zeitgeber muss geprüft werden.'}
+        {' '}Kursmeldungen sind derzeit nicht verlässlich.
       </InlineNotice>
     )
   }
