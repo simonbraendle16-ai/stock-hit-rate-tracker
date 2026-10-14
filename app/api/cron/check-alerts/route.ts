@@ -40,11 +40,17 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const report = await runAlertCheck({ trigger: 'cron' })
-    // 202 means persisted work remains. Only 200 confirms a complete successful pass.
+    const manual = req.headers.get('x-alert-check-origin') === 'manual'
+    const report = await runAlertCheck({ trigger: 'cron', ...(manual ? { origin: 'manual' as const } : {}) })
+    // 202 acknowledges accepted work needing another attempt (including a held
+    // lease or individual data/mail problems). Repeated per-alarm failures must
+    // not make the scheduler disable checks for every other account.
+    // complete/ok stay false; only 200 confirms a healthy complete pass.
     return NextResponse.json({
     ok: report.complete,
     complete: report.complete,
+    processed: report.processed,
+    automatic: !manual,
     busy: report.busy,
     remaining: report.remaining,
     quotesMissing: report.quotesMissing,
@@ -54,7 +60,7 @@ export async function GET(req: NextRequest) {
     mailsSent: report.mailsSent,
     mailsFailed: report.mailsFailed,
     error: report.error,
-  }, { status: report.complete ? 200 : report.busy ? 409 : report.remaining && !report.error && !report.mailsFailed ? 202 : 503 })
+  }, { status: report.complete ? 200 : report.processed || report.busy ? 202 : 503 })
   } catch {
     return NextResponse.json({ ok: false, error: 'Alarmprüfung konnte nicht gestartet oder abgeschlossen werden.' }, { status: 503 })
   }

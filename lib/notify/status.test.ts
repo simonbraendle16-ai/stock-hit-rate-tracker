@@ -42,4 +42,11 @@ describe('healthFrom', () => {
       'takt_fehlt',
     )
   })
+  it('erkennt ausgebliebene Versuche auch ohne früheren erfolgreichen Lauf',()=>{
+    expect(healthFrom({hasMailConfig:true,lastCheckAt:null,lastAttemptAt:minutesAgo(120),lastAttemptOk:false,now:NOW})).toBe('takt_fehlt')
+    expect(healthFrom({hasMailConfig:true,lastCheckAt:null,lastAttemptAt:minutesAgo(2),lastAttemptOk:false,now:NOW})).toBe('pruefung_fehler')
+  })
+  it('meldet bei frischen fehlerhaften Versuchen die Datenprüfung statt eines ausgebliebenen Takts',()=>{
+    expect(healthFrom({hasMailConfig:true,lastCheckAt:minutesAgo(120),lastAttemptAt:minutesAgo(2),lastAttemptOk:false,now:NOW})).toBe('pruefung_fehler')
+  })
 })

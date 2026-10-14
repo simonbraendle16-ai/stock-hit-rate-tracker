@@ -48,10 +48,12 @@ export function healthFrom(input: {
   lastAttemptAt?: Date | null
   lastAttemptOk?: boolean
 }): NotifyHealth {
-  if (!input.lastCheckAt) return input.lastAttemptAt ? 'pruefung_fehler' : 'nie_gelaufen'
+  const lastActivity = input.lastAttemptAt ?? input.lastCheckAt
+  if (!lastActivity) return 'nie_gelaufen'
   const now = input.now ?? new Date()
-  const age = now.getTime() - input.lastCheckAt.getTime()
+  const age = now.getTime() - lastActivity.getTime()
   if (!Number.isFinite(age) || age < 0 || age > CHECK_STALE_MS) return 'takt_fehlt'
+  if (!input.lastCheckAt) return 'pruefung_fehler'
   if (input.lastAttemptAt && input.lastAttemptOk === false) return 'pruefung_fehler'
   if (!input.hasMailConfig) return 'kein_versand'
   return 'ok'

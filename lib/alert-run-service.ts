@@ -18,7 +18,7 @@ const BATCH_SIZE = 25
 const WORK_MS = 20_000 // reserve five seconds for final DB writes
 export interface AlertCheckReport {
   alertsOpen: number; triggered: number; mailsSent: number; mailsFailed: number
-  triggeredIds: number[]; quotesMissing: number; quotesPaused: number; complete: boolean; busy: boolean; remaining: boolean; error: string | null
+  triggeredIds: number[]; quotesMissing: number; quotesPaused: number; complete: boolean; processed: boolean; busy: boolean; remaining: boolean; error: string | null
 }
 
 async function loadSnapshot(source: { symbol: string; provider: string }) {
@@ -30,8 +30,8 @@ async function loadSnapshot(source: { symbol: string; provider: string }) {
 }
 
 /** Resume a bounded pass. Only a whole successful automatic pass is healthy. */
-export async function runAlertCheck(opts: { userId?: string; trigger: 'cron' | 'client'; notify?: boolean }): Promise<AlertCheckReport> {
-  const report: AlertCheckReport = { alertsOpen: 0, triggered: 0, mailsSent: 0, mailsFailed: 0, triggeredIds: [], quotesMissing: 0, quotesPaused: 0, complete: false, busy: false, remaining: false, error: null }
+export async function runAlertCheck(opts: { userId?: string; trigger: 'cron' | 'client'; origin?: 'manual'; notify?: boolean }): Promise<AlertCheckReport> {
+  const report: AlertCheckReport = { alertsOpen: 0, triggered: 0, mailsSent: 0, mailsFailed: 0, triggeredIds: [], quotesMissing: 0, quotesPaused: 0, complete: false, processed: false, busy: false, remaining: false, error: null }
   const lease = await acquireAlertLease()
   if (!lease) return { ...report, busy: true, remaining: true }
   const deadline = Date.now() + WORK_MS
@@ -39,7 +39,7 @@ export async function runAlertCheck(opts: { userId?: string; trigger: 'cron' | '
   let cursor = opts.trigger === 'cron' ? lease.cursor : 0
   let failed = opts.trigger === 'cron' ? lease.cycleFailed : false
   try {
-    const [run] = await db.insert(alertCheckRun).values({ trigger: opts.trigger }).returning({ id: alertCheckRun.id })
+    const [run] = await db.insert(alertCheckRun).values({ trigger: opts.origin ?? opts.trigger }).returning({ id: alertCheckRun.id })
     runId = run.id
     await boundedRead(refreshQuotesIfStale(), Math.min(4_000, deadline - Date.now())).catch(() => false)
     const open = await db.select().from(priceAlert).where(and(eq(priceAlert.active, true), isNull(priceAlert.triggeredAt),
@@ -93,6 +93,9 @@ export async function runAlertCheck(opts: { userId?: string; trigger: 'cron' | '
     // An unavailable mailer must not stop future quote checks at the end of the cursor.
     if (opts.trigger === 'cron' && !next) await checkpointAlertLease(lease.token, 0, false)
     if (report.triggered) { try { revalidatePath('/') } catch { /* already persisted */ } }
+    // The worker accepted and processed this batch, even when individual alarms
+    // need another attempt. Keep this separate from a healthy full pass.
+    report.processed = true
   } catch {
     report.error = 'Alarmprüfung nicht vollständig abgeschlossen. Gespeicherter Fortschritt wird beim nächsten Lauf fortgesetzt.'
     report.complete = false
