@@ -263,7 +263,11 @@ async function fetchChart(symbol: string, interval: Interval, since?: number): P
   if (since != null && interval === '5min') {
     // Yahoo only supplies the recent intraday window. Older gaps remain visible.
     const earliest = Math.floor(Date.now() / 1000) - 59 * 24 * 60 * 60
-    url.searchParams.set('period1', String(Math.max(earliest, Math.floor(since))))
+    // At the regular session end Yahoo returns an empty range even though
+    // the last completed bar exists. Include one preceding bar so the same
+    // response still supplies current session evidence. The store filters
+    // candles back to the caller's since; no execution boundary is widened.
+    url.searchParams.set('period1', String(Math.max(earliest, Math.floor(since) - 300)))
     url.searchParams.set('period2', String(Math.floor(Date.now() / 1000)))
   } else {
     url.searchParams.set('range', YAHOO_RANGE[interval])

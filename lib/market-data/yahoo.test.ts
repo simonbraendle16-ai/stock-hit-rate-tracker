@@ -1,6 +1,33 @@
-import { describe, expect, it } from 'vitest'
-import { ERWARTETE_GRANULARITAET, passtGranularitaet } from './yahoo'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ERWARTETE_GRANULARITAET, passtGranularitaet, yahooProvider } from './yahoo'
 import type { Interval } from './types'
+
+describe('Yahoo incremental session boundary', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
+
+  it('fetches the preceding closed bar when since is exactly the regular close', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date('2026-10-15T20:00:00Z'))
+    const close = Date.parse('2026-10-15T15:30:00Z') / 1000
+    vi.stubGlobal('fetch', vi.fn(async (input: URL) => {
+      const url = new URL(input)
+      expect(url.searchParams.get('includePrePost')).toBe('false')
+      const hasBar = Number(url.searchParams.get('period1')) <= close - 300
+      return new Response(JSON.stringify({ chart: { result: [{
+        meta: { dataGranularity: '5m', exchangeName: 'GER', exchangeTimezoneName: 'Europe/Berlin', currentTradingPeriod: { regular: { start: close - 30600, end: close } } },
+        timestamp: hasBar ? [close - 300] : [],
+        indicators: { quote: [{ open: hasBar ? [40] : [], high: [41], low: [39], close: [40], volume: [100] }] },
+      }] } }))
+    }))
+    const candles = await yahooProvider.getCandles('BAYN.DE', '5min', close)
+    expect(candles.map(c => c.time)).toEqual([close - 300])
+    expect((candles as typeof candles & {executionSession?: {regularOnly:boolean}}).executionSession?.regularOnly).toBe(true)
+  })
+
+  it('still rejects a genuinely empty response rather than inventing a market pause', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({chart:{result:[{meta:{dataGranularity:'5m'},timestamp:[],indicators:{quote:[{}]}}]}}))))
+    await expect(yahooProvider.getCandles('BAYN.DE','5min',1792078200)).rejects.toThrow('Keine Kursdaten')
+  })
+})
 
 /**
  * Die Prüfung, die Yahoos stille Herabstufung abfängt.
