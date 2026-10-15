@@ -38,6 +38,7 @@ import { intervalsForStufe, type Interval, type Market, type SammelStufe } from 
 import { getStoredCandles, pruneStoredCandles } from './candle-store'
 import { isDueForCollection, orderByStaleness } from './candle-merge'
 import { isSpotGoldTicker } from './spot-gold'
+import type { ProviderName } from './index'
 
 /** Höchstzahl an Anbieter-Abrufen je Lauf. */
 export const MAX_FETCHES_PER_RUN = 150
@@ -216,14 +217,16 @@ export async function runCandleCollect(options: {
       .select({
         symbol: stock.providerSymbol,
         market: stock.market,
+        provider: stock.provider,
       })
       .from(stock)
       .where(eq(stock.resolutionStatus, 'ok'))
 
     // Dasselbe Papier steht womöglich in mehreren Watchlists — einmal genügt.
     const jeSymbol = new Map<string, Market>()
+    const providerJeSymbol = new Map<string, ProviderName>()
     for (const i of instrumente) {
-      if (i.symbol) jeSymbol.set(i.symbol, i.market as Market)
+      if (i.symbol) { jeSymbol.set(i.symbol, i.market as Market); providerJeSymbol.set(i.symbol, (i.provider ?? 'yahoo') as ProviderName) }
     }
 
     const symbole = [...jeSymbol.keys()]
@@ -300,6 +303,7 @@ export async function runCandleCollect(options: {
         // Wahrheit darüber, wie Kerzen in die Datenbank kommen.
         await getStoredCandles(reihe.symbol, reihe.market, reihe.interval, {
           limit: 1, forceRefresh: true, requireFresh: true,
+          automatic: true, automaticRole:'archive',provider: providerJeSymbol.get(reihe.symbol),
         })
         fetched++
 

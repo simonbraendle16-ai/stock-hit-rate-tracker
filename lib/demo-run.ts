@@ -1,16 +1,17 @@
 // Demo orders are evaluated on completed 5-minute candles, at their planned
 // prices. A durable cursor replaces the old two-hour lookback. Every batch
 // shares the same portfolio/trade lock as manual actions.
-import { and, asc, eq, inArray } from 'drizzle-orm'
+import { and, asc, eq, inArray, sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { planGaps, planningSnapshot } from '@/lib/plan-context'
 import { requiresPreTradeGate } from '@/lib/trade-kind'
 import { reviewStatusAfterClose } from './trade-review-state'
-import { brokerOrder, portfolio, stock, trade, tradeEvent, tradeTarget, userSettings } from '@/lib/db/schema'
+import { brokerOrder, portfolio, stock, trade, tradeEvent, tradeTarget, userSettings,candleSeries } from '@/lib/db/schema'
 import { getCachedCandles } from '@/lib/market-data/cached'
 import { readStoredCandles, pruneStoredCandles } from '@/lib/market-data/candle-store'
 import { demoSourceIssue } from '@/lib/demo-source'
 import type { Candle, Interval, Market } from '@/lib/market-data/types'
+import type { ProviderName } from '@/lib/market-data'
 import { demoFills, type DemoFill } from '@/lib/demo-fill'
 import { effectiveTargets, type TradeTargetRow } from '@/lib/trade-targets'
 import { settlePosition, type TradeEventRow } from '@/lib/trade-events'
@@ -44,14 +45,18 @@ export function leererDemoBericht(): DemoRunReport {
 
 /** User-scoped calls reconcile one trade before a manual operation. */
 export async function runDemoFills(
-  opts: { userId?: string; tradeId?: number; trocken?: boolean; maxMs?: number; refresh?: boolean } = {},
+  opts: { userId?: string; portfolioId?: number; tradeId?: number; trocken?: boolean; maxMs?: number; refresh?: boolean;
+    legacyScheduled?: boolean; cycleId?: string; cycleToken?: string; asOf?: number;
+    prepared?: { symbol: string; provider: string | null; stockId: number | null; fetchedAt: string } } = {},
 ): Promise<DemoRunReport> {
   const report = leererDemoBericht()
   report.trocken = opts.trocken === true
   const started = Date.now()
   try {
     const depots = await db.select({ id: portfolio.id, kind: portfolio.kind })
-      .from(portfolio).where(opts.userId ? eq(portfolio.userId, opts.userId) : undefined)
+      .from(portfolio).where(and(opts.userId ? eq(portfolio.userId, opts.userId) : undefined,
+        opts.portfolioId != null ? eq(portfolio.id, opts.portfolioId) : undefined,
+        opts.legacyScheduled ? sql`NOT EXISTS (SELECT 1 FROM demo_cycle_state c WHERE c."portfolioId"=${portfolio.id} AND c."userId"=${portfolio.userId} AND c.enabled=true)` : undefined))
     const ids = depots.filter((p) => normalizePortfolioKind(p.kind) === 'demo').map((p) => p.id)
     if (!ids.length) return { ...report, ran: true }
     let trades = await db.select().from(trade).where(and(
@@ -90,6 +95,14 @@ export async function runDemoFills(
           continue
         }
         const symbol = source!.providerSymbol!
+        if (source!.resolvedCurrency && before.quoteCurrency && source!.resolvedCurrency !== before.quoteCurrency) {
+          report.unvollstaendig.push(before.id)
+          continue
+        }
+        if (opts.cycleId && (!opts.prepared || opts.prepared.symbol !== symbol || opts.prepared.provider !== source!.provider || opts.prepared.stockId !== before.stockId)) {
+          report.ausstehend.push(before.id)
+          continue
+        }
         const key = `${before.market}:${symbol}`
         const refreshSince = Math.floor(baseline(before) / 1000)
           - (before.demoCheckedAt ? DEMO_CANDLE_SECONDS : 7 * 24 * 60 * 60)
@@ -97,15 +110,25 @@ export async function runDemoFills(
           await getCachedCandles(symbol, before.market as Market, FILL_INTERVAL, {
             since: refreshSince,
             limit: 1, forceRefresh: true, requireFresh: true,
+            automatic: true, provider: source!.provider as ProviderName,
           })
           refreshed.set(key, refreshSince)
         }
         const result = await withTradeLock(before.userId, before.id, async (t, depot) => {
           if (normalizePortfolioKind(depot.kind) !== 'demo' || !['geplant', 'aktiv'].includes(t.status)) return null
-          if (t.status === 'geplant' && requiresPreTradeGate(t.tradeKind) && planGaps(t).length) return null
+          if (opts.cycleId && depot.archivedAt) return null
+          if (opts.portfolioId != null && (t.portfolioId !== opts.portfolioId || t.userId !== opts.userId)) return null
+          if (opts.cycleId) {
+            const lease = await db.execute(sql`SELECT "cycleId" FROM demo_cycle_state WHERE "portfolioId"=${t.portfolioId} AND "userId"=${t.userId} AND enabled=true AND "cycleId"=${opts.cycleId} AND "leaseToken"=${opts.cycleToken ?? null} AND "leaseUntil">now() FOR SHARE`)
+            if (!lease.rows.length) throw new Error('Depotzyklus hat seine Lease verloren; keine weitere Buchung.')
+          }
+          if (t.status === 'geplant' && requiresPreTradeGate(t.tradeKind) && planGaps(t).length) {
+            await markIssue(t,`Unvollständiger Plan: ${planGaps(t).join('; ')}`,report.trocken)
+            return {issue:'coverage' as const}
+          }
           // The symbol was resolved before taking the lock. A concurrent edit
           // must never evaluate a new instrument using the old one's candles.
-          if (t.ticker !== before.ticker || t.stockId !== before.stockId || t.market !== before.market) {
+          if (t.version !== before.version || t.ticker !== before.ticker || t.stockId !== before.stockId || t.market !== before.market) {
             return { issue: null, pending: true }
           }
           // Recheck the source under the same lock as booking: a provider edit
@@ -116,7 +139,7 @@ export async function runDemoFills(
             await markIssue(t, currentIssue, report.trocken)
             return { issue: 'coverage' as const }
           }
-          if (currentSource!.providerSymbol !== symbol) return { issue: null, pending: true }
+          if (currentSource!.providerSymbol !== symbol || currentSource!.provider !== source!.provider || currentSource!.resolvedCurrency !== source!.resolvedCurrency) return { issue: null, pending: true }
           // Broker-linked trades use confirmed broker fills, never simulated prices.
           const linked = await db.select({ id: brokerOrder.id }).from(brokerOrder)
             .where(and(eq(brokerOrder.userId, t.userId), eq(brokerOrder.linkedTradeId, t.id))).limit(1)
@@ -131,7 +154,7 @@ export async function runDemoFills(
               since, ascending: true, limit: DEMO_BATCH_SIZE + 1, storedOnly: true,
             }),
           ])
-          const candles = completedDemoCandles(rows, beginn, Date.now())
+          const candles = completedDemoCandles(rows, beginn, Math.min(Date.now(), opts.asOf ?? Infinity))
           if (!candles.length) {
             if (!rows.length && !previous.length) {
               await markIssue(t, 'Keine verwertbaren 5-Minuten-Kursdaten. Manuelle Buchung bleibt möglich.', report.trocken)
@@ -141,7 +164,9 @@ export async function runDemoFills(
           }
           const [instrument] = t.stockId == null ? [] : await db.select({ exchange: stock.resolvedExchange }).from(stock)
             .where(and(eq(stock.id, t.stockId), eq(stock.userId, t.userId))).limit(1)
-          const coverage = demoCoveragePrefix(candles, previous[0] ?? null, beginn, t.market, instrument?.exchange)
+          const [series]=await db.select({session:candleSeries.executionSession}).from(candleSeries).where(and(eq(candleSeries.symbol,symbol),eq(candleSeries.interval,FILL_INTERVAL))).limit(1)
+          const session=series?.session?.symbol===symbol?series.session:null
+          const coverage = demoCoveragePrefix(candles, previous[0] ?? null, beginn, t.market, instrument?.exchange,DEMO_CANDLE_SECONDS,session)
           if (coverage.gap && !coverage.usable.length) {
             await markIssue(t, 'Lücke in den 5-Minuten-Kursdaten. Bitte frühere Ausführungen manuell prüfen.', report.trocken)
             return { issue: 'coverage' as const }
@@ -152,10 +177,11 @@ export async function runDemoFills(
           }
           const batch = coverage.usable.slice(0, DEMO_BATCH_SIZE)
           const outcome = await verarbeiteTrade({ t, events, targetRows: targets, kerzen: batch,
-            vorherKurs: previous[0]?.close ?? null, trocken: report.trocken, source: { symbol, provider: currentSource!.provider } })
+            vorherKurs: previous[0]?.close ?? null, trocken: report.trocken, source: { symbol, provider: currentSource!.provider },
+            cycleId: opts.cycleId })
           if (!report.trocken) {
             await db.update(trade).set({
-              demoCheckedAt: new Date((batch[batch.length - 1].time + DEMO_CANDLE_SECONDS) * 1000),
+              demoCheckedAt: new Date((outcome.checkedThrough + DEMO_CANDLE_SECONDS) * 1000),
               // A warning about manually bypassed missing history stays visible.
               demoIssue: coverage.gap && !outcome.closed
                 ? 'Lücke in den 5-Minuten-Kursdaten. Bitte frühere Ausführungen manuell prüfen.'
@@ -223,7 +249,7 @@ async function markIssue(t: typeof trade.$inferSelect, issue: string, trocken: b
 
 async function verarbeiteTrade(args: {
   t: typeof trade.$inferSelect; events: TradeEventRow[]; targetRows: TradeTargetRow[]
-  kerzen: Candle[]; vorherKurs: number | null; trocken: boolean; archive?: boolean; interval?: Interval; source?: { symbol: string; provider: string | null }
+  kerzen: Candle[]; vorherKurs: number | null; trocken: boolean; archive?: boolean; interval?: Interval; source?: { symbol: string; provider: string | null }; cycleId?: string
 }) {
   const { t } = args
   let status = t.status
@@ -231,9 +257,10 @@ async function verarbeiteTrade(args: {
   const events = [...args.events]
   let previous = args.vorherKurs
   const result = { einstiege: 0, teilziele: 0, abschluesse: 0,
-    zeilen: [] as DemoFillZeile[], ungedeckt: false, closed: false }
+    zeilen: [] as DemoFillZeile[], ungedeckt: false, closed: false, checkedThrough:args.kerzen[0]?.time??0 }
   for (const candle of args.kerzen) {
     if (result.closed) break
+    result.checkedThrough=candle.time
     const basis = events.find((e) => e.type === 'eroeffnet')?.quantity ?? t.positionSize
     const fills = demoFills({
       trade: { status, direction: t.direction, entryPrice: t.entryPrice,
@@ -250,13 +277,13 @@ async function verarbeiteTrade(args: {
         if (!deckung.ok) {
           result.ungedeckt = true
           result.closed = true
-          if (!args.trocken) await verwerfeUngedeckt(t, new Date(fill.zeit * 1000), deckung.grund)
+          if (!args.trocken) await verwerfeUngedeckt(t, new Date(fill.zeit * 1000), deckung.grund,args.cycleId,args.source)
           result.zeilen.push({ tradeId: t.id, ticker: t.ticker, art: 'verworfen (ungedeckt)',
             preis: fill.preis, menge: fill.menge, zeit: new Date(fill.zeit * 1000).toISOString(), grund: deckung.grund })
           break
         }
       }
-      const next = args.trocken ? trockenFolge({ fill, stufen, status }) : await bucheFill({ t: { ...t, status }, fill, stufen, interval: args.interval, archive: args.archive, source: args.source })
+      const next = args.trocken ? trockenFolge({ fill, stufen, status }) : await bucheFill({ t: { ...t, status }, fill, stufen, interval: args.interval, archive: args.archive, source: args.source, cycleId: args.cycleId })
       stufen = next.stufen
       status = next.status
       events.push({ id: (events[events.length - 1]?.id ?? 0) + 1, tradeId: t.id,
@@ -355,6 +382,8 @@ async function verwerfeUngedeckt(
   t: typeof trade.$inferSelect,
   at: Date,
   grund: string,
+  cycleId?:string,
+  source?:{symbol:string;provider:string|null},
 ): Promise<void> {
   await db.transaction(async (tx) => {
     await tx
@@ -373,6 +402,8 @@ async function verwerfeUngedeckt(
         quelle: 'demo-fill',
         interval: FILL_INTERVAL,
         grund: 'ungedeckt',
+        ...(cycleId?{cycleId,tradeVersion:t.version}:{}),
+        ...(source?{kursquelle:source}:{}),
       }),
       note: grund,
     })
@@ -410,12 +441,15 @@ async function bucheFill(args: {
   interval?: Interval
   archive?: boolean
   source?: { symbol: string; provider: string | null }
+  cycleId?: string
 }): Promise<{ stufen: TradeTargetRow[]; status: string }> {
   const { t, fill } = args
   const at = new Date(fill.zeit * 1000)
   // Die Herkunft steht im Ereignis, nicht in einer neuen Spalte: Daran erkennt
   // die Oberfläche, bei welchen Trades der Check-in noch nachzuholen ist.
   const payload = JSON.stringify({ auto: true, quelle: 'demo-fill', interval: args.interval ?? FILL_INTERVAL, preisModus: 'plan', art: fill.art,
+    tradeVersion: t.version, ...(args.cycleId ? { cycleId: args.cycleId } : {}),
+    kerzenBeginn: at.toISOString(), kerzenEnde: new Date(at.getTime() + (args.archive ? 900 : 300) * 1000).toISOString(),
     ...(args.source ? { kursquelle: args.source } : {}),
     ...(fill.art === 'einstieg' && !args.archive ? { planningSnapshot: planningSnapshot({ ...t,
       targets: args.stufen.map(z => ({ price: z.price, sharePct: z.sharePct, note: z.note })) }) } : {}),

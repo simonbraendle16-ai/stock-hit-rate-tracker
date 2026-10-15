@@ -8,7 +8,7 @@ const fake = vi.hoisted(() => {
   })
   return { database: connection('pool') }
 })
-vi.mock('pg', () => ({ Pool: class { options = { max: 4 } } }))
+vi.mock('pg', () => ({ Pool: class { options = { max: 4 };on(){} } }))
 vi.mock('drizzle-orm/node-postgres', () => ({ drizzle: () => fake.database }))
 import { db, inDatabaseTransaction } from './index'
 import { sql } from 'drizzle-orm'

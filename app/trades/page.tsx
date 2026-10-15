@@ -16,6 +16,7 @@ import { db } from '@/lib/db'
 import { brokerOrder, portfolio } from '@/lib/db/schema'
 import { and, desc, eq } from 'drizzle-orm'
 import { Plus } from 'lucide-react'
+import { DemoCycleStatus } from '@/components/demo-cycle-status'
 
 export default async function TradesPage() {
   const session = await auth.api.getSession({ headers: await headers() })
@@ -89,6 +90,7 @@ export default async function TradesPage() {
           </Link>
         </div>
 
+        {kontext.isPaper && kontext.active && <DemoCycleStatus userId={session.user.id} portfolioId={kontext.active.id} />}
         {kontext.isPaper && (
           <p className="note mb-6 text-sm">
             Demo-Ausführungen werden regulär stündlich anhand abgeschlossener 5-Minuten-Kerzen geprüft:

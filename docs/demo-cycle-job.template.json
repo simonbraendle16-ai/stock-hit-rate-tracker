@@ -1,0 +1,33 @@
+{
+  "job": {
+    "title": "Tracker · eigenes Demo-Depot 6",
+    "url": "https://stock-hit-rate-tracker-astra-quest.vercel.app/api/cron/demo-cycle",
+    "enabled": false,
+    "saveResponses": true,
+    "requestMethod": 0,
+    "requestTimeout": 30,
+    "redirectSuccess": false,
+    "schedule": {
+      "timezone": "UTC",
+      "expiresAt": 0,
+      "hours": [-1],
+      "minutes": [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55],
+      "mdays": [-1],
+      "months": [-1],
+      "wdays": [-1]
+    },
+    "notification": {
+      "onFailure": true,
+      "onFailureCount": 3,
+      "onSuccess": true,
+      "onDisable": true,
+      "mode": 2,
+      "selectedChannels": [0]
+    },
+    "extendedData": {
+      "headers": {
+        "Authorization": "Bearer REPLACE_WITH_SEPARATE_DEMO_SECRET_AFTER_CONFIRMATION"
+      }
+    }
+  }
+}

@@ -67,9 +67,10 @@ describe('Kurslücken', () => {
       .toEqual({ usable: [candles[0]], gap: true })
   })
   it('behandelt geschlossene Börsensitzungen nicht als fehlende Intraday-Kerzen', () => {
-    const friday = new Date('2026-10-02T15:55:00Z')
-    const monday = new Date('2026-10-05T09:00:00Z')
-    expect(demoCoveragePrefix([candle(monday)], candle(friday), friday, 'aktien').gap).toBe(false)
+    const friday = new Date('2026-10-02T19:55:00Z')
+    const monday = new Date('2026-10-05T13:30:00Z')
+    expect(demoCoveragePrefix([candle(monday)], candle(friday), friday, 'aktien','NASDAQ').gap).toBe(false)
+    expect(demoCoveragePrefix([candle(monday)], candle(friday), friday, 'aktien').gap).toBe(true)
     expect(demoCoveragePrefix([candle(monday)], candle(friday), friday, 'krypto').gap).toBe(true)
   })
   it('bewertet fehlende Kerzen vor einer manuellen Grenze nicht gegen den neuen Plan', () => {
@@ -79,6 +80,17 @@ describe('Kurslücken', () => {
 
 
 describe('Bestätigte Börsenöffnungszeiten', () => {
+  it('lässt einen Tageswechsel keine fehlende offene Sitzung verbergen',()=>{
+    const before=new Date('2026-10-01T14:00:00Z'),after=new Date('2026-10-02T14:00:00Z')
+    expect(demoCoveragePrefix([candle(after)],candle(before),before,'aktien','NASDAQ').gap).toBe(true)
+  })
+  it('erkennt die reguläre Xetra-Feedpause nur mit frischem passenden Sitzungsbeleg',()=>{
+    const before=new Date('2026-10-01T15:25:00Z'),after=new Date('2026-10-02T07:00:00Z')
+    const session={provider:'yahoo' as const,symbol:'BAYN.DE',exchange:'GER',timezone:'Europe/Berlin',startMinute:540,endMinute:1050,regularOnly:true as const,reportedAt:new Date().toISOString()}
+    expect(demoCoveragePrefix([candle(after)],candle(before),before,'aktien','XETRA',300,session).gap).toBe(false)
+    expect(demoCoveragePrefix([candle(after)],candle(before),before,'aktien','XETRA').gap).toBe(true)
+    expect(demoCoveragePrefix([candle(new Date('2026-10-02T07:05:00Z'))],candle(before),before,'aktien','XETRA',300,session).gap).toBe(true)
+  })
   it('wartet bei US-Aktien vor Handelsbeginn auf 09:30 New York', () => {
     const boundary = new Date('2026-08-07T09:06:36Z')
     const opening = candle(new Date('2026-08-07T13:30:00Z'))

@@ -6,7 +6,26 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 /** Die Neon-Postgres-Verbindung, bereitgestellt als DATABASE_URL. */
 const connectionString = process.env.DATABASE_URL
 
-export const pool = new Pool({ connectionString })
+export const pool = new Pool({ connectionString,connectionTimeoutMillis:8_000 })
+const operationDeadlines=new AsyncLocalStorage<number>()
+// Only callers that opt into a deadline receive a per-query client timeout.
+// Transaction cleanup must remain possible after the working deadline expired.
+pool.on('connect',client=>{
+  const original=client.query.bind(client)
+  client.query=((config:any,...args:any[])=>{
+    const deadline=operationDeadlines.getStore()
+    if(deadline==null)return (original as any)(config,...args)
+    const text=typeof config==='string'?config:config?.text??''
+    const cleanup=/^\s*(?:ROLLBACK|COMMIT|RELEASE)\b/i.test(text)
+    const remaining=cleanup?4_000:Math.min(4_000,deadline-Date.now())
+    if(remaining<=0)throw new Error('Depotzyklus hat sein Datenbank-Zeitbudget erreicht; gespeicherte Arbeit wird fortgesetzt.')
+    return (original as any)(typeof config==='string'?{text:config,query_timeout:remaining}:{...config,query_timeout:remaining},...args)
+  }) as typeof client.query
+})
+
+export function withDatabaseDeadline<T>(deadline:number,callback:()=>Promise<T>):Promise<T>{
+  return operationDeadlines.run(deadline,callback)
+}
 const database = drizzle(pool, { schema })
 export type DatabaseTransaction = Parameters<Parameters<typeof database.transaction>[0]>[0]
 const transactions = new AsyncLocalStorage<DatabaseTransaction>()

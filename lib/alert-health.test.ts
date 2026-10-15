@@ -21,7 +21,8 @@ describe('honest automatic alarm health', () => {
     const now = new Date()
     expect(healthFrom({ hasMailConfig: true, lastCheckAt: null, lastAttemptAt: now })).toBe('pruefung_fehler')
     expect(healthFrom({ hasMailConfig: true, lastCheckAt: now, lastAttemptAt: now, lastAttemptOk: false })).toBe('pruefung_fehler')
-    expect(healthFrom({ hasMailConfig: true, lastCheckAt: new Date(now.getTime() - CHECK_STALE_MS - 1), lastAttemptAt: now, now })).toBe('takt_fehlt')
+    expect(healthFrom({ hasMailConfig: true, lastCheckAt: new Date(now.getTime() - CHECK_STALE_MS - 1), now })).toBe('takt_fehlt')
+    expect(healthFrom({ hasMailConfig: true, lastCheckAt: new Date(now.getTime() - CHECK_STALE_MS - 1), lastAttemptAt: now, lastAttemptOk:false, now })).toBe('pruefung_fehler')
     expect(healthFrom({ hasMailConfig: true, lastCheckAt: new Date(now.getTime() + 1000), now })).toBe('takt_fehlt')
   })
   it('authenticates only the scoped alarm secret and bounds a hung read', async () => {

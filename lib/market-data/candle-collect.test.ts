@@ -39,7 +39,7 @@ describe('Unabhängiger Kerzensammler', () => {
     expect(report.seriesFailed).toBeGreaterThan(0)
     expect(report.seriesFetched).toBeGreaterThan(0)
     expect(state.calls.some(c => c.symbol === 'META')).toBe(true)
-    expect(state.calls.every(c => JSON.stringify(c.options) === JSON.stringify({ limit: 1, forceRefresh: true, requireFresh: true }))).toBe(true)
+    for (const call of state.calls) expect(call.options).toMatchObject({limit:1,forceRefresh:true,requireFresh:true,automatic:true,provider:'yahoo'})
     state.fail = false
     expect((await runCandleCollect({ force: true })).seriesFailed).toBe(0)
   })

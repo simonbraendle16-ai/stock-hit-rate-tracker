@@ -28,7 +28,7 @@ describe('Stündlicher Demo-Takt', () => {
   })
   it('plant nach erfolgreicher Prüfung den nächsten Stundenlauf', async () => {
     await runScheduledDemoFills()
-    expect(fake.run).toHaveBeenCalledWith({ maxMs: 40_000 })
+    expect(fake.run).toHaveBeenCalledWith({ maxMs: 40_000, legacyScheduled:true })
     expect(fake.update).toHaveBeenCalledWith({ nextRunAt: new Date(now.getTime() + DEMO_RUN_INTERVAL_MS), leaseUntil: now })
   })
   it.each([{ error: 'offline', ausstehend: [], ohneKerzen: [] },

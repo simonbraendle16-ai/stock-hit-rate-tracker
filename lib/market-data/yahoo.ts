@@ -226,6 +226,8 @@ async function getCredentials(force = false): Promise<Credentials> {
 
 interface ChartResult {
   meta?: {
+    exchangeTimezoneName?:string
+    currentTradingPeriod?:{regular?:{start?:number;end?:number}}
     symbol?: string
     /** Das Intervall, das Yahoo TATSÄCHLICH geliefert hat — siehe `passtGranularitaet`. */
     dataGranularity?: string
@@ -257,6 +259,7 @@ async function fetchChart(symbol: string, interval: Interval, since?: number): P
     `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`,
   )
   url.searchParams.set('interval', YAHOO_INTERVAL[interval])
+  url.searchParams.set('includePrePost','false')
   if (since != null && interval === '5min') {
     // Yahoo only supplies the recent intraday window. Older gaps remain visible.
     const earliest = Math.floor(Date.now() / 1000) - 59 * 24 * 60 * 60
@@ -375,6 +378,9 @@ export const yahooProvider: MarketDataProvider = {
     if (candles.length === 0) {
       throw new MarketDataError(`Keine Kursdaten für „${symbol}“ gefunden.`, 'unknown_symbol')
     }
+    const {reportedRegularSession}=await import('./execution-session')
+    const session=reportedRegularSession(symbol,result.meta)
+    if(session)Object.defineProperty(candles,'executionSession',{value:session})
     // Bewusst ungekürzt: Yahoo bekommt einen Zeitraum, keine Stückzahl, und
     // alles, was er hergibt, gehört in den Kerzenspeicher. Wie viel davon ein
     // Chart sieht, entscheidet erst die Auslieferung (`DELIVERY_LIMIT`).

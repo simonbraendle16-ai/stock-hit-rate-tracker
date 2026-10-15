@@ -8,6 +8,7 @@ import {
   serial,
   integer,
   doublePrecision,
+  date,
   primaryKey,
   uuid,
   jsonb,
@@ -521,6 +522,33 @@ export const demoRunState = pgTable('demo_run_state', {
   nextRunAt: timestamp('nextRunAt', { withTimezone: true }).notNull(),
   leaseUntil: timestamp('leaseUntil', { withTimezone: true }).notNull(),
 })
+
+export const demoCycleState = pgTable('demo_cycle_state', {
+  portfolioId: integer('portfolioId').primaryKey().references(() => portfolio.id, { onDelete:'cascade' }),
+  userId: text('userId').notNull(), enabled: boolean('enabled').notNull().default(false),
+  nextRunAt: timestamp('nextRunAt',{withTimezone:true}).notNull().defaultNow(),
+  leaseUntil: timestamp('leaseUntil',{withTimezone:true}).notNull(), leaseToken: uuid('leaseToken'), cycleId: uuid('cycleId'),
+  cycleStartedAt: timestamp('cycleStartedAt',{withTimezone:true}), completedAt: timestamp('completedAt',{withTimezone:true}),
+  lastAutomaticAt: timestamp('lastAutomaticAt',{withTimezone:true}), lastAttemptAt: timestamp('lastAttemptAt',{withTimezone:true}),
+  phase: text('phase').notNull().default('idle'), work: jsonb('work').notNull().default({}), results: jsonb('results').notNull().default({}), error: text('error'),
+})
+export const demoCycleTick = pgTable('demo_cycle_tick', {
+  id: uuid('id').primaryKey(), portfolioId: integer('portfolioId').notNull().references(()=>portfolio.id,{onDelete:'cascade'}),
+  userId:text('userId').notNull(), cycleId:uuid('cycleId'), trigger:text('trigger').notNull(),
+  startedAt:timestamp('startedAt',{withTimezone:true}).notNull().defaultNow(),finishedAt:timestamp('finishedAt',{withTimezone:true}),
+  outcome:text('outcome').notNull(),report:jsonb('report').notNull().default({}),
+},t=>[index('demo_cycle_tick_scope').on(t.portfolioId,t.startedAt)])
+export const automaticCandleBudget = pgTable('automatic_candle_budget', {
+  hour:timestamp('hour',{withTimezone:true}).primaryKey(),attempts:integer('attempts').notNull().default(0),
+})
+export const automaticCandleFetch = pgTable('automatic_candle_fetch', {
+  key:text('key').primaryKey(),hour:timestamp('hour',{withTimezone:true}).notNull(),leaseUntil:timestamp('leaseUntil',{withTimezone:true}).notNull(),
+  token:uuid('token').notNull(),since:doublePrecision('since'),completedAt:timestamp('completedAt',{withTimezone:true}),error:text('error'),
+  attempts:integer('attempts').notNull().default(1),attemptedAt:timestamp('attemptedAt',{withTimezone:true}).notNull().defaultNow(),
+})
+export const automaticProviderDay = pgTable('automatic_provider_day', {
+  provider:text('provider').notNull(),day:date('day').notNull(),attempts:integer('attempts').notNull().default(0),
+},t=>[primaryKey({columns:[t.provider,t.day]})])
 
 // Kurs-Alerts (Etappe 3): ein vom Nutzer gesetztes Preislevel, das beim Laden
 // der Kerzen gegen den aktuellen Kurs geprüft wird. Das Symbol (ticker/market)
@@ -1058,6 +1086,7 @@ export const candleCache = pgTable(
 export const candleSeries = pgTable(
   'candle_series',
   {
+    executionSession: jsonb('executionSession').$type<import('../market-data/execution-session').ExecutionSession>(),
     symbol: text('symbol').notNull(),
     interval: text('interval').notNull(),
     market: text('market'),

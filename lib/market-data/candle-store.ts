@@ -30,6 +30,9 @@ import {
 } from './types'
 import type { SeriesCoverage } from './candle-merge'
 import { candlesToWrite, isFresh, mergeCandles, takeLast } from './candle-merge'
+import { providerByName, type ProviderName } from './index'
+import { reserveAutomaticCandles, finishAutomaticCandles } from '@/lib/automatic-candles'
+import type { ExecutionSession,SessionCandles } from './execution-session'
 
 /**
  * Auf so viele Zeilen wird eine Schreiboperation aufgeteilt.
@@ -213,6 +216,7 @@ async function writeSeries(
   market: Market | null,
   abdeckung: SeriesCoverage,
   fehler: string | null,
+  session?:ExecutionSession,
 ): Promise<void> {
   const jetzt = new Date()
 
@@ -228,6 +232,7 @@ async function writeSeries(
       fetchedAt: fehler ? null : jetzt,
       lastError: fehler,
       failCount: fehler ? 1 : 0,
+      executionSession:session??null,
     })
     .onConflictDoUpdate({
       target: [candleSeries.symbol, candleSeries.interval],
@@ -244,11 +249,17 @@ async function writeSeries(
             fetchedAt: jetzt,
             lastError: null,
             failCount: 0,
+            executionSession:session??null,
           },
     })
 }
 
 export interface CandleQueryOptions {
+  /** Exact confirmed provider; execution must not silently switch sources. */
+  provider?: ProviderName
+  /** Shared durable hourly budget for collection and demo reconciliation. */
+  automatic?: boolean
+  automaticRole?:'execution'|'archive'
   /** Forward paging keeps recovery reads bounded. */
   since?: number
   ascending?: boolean
@@ -314,8 +325,16 @@ export async function getStoredCandles(
     return schwanz
   }
 
+  const key = `${options.provider ?? 'chain'}|${market}|${symbol}|${interval}`
+  const reservation = options.automatic ? await reserveAutomaticCandles(key, options.since,options.automaticRole) : null
+  const withProof=(rows:Candle[],completedAt?:string)=>{
+    if(completedAt)Object.defineProperty(rows,'automaticProof',{value:{key,completedAt}})
+    return rows
+  }
+  if (reservation?.reused) return withProof(schwanz,reservation.completedAt)
   try {
-    const geliefert = await resolveProvider(market).getCandles(symbol, interval, options.since)
+    const provider = options.provider ? providerByName(options.provider) : resolveProvider(market)
+    const geliefert = await provider.getCandles(symbol === 'XAUUSD' && options.provider === 'twelvedata' ? 'XAU/USD' : symbol, interval, options.since)
     const frisch = options.since == null ? geliefert : geliefert.filter((c) => c.time >= options.since!)
 
     // Vergleichsfenster für den Abgleich: nur der Zeitraum, den der Anbieter
@@ -341,14 +360,16 @@ export async function getStoredCandles(
     // Die Abdeckung erst NACH dem Schreiben erheben, und als Aggregat aus der
     // Datenbank — sie soll die ganze Reihe beschreiben, nicht nur das Fenster,
     // das wir gerade in der Hand hatten.
-    await writeSeries(symbol, interval, market, await readCoverage(symbol, interval), null)
+    await writeSeries(symbol, interval, market, await readCoverage(symbol, interval), null, (geliefert as SessionCandles<Candle>).executionSession)
+    const completedAt=reservation?.token?await finishAutomaticCandles(key, reservation.token, null):undefined
 
     if (options.ascending) {
-      return readStoredCandles(symbol, interval, { limit, since: options.since, ascending: true })
+      return withProof(await readStoredCandles(symbol, interval, { limit, since: options.since, ascending: true }),completedAt)
     }
-    return takeLast(mergeCandles(schwanz, frisch), limit)
+    return withProof(takeLast(mergeCandles(schwanz, frisch), limit),completedAt)
   } catch (err) {
     const meldung = err instanceof Error ? err.message : 'Unbekannter Fehler'
+    if (reservation?.token) await finishAutomaticCandles(key, reservation.token, meldung).catch(() => {})
     // Den Fehlschlag festhalten, aber die Reihe nicht als „geholt" markieren.
     // Die Abdeckung bleibt dabei unangetastet — der Fehlerzweig von
     // `writeSeries` schreibt ohnehin nur `lastError` und `failCount` fort.

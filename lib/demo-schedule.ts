@@ -19,7 +19,7 @@ export async function runScheduledDemoFills(force = false) {
   if (!claimed) return { ...leererDemoBericht(), skipped: 'Noch nicht fällig oder bereits in Arbeit.' }
   let report
   try {
-    report = await runDemoFills({ maxMs: 40_000 })
+    report = await runDemoFills({ maxMs: 40_000, legacyScheduled: true })
   } catch (error) {
     report = { ...leererDemoBericht(), error: error instanceof Error ? error.message : String(error) }
   }

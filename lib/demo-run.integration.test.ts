@@ -7,7 +7,7 @@ import type { Candle } from './market-data/types'
 
 const state = vi.hoisted(() => ({
   sources: [] as unknown[], brokerOrders: [] as unknown[], trades: [] as unknown[], events: [] as unknown[], targets: [] as unknown[],
-  candles: [] as unknown[], kind: 'demo', fail: false, changeInstrument: false, locked: Promise.resolve(),
+  candles: [] as unknown[], kind: 'demo', fail: false, changeInstrument: false, changeVersion:false, changeProvider:false, locked: Promise.resolve(),
 }))
 type Predicate = { kind: string; field?: string; value?: unknown; parts?: Predicate[] }
 vi.mock('drizzle-orm', async (original) => ({
@@ -69,6 +69,8 @@ vi.mock('@/lib/trade-lock', () => ({
     const saved = structuredClone({ trades: state.trades, events: state.events, targets: state.targets })
     try {
       if (state.changeInstrument) Object.assign(state.trades[0] as object, { ticker: 'OTHER', stockId: 99 })
+      if (state.changeVersion) Object.assign(state.trades[0] as object,{version:999,stopLoss:999})
+      if (state.changeProvider) Object.assign(state.sources[0] as object,{provider:'different'})
       return await fn(state.trades[0], { kind: state.kind })
     } catch (error) {
       Object.assign(state, saved)
@@ -123,13 +125,23 @@ beforeEach(() => {
   Object.assign(state, { sources: [{ id: 1, userId: 'user', ticker: 'TEST', market: 'aktien', providerSymbol: 'TEST', resolutionStatus: 'ok', resolutionApproximate: false }], brokerOrders: [], trades: [row()], events: [opened()],
     targets: [target(1, 110, 40), target(2, 120, 60)],
     candles: [candle('09:55'), candle('10:00'), candle('10:05', { high: 112 }), candle('10:10', { high: 122 })],
-    kind: 'demo', fail: false, changeInstrument: false, locked: Promise.resolve() })
+    kind: 'demo', fail: false, changeInstrument: false, changeVersion:false, changeProvider:false, locked: Promise.resolve() })
   vi.clearAllMocks()
 })
 
 afterEach(() => vi.useRealTimers())
 
 describe('Demo-Ausführung mit gespeicherten Positionen', () => {
+  it.each(['changeVersion','changeProvider'] as const)('bucht bei gleichzeitiger Änderung %s keinen veralteten Plan oder Anbieter',async(flag)=>{
+    state[flag]=true
+    expect(await runDemoFills()).toMatchObject({ausstehend:[1],einstiege:0,teilziele:0,abschluesse:0})
+    expect(state.events).toHaveLength(1)
+  })
+  it('schreibt den Cursor nach frühem Abschluss nur bis zur tatsächlich geprüften Kerze',async()=>{
+    state.candles=[candle('09:55'),candle('10:00',{low:94}),candle('10:05'),candle('10:10')]
+    expect(await runDemoFills()).toMatchObject({abschluesse:1})
+    expect((state.trades[0] as typeof trade.$inferSelect).demoCheckedAt).toEqual(at('10:05'))
+  })
   it('bucht weder live noch aus dem Archiv mit einer Näherungsquelle', async () => {
     Object.assign(state.sources[0] as object, { resolutionApproximate: true })
     const before = structuredClone(state.events)
