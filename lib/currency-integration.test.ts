@@ -106,12 +106,16 @@ describe('isolated PostgreSQL currency integration', () => {
     expect(saved.positionSize).toBe(7)
     expect(saved.investedAmount).toBeNull()
   })
-  it('stores an incomplete draft, rejects activation, and supplements it with a versioned API patch', async () => {
+  it('stores a draft, retains the non-demo plan gate, and supplements it with a versioned API patch', async () => {
     const response = await POST(request({ ...body(), planContext: null }, '20000000-0000-4000-8000-000000000001'))
     expect(response.status).toBe(201)
     const draft = await response.json()
     expect(draft.preTradeAnswered).toBe(false)
+    // The narrative gate is retained outside demo; fixture move creates no event.
+    await state.db.update(schema.trade).set({ portfolioId: real }).where(eq(schema.trade.id, draft.id))
     await expect(activateTrade(draft.id, { score: null, tags: [], note: 'Afraid but following plan' }, { createPlanAlerts: false })).rejects.toThrow('Plan noch unvollständig')
+    await state.db.update(schema.trade).set({ portfolioId: demo }).where(eq(schema.trade.id, draft.id))
+    draft.version = (await getTrade(draft.id)).version
     const patch = (version: number, bearer = token, source = body().source) => patchPlan(new NextRequest('http://localhost/api/assistant/v1/trades/' + draft.id, {
       method: 'PATCH', headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/json', 'x-expected-version': String(version) },
       body: JSON.stringify({ planContext: context, source }),
@@ -129,6 +133,13 @@ describe('isolated PostgreSQL currency integration', () => {
     expect(statuses.map(r => r.status).sort()).toEqual([200, 200])
     const final = await (await getPlan(new NextRequest('http://localhost', { headers: { authorization: `Bearer ${token}` } }), { params: Promise.resolve({ id: String(draft.id) }) })).json()
     expect(final.events).toHaveLength(reread.events.length + 1)
+  })
+  it('activates a calculable demo price plan without inventing missing confirmations', async () => {
+    const response = await POST(request({ ...body(), planContext: null, elliottInvalidation: null }, '20000000-0000-4000-8000-000000000099'))
+    expect(response.status).toBe(201)
+    const draft = await response.json()
+    await expect(activateTrade(draft.id, { score: null, tags: [], note: 'Isolated demo check' }, { createPlanAlerts: false })).resolves.toMatchObject({ alertsCreated: 0 })
+    expect(await getTrade(draft.id)).toMatchObject({ status: 'aktiv', planContext: null, elliottInvalidation: null, preTradeAnswered: false })
   })
   it('activates after a recent loss without adding revenge and stores free feelings and original plan', async () => {
     await state.db.insert(schema.trade).values({ userId: 'currency-test', portfolioId: demo, ticker: 'LOSS', entryPrice: 100, stopLoss: 90, takeProfit: 120,

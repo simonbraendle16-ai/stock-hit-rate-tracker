@@ -3,8 +3,7 @@
 // shares the same portfolio/trade lock as manual actions.
 import { and, asc, eq, inArray, sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
-import { planGaps, planningSnapshot } from '@/lib/plan-context'
-import { requiresPreTradeGate } from '@/lib/trade-kind'
+import { demoExecutionGaps, planningSnapshot } from '@/lib/plan-context'
 import { reviewStatusAfterClose } from './trade-review-state'
 import { brokerOrder, portfolio, stock, trade, tradeEvent, tradeTarget, userSettings,candleSeries } from '@/lib/db/schema'
 import { getCachedCandles } from '@/lib/market-data/cached'
@@ -68,7 +67,7 @@ export async function runDemoFills(
       .where(inArray(brokerOrder.portfolioId, ids))
     const brokerTradeIds = new Set(brokerLinks.map((row) => row.linkedTradeId))
     trades = trades.filter((row) => !brokerTradeIds.has(row.id) &&
-      !(row.status === 'geplant' && requiresPreTradeGate(row.tradeKind) && planGaps(row).length))
+      !(row.status === 'geplant' && demoExecutionGaps(row).length))
     // Healthy trades first so repeatedly failing symbols cannot starve the rest.
     // A shared symbol is refreshed again if a later trade needs older history.
     const baseline = (t: typeof trade.$inferSelect) =>
@@ -122,8 +121,8 @@ export async function runDemoFills(
             const lease = await db.execute(sql`SELECT "cycleId" FROM demo_cycle_state WHERE "portfolioId"=${t.portfolioId} AND "userId"=${t.userId} AND enabled=true AND "cycleId"=${opts.cycleId} AND "leaseToken"=${opts.cycleToken ?? null} AND "leaseUntil">now() FOR SHARE`)
             if (!lease.rows.length) throw new Error('Depotzyklus hat seine Lease verloren; keine weitere Buchung.')
           }
-          if (t.status === 'geplant' && requiresPreTradeGate(t.tradeKind) && planGaps(t).length) {
-            await markIssue(t,`Unvollständiger Plan: ${planGaps(t).join('; ')}`,report.trocken)
+          if (t.status === 'geplant' && demoExecutionGaps(t).length) {
+            await markIssue(t,`Demo-Ausführung nicht berechenbar: ${demoExecutionGaps(t).join('; ')}`,report.trocken)
             return {issue:'coverage' as const}
           }
           // The symbol was resolved before taking the lock. A concurrent edit

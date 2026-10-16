@@ -89,6 +89,7 @@ export default async function TradeDetailPage({
         <div className="grid grid-cols-1 gap-4">
           <TradeCard
             t={t}
+            portfolioKind={kontext.portfolios.find(p => p.id === t.portfolioId)?.kind}
             currency={t.accountCurrency ?? kontext.portfolios.find(p => p.id === t.portfolioId)?.currency ?? settings.currency}
             events={events}
             targets={targets}

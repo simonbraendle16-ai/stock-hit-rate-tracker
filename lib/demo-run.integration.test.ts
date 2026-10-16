@@ -241,7 +241,18 @@ describe('Demo-Ausführung mit gespeicherten Positionen', () => {
     expect(result).toMatchObject({ einstiege: 1, teilziele: 1, abschluesse: 1 })
     expect((state.events as TradeEventRow[]).map((e) => e.price)).toEqual([100, 110, 120])
   })
-  it('aktiviert einen unvollständigen Entwurf auch im automatischen Demo-Weg nicht', async () => {
+  it('simuliert einen dokumentierten Preisplan ohne zusätzliche Informationsbestätigungen', async () => {
+    state.trades = [{ ...row(), tradeKind: 'langfristig', status: 'geplant', openedAt: null, createdAt: at('10:00'),
+      quoteCurrency: 'EUR', accountCurrency: 'EUR', quoteToAccountRate: 1,
+      planContext: null, elliottInvalidation: null, preTradeAnswered: false }]
+    state.events = []
+    state.candles = [candle('09:55'), candle('10:00', { low: 99 }),
+      candle('10:05', { high: 112 }), candle('10:10', { high: 122 })]
+    expect(await runDemoFills()).toMatchObject({ einstiege: 1, teilziele: 1, abschluesse: 1 })
+    expect(state.trades[0]).toMatchObject({ planContext: null, elliottInvalidation: null, preTradeAnswered: false })
+    expect((state.events as TradeEventRow[]).map(e => e.price)).toEqual([100,110,120])
+  })
+  it('bucht bei tatsächlich fehlender Geldzuordnung keinen Demo-Einstieg', async () => {
     state.trades = [{ ...row(), status: 'geplant', openedAt: null, preTradeAnswered: true, planContext: null }]
     state.events = []
     const result = await runDemoFills()

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { emptyPlanContext, normalizePlanContext, planGaps, planningSnapshot } from './plan-context'
+import { demoExecutionGaps, emptyPlanContext, normalizePlanContext, planGaps, planningSnapshot } from './plan-context'
 import { hasRecentLoss, resolveManagementReview } from './management-review'
 import { normalizeMoodCheck } from './emotions'
 
@@ -9,6 +9,16 @@ const trade = { planContext: context, entryPrice: 100, stopLoss: 90, takeProfit:
   elliottInvalidation: 89, positionSize: 2, direction: 'long', quoteCurrency: 'USD', accountCurrency: 'USD', quoteToAccountRate: 1 }
 
 describe('concrete planning and explicit assessments', () => {
+  it('simulates calculable historical plans without new text, confirmation or Elliott fields', () => {
+    const historical = { ...trade, planContext: null, elliottInvalidation: null }
+    expect(demoExecutionGaps(historical)).toEqual([])
+    expect(demoExecutionGaps({ ...historical, planContext: { ...context, riskConfirmed: false } })).toEqual([])
+    expect(planGaps(historical)).toContain('Invalidierung')
+    expect(demoExecutionGaps({ ...historical, positionSize: null })).toContain('Berechenbare Positionsgröße')
+    expect(demoExecutionGaps({ ...historical, entryPrice: NaN })).toContain('Berechenbarer Einstiegspreis')
+    expect(demoExecutionGaps({ ...historical, accountCurrency: 'EUR', fxRateAt: null })).toContain('Gültige Kurs-/Kontowährung und Umrechnung')
+    expect(demoExecutionGaps({ ...historical, stopLoss: 110 })).toContain('Stop und Ziel passend zur Richtung')
+  })
   it('accepts an uncertain but concrete plan, without any yes/no preanswers', () => {
     expect(planGaps(trade)).toEqual([])
     expect(planGaps({ ...trade, planContext: { ...context, riskConfirmed: false } })).toContain('Risikobestätigung mit benannten Kosten und Datenlücken')

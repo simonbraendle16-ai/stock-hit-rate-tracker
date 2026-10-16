@@ -1,7 +1,7 @@
 import { requireFrozenFxRate, portfolioCurrency } from '@/lib/money-currency'
 import { TradeInputError } from '@/lib/trade-input-error'
 
-import { normalizePlanContext, planGaps, requireCompletePlan, planningSnapshot, type PlanContext } from '@/lib/plan-context'
+import { normalizePlanContext, planGaps, requireCompletePlan, demoExecutionGaps, planningSnapshot, type PlanContext } from '@/lib/plan-context'
 import { createTradeForUser } from '@/lib/create-trade-service'
 import { hasRecentLoss, resolveManagementReview, type ManagementReview } from '@/lib/management-review'
 import { db } from '@/lib/db'
@@ -478,8 +478,9 @@ function requirePositive(v: number | null | undefined, msg: string): number {
 }
 
 /**
- * Activate a planned trade. Requires the 4-questions gate to be satisfied and
- * the Emotions-Check-in (Etappe 4) — der Zustand wird im Moment des Einstiegs
+ * Activate a planned trade. Demo needs calculable order values; other portfolios
+ * retain the full plan gate. The Emotions-Check-in (Etappe 4) records the state
+ * at entry — der Zustand wird im Moment des Einstiegs
  * festgehalten, nicht rückwirkend erinnert.
  * Returns a Revenge-Guard warning if a loss was closed within the cooldown.
  */
@@ -496,11 +497,13 @@ export async function activateTradeForUser(
   if (opts?.expectedVersion !== undefined && t.version !== opts.expectedVersion) {
     throw new Error('Trade wurde inzwischen geändert. Bitte erneut laden.')
   }
-  // Das Fragen-Gate gilt nur auf dem vollen Weg. Ein schneller Trade überspringt
-  // es bewusst (siehe `lib/trade-kind.ts`) — er bleibt aber als solcher
-  // gekennzeichnet, damit später niemand Disziplin unterstellt, wo keine
-  // geprüft wurde.
-  if (requiresPreTradeGate(t.tradeKind)) requireCompletePlan(t)
+  // Demo does not require new narrative fields or repeated confirmations.
+  // Do not mark historical answers as given; retain the full gate outside demo.
+  const activationPortfolio = await loadOwnedPortfolio(userId, t.portfolioId)
+  if (kindOf(activationPortfolio) === 'demo') {
+    const gaps = demoExecutionGaps(t)
+    if (gaps.length) throw new Error(`Demo-Ausführung nicht berechenbar: ${gaps.join('; ')}.`)
+  } else if (requiresPreTradeGate(t.tradeKind)) requireCompletePlan(t)
   const checkIn = moodForKind(t.tradeKind, mood, 'entry')
 
   // Deckung erneut prüfen (Teil 3). Zwischen Planen und Eröffnen kann anderes

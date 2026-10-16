@@ -50,6 +50,24 @@ type PlannedTrade = MoneyMetadata & {
 }
 const positive = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n > 0
 
+/** Paper execution needs calculable order values, not additional narrative
+ * fields, an Elliott invalidation or repeated personal confirmations. */
+export function demoExecutionGaps(t: PlannedTrade): string[] {
+  const gaps: string[] = []
+  if (!positive(t.entryPrice)) gaps.push('Berechenbarer Einstiegspreis')
+  if (!positive(t.stopLoss)) gaps.push('Berechenbarer Stoppreis')
+  if (!positive(t.takeProfit)) gaps.push('Berechenbarer Zielpreis')
+  if (!positive(t.positionSize)) gaps.push('Berechenbare Positionsgröße')
+  if (frozenFxRate(t) === null) gaps.push('Gültige Kurs-/Kontowährung und Umrechnung')
+  if (!['long', 'short'].includes(t.direction ?? '')) gaps.push('Gültige Handelsrichtung')
+  if (positive(t.entryPrice) && positive(t.stopLoss) && positive(t.takeProfit) &&
+      !((t.direction === 'long' && t.stopLoss < t.entryPrice && t.takeProfit > t.entryPrice) ||
+        (t.direction === 'short' && t.stopLoss > t.entryPrice && t.takeProfit < t.entryPrice))) {
+    gaps.push('Stop und Ziel passend zur Richtung')
+  }
+  return gaps
+}
+
 export function planGaps(t: PlannedTrade): string[] {
   let context: PlanContext | null = null
   try { context = normalizePlanContext(t.planContext) } catch { /* invalid is incomplete */ }

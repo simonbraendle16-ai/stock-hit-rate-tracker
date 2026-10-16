@@ -116,6 +116,13 @@ describe('Persistierter eigener Demozyklus auf isoliertem PostgreSQL',()=>{
     expect((await readDemoCycle(scope))?.results['1']).toMatchObject({status:'awaiting-data',bookings:0,checkedAt:new Date((base+300)*1000).toISOString()})
     expect((await pg.query(`SELECT id FROM trade_event WHERE "tradeId"=1`)).rows).toHaveLength(1)
   })
+  it('verarbeitet historische Preispläne ohne neue Textfelder oder numerische Count-Invalidierung',async()=>{
+    await pg.exec(`UPDATE trade SET status='geplant',"tradeKind"='langfristig',"openedAt"=NULL,"planContext"=NULL,"elliottInvalidation"=NULL,"preTradeAnswered"=false WHERE id=1;
+      DELETE FROM trade_event WHERE "tradeId"=1;`)
+    expect(await runDemoCycle(scope)).toMatchObject({completed:true,blocked:0})
+    expect((await pg.query(`SELECT type FROM trade_event WHERE "tradeId"=1 ORDER BY id`)).rows.map((r:any)=>r.type)).toEqual(['eroeffnet','teilverkauf','geschlossen'])
+    expect((await pg.query(`SELECT "planContext","elliottInvalidation","preTradeAnswered" FROM trade WHERE id=1`)).rows[0]).toEqual({planContext:null,elliottInvalidation:null,preTradeAnswered:false})
+  })
   it('bucht Teilziel und Abschluss einmal, mit Provenienz; fremdes Depot bleibt unverändert',async()=>{
     const report=await runDemoCycle(scope)
     expect(report,JSON.stringify(await readDemoCycle(scope))).toMatchObject({completed:true,blocked:0})

@@ -2,8 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import { db,withDatabaseDeadline } from '@/lib/db'
 import { trade, tradeEvent,stock, brokerOrder,candleSeries } from '@/lib/db/schema'
-import { planGaps } from '@/lib/plan-context'
-import { requiresPreTradeGate } from '@/lib/trade-kind'
+import { demoExecutionGaps } from '@/lib/plan-context'
 import { demoSourceIssue } from '@/lib/demo-source'
 import { pruefBeginn, closedExchangeGap } from '@/lib/demo-progress'
 import { runDemoFills } from '@/lib/demo-run'
@@ -54,7 +53,7 @@ async function initialWork(scope: CycleScope, asOf: number) {
   const linked = new Set(links.map(x => x.id)), results: Record<string, CycleResult> = {}, sources: Source[] = [], pending: number[] = []
   rows.sort((a,b) => Number(a.t.status !== 'aktiv') - Number(b.t.status !== 'aktiv') || Number(Boolean(a.t.demoIssue))-Number(Boolean(b.t.demoIssue)) || a.t.id-b.t.id)
   for (const {t,s} of rows) {
-    const gaps = t.status === 'geplant' && requiresPreTradeGate(t.tradeKind) ? planGaps(t) : []
+    const gaps = t.status === 'geplant' ? demoExecutionGaps(t) : []
     const issue = demoSourceIssue(s, t.market, t.ticker) || (!s?.provider || !['yahoo','twelvedata','binance'].includes(s.provider) ? 'Bestätigter Kursanbieter fehlt.' : null)
       || (!t.quoteCurrency || !t.accountCurrency ? 'Währungszuordnung des Altbestands fehlt.' : null)
       || (s?.resolvedCurrency && s.resolvedCurrency !== t.quoteCurrency ? 'Kurswährung und Instrument widersprechen sich.' : null)
@@ -132,7 +131,7 @@ async function performDemoCycle(scope: CycleScope, trigger: 'automatic'|'manual'
           results[tradeId]=execution.rejectedReason?{status:'blocked',reason:execution.rejectedReason}:execution.bookings?{status:'booked',bookings:execution.bookings,checkedAt:current.demoCheckedAt?.toISOString()??null}:{ status:'changed', reason:'Fall inzwischen geändert oder abgeschlossen.' }
           work.pending=work.pending.filter(x=>x!==tradeId); await save('process'); continue
         }
-        const gaps=current.status==='geplant'&&requiresPreTradeGate(current.tradeKind)?planGaps(current):[]
+        const gaps=current.status==='geplant'?demoExecutionGaps(current):[]
         if(gaps.length){
           results[tradeId]={status:'blocked',reason:gaps.join('; ')}
           work.pending=work.pending.filter(x=>x!==tradeId);await save('process');continue

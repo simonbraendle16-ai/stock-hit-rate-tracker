@@ -152,6 +152,7 @@ export default async function TradesPage() {
               <TradeCard
                 key={t.id}
                 t={t}
+                portfolioKind={kontext.portfolios.find(p => p.id === t.portfolioId)?.kind}
                 currency={t.accountCurrency ?? kontext.currency}
                 targets={stufenJeTrade.get(t.id)}
                 events={ereignisseJeTrade.get(t.id)}

@@ -1,6 +1,6 @@
 'use client'
 
-import { planGaps } from '@/lib/plan-context'
+import { demoExecutionGaps, planGaps } from '@/lib/plan-context'
 
 import { frozenFxRate } from '@/lib/money-currency'
 import { InlineNotice } from '@/components/form-frame'
@@ -101,6 +101,7 @@ const resultStyle: Record<string, string> = {
 export function TradeCard({
   t,
   currency = 'EUR',
+  portfolioKind,
   events,
   targets,
   triggeredTargetPrices,
@@ -108,6 +109,7 @@ export function TradeCard({
 }: {
   t: TradeRow
   currency?: string
+  portfolioKind?: string | null
   events?: TradeEventRow[]
   /** Teilziele (Etappe 13). Auf der Karte steht „x von y erreicht"; die Leiste
    *  darunter zeigt sie auf der Skala und führt die erreichte Stufe aus —
@@ -142,9 +144,9 @@ export function TradeCard({
     }
   }
 
-  // Sperrt das Fragen-Gate diesen Trade? Beim schnellen Trade gibt es keines —
-  // dieselbe Entscheidung wie serverseitig in `activateTrade`.
-  const missingPlanFields = requiresPreTradeGate(t.tradeKind) ? planGaps(t) : []
+  // Same portfolio-specific rule as activateTrade: demo uses order values.
+  const missingPlanFields = portfolioKind === 'demo' ? demoExecutionGaps(t)
+    : requiresPreTradeGate(t.tradeKind) ? planGaps(t) : []
   const gateOpen = missingPlanFields.length > 0
 
   // Nach dem Löschen auf die Liste navigieren — sonst lädt eine offene
