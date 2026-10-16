@@ -1,0 +1,15 @@
+{
+  "at": "2026-10-16T21:21:30.038Z",
+  "localOnly": true,
+  "results": [
+    "authenticated real application loads against local synthetic database",
+    "browser save, readback, exact source/context and filtered population agree on one case",
+    "versioned browser correction updates the same case and its statistic, preserving source and period",
+    "tabs can be operated with keyboard arrows",
+    "real app at 390px: all five views fit; edit dialog retains visible title and actions",
+    "real app at 375px: all five views fit; edit dialog retains visible title and actions",
+    "real app at 768px: all five views fit; edit dialog retains visible title and actions",
+    "real app at 1440px: all five views fit; edit dialog retains visible title and actions",
+    "opening, inspecting and cancelling never mutates the saved observation"
+  ]
+}

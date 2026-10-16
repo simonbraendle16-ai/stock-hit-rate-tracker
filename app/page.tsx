@@ -29,7 +29,7 @@ import { LivePosition } from '@/components/live-position'
 import { AlertsPanel } from '@/components/alerts-panel'
 import { AlertWatcher } from '@/components/alert-watcher'
 import { Button } from '@/components/ui/button'
-import { Plus, ArrowUpRight, ArrowDownRight } from 'lucide-react'
+import { Plus, ArrowUpRight, ArrowDownRight, Waves } from 'lucide-react'
 
 export default async function CockpitPage() {
   const session = await auth.api.getSession({ headers: await headers() })
@@ -95,11 +95,18 @@ export default async function CockpitPage() {
             </h2>
             {kontext.isPaper && <PaperNotice className="mt-1 max-w-xl" />}
           </div>
-          <Link href="/trades/new">
-            <Button className="btn-teal-glow font-mono text-xs">
-              <Plus className="size-4" /> Neuer Trade
-            </Button>
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Link href="/analysis#fibonacci">
+              <Button variant="outline" className="font-mono text-xs">
+                <Waves data-icon="inline-start" /> Wellen messen
+              </Button>
+            </Link>
+            <Link href="/trades/new">
+              <Button className="btn-teal-glow font-mono text-xs">
+                <Plus className="size-4" /> Neuer Trade
+              </Button>
+            </Link>
+          </div>
         </div>
 
         <SectionLabel>Stand</SectionLabel>

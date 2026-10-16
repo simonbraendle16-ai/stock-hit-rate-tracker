@@ -1,81 +1,45 @@
-import { FibonacciPanel } from '@/components/fibonacci-panel'
-import { getFibonacciData } from '@/app/actions/fibonacci'
-import { auth } from '@/lib/auth'
-import { headers } from 'next/headers'
-import { redirect } from 'next/navigation'
+import { AnalysisWorkspace } from "@/components/analysis-workspace";
+import { getFibonacciData } from "@/app/actions/fibonacci";
+import { auth } from "@/lib/auth";
+import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import {
   getOverallStats,
   getStocksWithStats,
   getHitRateTimeline,
-} from '@/app/actions/stocks'
-import { CockpitHeader } from '@/components/cockpit-header'
-import { StatCards } from '@/components/stat-cards'
-import { DistributionChart } from '@/components/distribution-chart'
-import { DistributionBarChart } from '@/components/distribution-bar-chart'
-import { HitRateTimeline } from '@/components/hitrate-timeline'
-import { InstrumentCardGrid } from '@/components/instrument-card-grid'
-import { SectionLabel } from '@/components/section-label'
-import { QuoteAutoRefresh } from '@/components/quote-auto-refresh'
-import { AddStockDialog } from '@/components/add-stock-dialog'
-import { getInstrumentCards } from '@/app/actions/instruments'
-import { getSettings } from '@/app/actions/settings'
+} from "@/app/actions/stocks";
+import { CockpitHeader } from "@/components/cockpit-header";
+import { QuoteAutoRefresh } from "@/components/quote-auto-refresh";
+import { getInstrumentCards } from "@/app/actions/instruments";
+import { getSettings } from "@/app/actions/settings";
 
 export default async function AnalysisPage() {
-  const session = await auth.api.getSession({ headers: await headers() })
-  if (!session?.user) redirect('/sign-in')
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session?.user) redirect("/sign-in");
 
-  const [stats, stocks, timeline, instruments, settings, fibonacci] = await Promise.all([
-    getOverallStats(),
-    getStocksWithStats(),
-    getHitRateTimeline(),
-    getInstrumentCards(),
-    getSettings(),
-    getFibonacciData(),
-  ])
+  const [stats, stocks, timeline, instruments, settings, fibonacci] =
+    await Promise.all([
+      getOverallStats(),
+      getStocksWithStats(),
+      getHitRateTimeline(),
+      getInstrumentCards(),
+      getSettings(),
+      getFibonacciData(),
+    ]);
 
   return (
     <div className="min-h-svh">
       <CockpitHeader userLabel={session.user.name || session.user.email} />
       {/* Hält die Kurse in den Instrumentenkarten frisch, solange die Seite offen ist. */}
       <QuoteAutoRefresh />
-      <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
-        <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 className="font-heading text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-              Analyse
-            </h2>
-            <p className="mt-1 font-mono text-xs text-muted-foreground">
-              Prognosen und beobachtete Fibonacci-Tiefen pro Instrument, Welle und Markt.
-            </p>
-          </div>
-          <AddStockDialog />
-        </div>
-
-        <StatCards stats={stats} />
-        <FibonacciPanel {...fibonacci} />
-
-        <div className="mt-6">
-          <HitRateTimeline data={timeline} />
-        </div>
-
-        <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <DistributionChart correct={stats.correct} wrong={stats.wrong} />
-          <DistributionBarChart correct={stats.correct} wrong={stats.wrong} />
-        </div>
-
-        {/* Die frühere Rangliste stand nur für Prognosen. Die Instrumentenkarte
-            zeigt daneben die Trades — sonst bliebe die eigentliche Frage
-            unbeantwortet: Liegt es an der Analyse oder an der Umsetzung? */}
-        <div className="mt-8">
-          <SectionLabel>Instrumente · Prognose und Umsetzung</SectionLabel>
-          <InstrumentCardGrid
-            cards={instruments.cards}
-            quotes={instruments.quotes}
-            currency={settings.currency}
-            stocks={stocks}
-          />
-        </div>
-      </main>
+      <AnalysisWorkspace
+        fibonacci={fibonacci}
+        stats={stats}
+        timeline={timeline}
+        stocks={stocks}
+        instrumentData={instruments}
+        currency={settings.currency}
+      />
     </div>
-  )
+  );
 }
