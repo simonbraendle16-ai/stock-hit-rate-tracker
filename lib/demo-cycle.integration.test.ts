@@ -81,6 +81,41 @@ beforeEach(async()=>{
 })
 
 describe('Persistierter eigener Demozyklus auf isoliertem PostgreSQL',()=>{
+  it('unterscheidet einen verspäteten Kursrand von einer inneren Lücke ohne volle Abdeckung zu behaupten',async()=>{
+    await pg.exec(`UPDATE candle_cache SET open=100,high=101,low=99,close=100;`)
+    vi.setSystemTime((base+1200)*1000)
+    expect(await runDemoCycle(scope)).toMatchObject({completed:true,blocked:0})
+    expect((await readDemoCycle(scope))?.results['1']).toMatchObject({
+      status:'awaiting-data',bookings:0,checkedAt:new Date((base+300)*1000).toISOString(),
+      requiredUntil:new Date((base+1200)*1000).toISOString(),sourceFetchedAt:expect.any(String),
+    })
+    expect((await pg.query<any>(`SELECT "demoIssue" FROM trade WHERE id=1`)).rows[0].demoIssue).toBeNull()
+    expect((await pg.query(`SELECT id FROM trade_event WHERE "tradeId"=1`)).rows).toHaveLength(1)
+  })
+  it('hält eine echte innere Lücke gesperrt und setzt nach Originalnachlieferung ohne Doppelbuchung fort',async()=>{
+    await pg.exec(`UPDATE candle_cache SET open=100,high=101,low=99,close=100;DELETE FROM candle_cache WHERE time=${base-300};`)
+    expect(await runDemoCycle(scope)).toMatchObject({completed:true,blocked:1})
+    expect((await readDemoCycle(scope))?.results['1']).toMatchObject({status:'blocked',checkedAt:new Date((base-300)*1000).toISOString()})
+    expect((await readDemoCycle(scope))?.results['1'].reason).toContain('Lücke')
+    state.collect.mockImplementationOnce(async(_symbol,opts)=>{
+      expect(opts.since).toBeLessThanOrEqual(base-300)
+      await pg.exec(`INSERT INTO candle_cache(symbol,interval,time,open,high,low,close,volume)VALUES('TESTUSDT','5min',${base-300},100,101,99,100,1)`)
+    })
+    await pg.exec(`UPDATE demo_cycle_state SET "nextRunAt"='epoch'`)
+    expect(await runDemoCycle(scope)).toMatchObject({completed:true,blocked:0})
+    expect((await readDemoCycle(scope))?.results['1']).toMatchObject({status:'checked',checkedAt:new Date((base+300)*1000).toISOString()})
+    expect((await pg.query<any>(`SELECT "demoIssue" FROM trade WHERE id=1`)).rows[0].demoIssue).toBeNull()
+    expect(await runDemoCycle(scope)).toMatchObject({processed:false})
+    expect((await pg.query(`SELECT id FROM trade_event WHERE "tradeId"=1`)).rows).toHaveLength(1)
+    expect(state.collect).toHaveBeenCalledTimes(2)
+  })
+  it('wertet einen ungeordneten Live-Kurspunkt nicht als abgeschlossene Kerze am verzögerten Rand',async()=>{
+    await pg.exec(`UPDATE candle_cache SET open=100,high=101,low=99,close=100;INSERT INTO candle_cache(symbol,interval,time,open,high,low,close,volume)VALUES('TESTUSDT','5min',${base+37},100,200,1,100,1)`)
+    vi.setSystemTime((base+900)*1000)
+    expect(await runDemoCycle(scope)).toMatchObject({completed:true,blocked:0})
+    expect((await readDemoCycle(scope))?.results['1']).toMatchObject({status:'awaiting-data',bookings:0,checkedAt:new Date((base+300)*1000).toISOString()})
+    expect((await pg.query(`SELECT id FROM trade_event WHERE "tradeId"=1`)).rows).toHaveLength(1)
+  })
   it('bucht Teilziel und Abschluss einmal, mit Provenienz; fremdes Depot bleibt unverändert',async()=>{
     const report=await runDemoCycle(scope)
     expect(report,JSON.stringify(await readDemoCycle(scope))).toMatchObject({completed:true,blocked:0})

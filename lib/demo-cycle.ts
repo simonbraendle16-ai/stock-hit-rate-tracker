@@ -18,7 +18,7 @@ export const DEMO_CYCLE_INTERVAL_MS = 3_600_000
 export const DEMO_CYCLE_BUDGET_MS = 20_000
 export type CycleScope = { userId: string; portfolioId: number }
 type Source = { stockId: number; symbol: string; provider: ProviderName; market: Market; since: number; fetchedAt?: string; error?: string;attempts?:number;retryAt?:number }
-export type CycleResult = { status: string; reason?: string; checkedAt?: string | null; bookings?: number }
+export type CycleResult = { status: string; reason?: string; checkedAt?: string | null; bookings?: number; requiredUntil?: string; sourceFetchedAt?: string }
 type Work = { sources: Source[]; pending: number[]; asOf: number;processAttempts?:Record<string,number> }
 export type CycleState = CycleScope & { enabled: boolean; nextRunAt: Date; leaseUntil: Date; cycleId: string | null; cycleStartedAt: Date | null;
   completedAt: Date | null; lastAutomaticAt: Date | null; lastAttemptAt: Date | null; phase: 'idle'|'collect'|'process';
@@ -161,9 +161,14 @@ async function performDemoCycle(scope: CycleScope, trigger: 'automatic'|'manual'
         const session=series?.session?.symbol===source.symbol?series.session:null
         const closed = current.market!=='krypto'&&checked>0 && closedExchangeGap(checked,cutoff,instrument?.resolvedExchange,session)
         const covered = checked>=cutoff || closed
-        const status = blocked ? 'blocked' : report.ausstehend.length ? 'pending' : bookings ? 'booked' : covered ? (closed?'market-closed':'checked') : 'blocked'
-        results[tradeId]={ status, checkedAt, bookings,
-          ...(status==='blocked' ? { reason:execution.rejectedReason||after?.demoIssue || report.error || 'Keine vollständige Abdeckung bis zur Zyklusgrenze; Datenverzögerung oder Kurslücke.' } : {}) }
+        // A fresh successful fetch can still end before this cycle's cutoff.
+        // Missing tail data is not an interior gap and must never imply full coverage.
+        const terminal = after && !['geplant','aktiv'].includes(after.status)
+        const status = blocked ? 'blocked' : report.ausstehend.length ? 'pending' : terminal && bookings ? 'booked'
+          : !covered ? 'awaiting-data' : bookings ? 'booked' : closed ? 'market-closed' : 'checked'
+        results[tradeId]={ status, checkedAt, bookings, requiredUntil:new Date(cutoff*1000).toISOString(),sourceFetchedAt:source.fetchedAt,
+          ...(status==='blocked' ? { reason:execution.rejectedReason||after?.demoIssue || report.error || 'Keine verwertbaren Kursdaten.' }
+            : status==='awaiting-data' ? {reason:'Kursreihe reicht noch nicht bis zur Zyklusgrenze. Verarbeitung erfolgt bis zur belegten Prüfgrenze; Fortsetzung im nächsten Stundenzyklus.'} : {}) }
         if(report.error){
           work.processAttempts??={}
           work.processAttempts[tradeId]=(work.processAttempts[tradeId]??0)+1

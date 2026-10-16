@@ -1,9 +1,9 @@
 import Link from 'next/link'
-import { readDemoCycle, type CycleScope } from '@/lib/demo-cycle'
+import { readDemoCycle, type CycleScope, type CycleState } from '@/lib/demo-cycle'
 
 const labels: Record<string,string> = {
   pending:'Restarbeit',blocked:'Daten-/Planblockade',broker:'Brokerbeleg',changed:'Inzwischen geändert',
-  booked:'Buchung erfolgt',checked:'Geprüft · Marke nicht erreicht','market-closed':'Wartet auf geschlossenen Markt',
+  booked:'Buchung erfolgt',checked:'Geprüft · Marke nicht erreicht','market-closed':'Wartet auf geschlossenen Markt','awaiting-data':'Wartet auf Kursdaten',
 }
 const at=(value:Date|string|null)=>value?new Date(value).toLocaleString('de-DE'):'noch nie'
 
@@ -12,13 +12,18 @@ export async function DemoCycleStatus({userId,portfolioId}:CycleScope) {
   try {state=await readDemoCycle({userId,portfolioId})} catch {
     return <p className="note mb-6" role="status">Demo-Ausführungsstatus derzeit nicht lesbar.</p>
   }
+  return <DemoCycleStatusPanel state={state}/>
+}
+
+export function DemoCycleStatusPanel({state}:{state:CycleState|null}) {
   if (!state) return <p className="note mb-6">Eigener Demozeitgeber für dieses Depot noch nicht eingerichtet.</p>
   const stale=!state.lastAutomaticAt||Date.now()-new Date(state.lastAutomaticAt).getTime()>15*60_000
   const late=new Date(state.nextRunAt).getTime()<Date.now()-15*60_000
+  const waiting=Object.values(state.results).some(result=>result.status==='awaiting-data')
   return <section className="panel mb-6 p-4" aria-label="Eigene Demo-Ausführung">
     <p className="eyebrow">Eigene Demo-Ausführung</p>
     <p className="mt-2 text-sm" role="status">
-      {!state.enabled?'Zeitgeber noch nicht aktiviert.':stale?'Takt fehlt: kein aktueller automatischer Aufruf.':state.error?'Technischer Fehler; Fortsetzung erforderlich.':late?'Stundenprüfung überfällig.':state.phase!=='idle'?'Zyklus wird fortgesetzt.':'Stundenzyklus abgeschlossen; wartet auf nächste Fälligkeit.'}
+      {!state.enabled?'Zeitgeber noch nicht aktiviert.':stale?'Takt fehlt: kein aktueller automatischer Aufruf.':state.error?'Technischer Fehler; Fortsetzung erforderlich.':late?'Stundenprüfung überfällig.':state.phase!=='idle'?'Zyklus wird fortgesetzt.':waiting?'Zyklus beendet; ausstehende Kursdaten werden bei der nächsten Fälligkeit geprüft.':'Stundenzyklus abgeschlossen; wartet auf nächste Fälligkeit.'}
     </p>
     <dl className="note mt-3 grid gap-2 text-xs sm:grid-cols-2">
       <div><dt>Letzter automatischer Aufruf</dt><dd>{at(state.lastAutomaticAt)}</dd></div>
@@ -30,7 +35,9 @@ export async function DemoCycleStatus({userId,portfolioId}:CycleScope) {
     <ul className="mt-3 space-y-2 text-xs">
       {Object.entries(state.results).map(([id,result])=><li key={id}>
         <Link className="underline" href={`/trades/${id}`}>Fall #{id}</Link>: {labels[result.status]??result.status}
-        {result.checkedAt&&` · Kerzen geprüft bis ${at(result.checkedAt)}`}{result.reason&&` · ${result.reason}`}
+        {result.checkedAt&&` · Kerzen geprüft bis ${at(result.checkedAt)}`}
+        {result.status==='awaiting-data'&&result.requiredUntil&&` · Ausstehend bis ${at(result.requiredUntil)}`}
+        {result.reason&&` · ${result.reason}`}
         {Boolean(result.bookings)&&` · ${result.bookings} Buchung(en) im Zyklus`}
       </li>)}
     </ul>
