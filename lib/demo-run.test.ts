@@ -80,6 +80,14 @@ describe('Kurslücken', () => {
 
 
 describe('Bestätigte Börsenöffnungszeiten', () => {
+  it('accepts the exact stored Yahoo NasdaqGS name only for closed equity sessions', () => {
+    const close = new Date('2026-10-06T19:55:00Z')
+    const opening = new Date('2026-10-07T13:30:00Z')
+    expect(demoCoveragePrefix([candle(opening)], candle(close), close, 'aktien', 'NasdaqGS').gap).toBe(false)
+    expect(demoCoveragePrefix([candle(new Date('2026-10-07T13:35:00Z'))], candle(close), close, 'aktien', 'NasdaqGS').gap).toBe(true)
+    expect(demoCoveragePrefix([candle(opening)], candle(close), close, 'krypto', 'NasdaqGS').gap).toBe(true)
+    expect(demoCoveragePrefix([candle(opening)], candle(close), close, 'aktien', 'UnknownNasdaq').gap).toBe(true)
+  })
   it('lässt einen Tageswechsel keine fehlende offene Sitzung verbergen',()=>{
     const before=new Date('2026-10-01T14:00:00Z'),after=new Date('2026-10-02T14:00:00Z')
     expect(demoCoveragePrefix([candle(after)],candle(before),before,'aktien','NASDAQ').gap).toBe(true)

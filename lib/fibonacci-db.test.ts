@@ -115,6 +115,39 @@ const request = (
     body: body ? JSON.stringify(body) : undefined,
   });
 describe("Fibonacci isolated PostgreSQL and HTTP contract", () => {
+  it("roundtrips a descriptive historical case through retry, correction, revisions and filtered statistics", async () => {
+    const id = crypto.randomUUID(), ctx = { params: Promise.resolve({ id }) };
+    const historical = {
+      ...input, wave: "X", timeframe: "2h", degree: "unbekannt",
+      percent: null, anchorStart: null, anchorEnd: null, extreme: null,
+      periodFrom: "2026-01-01", periodTo: "2026-01-02",
+      sourceKey: "isolated-historical-roundtrip", sourceRef: "Synthetic isolated source",
+      stopVariants: [
+        {kind: "hypothetisch", label: "Box", description: "Under box", outcome: "gewinn", resultR: null},
+        {kind: "hypothetisch", label: "Wide", description: "Under wave", outcome: "verlust", resultR: null},
+      ],
+    };
+    const headers = { "Idempotency-Key": id };
+    expect((await POST(request("", tokens.owner, "POST", historical, headers))).status).toBe(201);
+    const query = "?stockId=1&wave=X&timeframe=2h&from=2026-01-01&to=2026-01-02&limit=1";
+    const initial = await (await GET(request(query))).json();
+    expect(initial.stats).toMatchObject({ n: 0, missing: 1, mean: null });
+    const context = await (await contextGET(request("/context?stockId=1&wave=X&timeframe=2h"))).json();
+    expect(context.resolution).toBe("eindeutig");
+    expect(context.contexts).toHaveLength(1);
+    expect((await (await detailGET(request("/" + id), ctx)).json()).version).toBe(1);
+    expect((await (await POST(request("", tokens.owner, "POST", historical, headers))).json()).id).toBe(id);
+    expect((await PATCH(request("/" + id, tokens.owner, "PATCH", { ...historical, percent: 61.8 }, {"X-Expected-Version":"1"}), ctx)).status).toBe(200);
+    const reread = await (await detailGET(request("/" + id), ctx)).json();
+    expect(reread).toMatchObject({ id, contextId: id, version: 2, percent: 61.8, sourceKey: historical.sourceKey });
+    const corrected = await (await GET(request(query))).json();
+    expect(corrected.total).toBe(1);
+    expect(corrected.stats).toMatchObject({ n: 1, missing: 0, mean: 61.8 });
+    expect(corrected.stats.stopVariants).toHaveLength(2);
+    const revisions = (await pg.query<{version:number}>(`SELECT version FROM fibonacci_revision WHERE "observationId"=$1 ORDER BY version`, [id])).rows;
+    expect(revisions.map(r => r.version)).toEqual([1,2]);
+    expect((await (await GET(request("?stockId=1&wave=B"))).json()).total).toBe(0);
+  });
   it("applies additive migration twice without changing instrument rows", async () => {
     await pg.exec(
       readFileSync(

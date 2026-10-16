@@ -53,7 +53,9 @@ const newYorkClock = new Intl.DateTimeFormat('en-US', {
 /** Only confirmed exchanges can excuse a gap; intraday missing bars still stop execution. */
 export function closedExchangeGap(start: number, end: number, exchange?: string | null,session?:ExecutionSession|null): boolean {
   const venue = exchange?.toUpperCase()
-  const equities = ['NASDAQ', 'NYSE', 'NMS', 'NGM', 'NCM', 'NYQ', 'NYS', 'XNGS', 'XNYS'].includes(venue ?? '')
+  // Yahoo resolution stores fullExchangeName (NasdaqGS), while its chart
+  // response calls the same venue NMS. Both use the existing Nasdaq hours.
+  const equities = ['NASDAQ', 'NASDAQGS', 'NYSE', 'NMS', 'NGM', 'NCM', 'NYQ', 'NYS', 'XNGS', 'XNYS'].includes(venue ?? '')
   const gold = ['CMX', 'COMEX'].includes(venue ?? '')
   const xetra=['XETRA','GER','XETR'].includes(venue??'')
   const sessionAge=session?Date.now()-Date.parse(session.reportedAt):NaN
