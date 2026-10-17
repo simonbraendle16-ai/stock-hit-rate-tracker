@@ -685,7 +685,7 @@ export function fibCoverage(rows: readonly FibObservation[], kind: "retracement"
     duration: metric("Bestätigte Wellendauer in Tagen; nicht aus ungenauen Daten erfunden.", r=>e(r).durationDays),
     reversalDuration: metric("Bestätigte Dauer des Umkehrbereichs in Tagen.", r=>e(r).reversalDurationDays),
     structure: metric("Struktur der untersuchten Welle; vermutete Strukturen ausdrücklich gekennzeichnet.", r=>r.structure ? {label:r.structure, confidence:e(r).structureConfidence ?? "unbekannt"} : null),
-    basis: metric(`${kind}: bestätigte Messbasis; niemals mit anderer Messart zusammenfassen.`, r=>r.measurementBasis),
+    basis: metric(`${kind}: dokumentierter Messbezug einschließlich ausdrücklich offener Bezüge; Detailangabe prüfen. Messarten bleiben getrennt.`, r=>r.measurementBasis),
     hypotheticalCRV: metric("Ungefähres geplantes hypothetisches Chance/Risiko-Verhältnis, kein realisiertes R.", r=>e(r).hypotheticalCRV),
     tradability: metric("Rückblickende Nutzereinschätzung zur Handelbarkeit.", r=>r.tradability),
     hypotheticalOutcome: metric("Hypothetischer Ausgang gemäß Nutzeraussage, ohne Geldrendite.", r=>r.hypotheticalOutcome),

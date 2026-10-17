@@ -1410,7 +1410,7 @@ function FibForm({
             open={existing?.stopVariants?.length ? true : undefined}
           >
             <summary className="cursor-pointer text-sm font-medium">
-              Struktur, Stopvarianten & Tradebezug{" "}
+              Levels, Zonen, Richtung, CRV & weitere Angaben{" "}
               <span className="font-normal text-muted-foreground">
                 · optional
               </span>
