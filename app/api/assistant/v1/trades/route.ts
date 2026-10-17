@@ -1,3 +1,4 @@
+import { invalidateTradeAnalysis } from '@/lib/invalidate-trade-analysis'
 import { db } from '@/lib/db'
 import { portfolio, trade } from '@/lib/db/schema'
 import { ApiError, apiResponseError, hashToken, positiveId, readJsonObject, requireApiScope } from '@/lib/assistant-api'
@@ -85,7 +86,7 @@ export async function POST(req: NextRequest) {
       return found
     }
     const existing = await lookup()
-    if (existing) return NextResponse.json(publicTrade(existing))
+    if (existing) { invalidateTradeAnalysis(); return NextResponse.json(publicTrade(existing)) }
     let id: number
     try {
       const created = await createTradeForUser(userId, input, { key, hash, source })
@@ -94,7 +95,7 @@ export async function POST(req: NextRequest) {
       // Ein paralleler POST mit gleichem Schlüssel gewinnt den Unique-Index.
       if (cause && typeof cause === 'object' && 'code' in cause && cause.code === '23505') {
         const duplicate = await lookup()
-        if (duplicate) return NextResponse.json(publicTrade(duplicate))
+        if (duplicate) { invalidateTradeAnalysis(); return NextResponse.json(publicTrade(duplicate)) }
       }
       if (cause instanceof Error && !('code' in cause)) throw new ApiError(422, cause.message)
       throw cause
@@ -102,6 +103,7 @@ export async function POST(req: NextRequest) {
     const [row] = await db.select().from(trade)
       .where(and(eq(trade.id, id), eq(trade.userId, userId))).limit(1)
     if (!row) throw new ApiError(503, 'Trade wurde angelegt, konnte aber nicht zurückgelesen werden. Bitte denselben Idempotenzschlüssel erneut senden.')
+    invalidateTradeAnalysis()
     return NextResponse.json(publicTrade(row), { status: 201 })
   } catch (cause) { return apiResponseError(cause) }
 }

@@ -1,4 +1,5 @@
 "use client";
+import { TradeAnalysis } from "@/components/trade-analysis";
 import { useMemo, useState, useTransition, useId } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -61,7 +62,7 @@ import {
   type HistorySummary,
 } from "@/components/fibonacci-history-panel";
 import { StopVariantsEditor } from "@/components/fibonacci-stop-variants";
-import { tradeResearchCoverage, type TradeResearchRow } from "@/lib/trade-research-coverage";
+import { type TradeResearchRow } from "@/lib/trade-research-coverage";
 import { EvidenceEditor } from "@/components/fibonacci-evidence";
 import type { FibEvidence } from "@/lib/fibonacci";
 import { cn } from "@/lib/utils";
@@ -967,17 +968,7 @@ export function FibonacciPanel({
           </Card>
         </TabsContent>
         <TabsContent value="trades" className="flex min-w-0 flex-col gap-4">
-          <p className="text-sm text-muted-foreground">
-            Eindeutig verknüpfte abgeschlossene Trades der ausgewählten
-            abgeschlossenen Wellen. Jeder Trade zählt einmal; fehlende
-            Kosten-/R-Grundlagen bleiben ausgeschlossen. Hypothetische Angaben
-            stehen getrennt unter „Strukturen & Stops“.
-          </p>
-      <Card><CardHeader><CardTitle>Alle eingetragenen Trades</CardTitle><CardDescription>Nur der Instrumentfilter gilt hier. Wellen-, Messart- und Erfassungsdatumsfilter gelten ausschließlich für Beobachtungen. Geplante und aktive Trades bleiben qualitativ auswertbar.</CardDescription></CardHeader><CardContent className="flex flex-col gap-3">
-      {Object.entries(tradeResearchCoverage(tradeCoverage.filter(t=>!filters.stockId || t.stockId===filters.stockId))).filter(([,v])=>typeof v === "object").map(([key,raw])=>{const m=raw as ReturnType<typeof tradeResearchCoverage>["wave"];const labels:Record<string,string>={actualOutcome:"Tatsächlicher qualitativer Abschluss",status:"Status",wave:"Count/erwartete Welle",degree:"Wellengrad",direction:"Handelsrichtung",plan:"Plankontext",notes:"Qualitative Notiz",currentCRV:"Aktuelles Plan-CRV"};return <details key={key}><summary>{labels[key]}: {m.n} von {m.denominator}</summary><p className="text-sm text-muted-foreground">{m.definition}</p><p className="text-xs">Enthalten: {m.included.map(r=>r.id).join(", ") || "keine"}</p>{m.excluded.map(r=><p className="text-xs" key={r.id}>Trade {r.id}: {r.reason}</p>)}</details>;})}
-      {tradeCoverage.filter(t=>!filters.stockId || t.stockId === filters.stockId).map(t=><details key={t.id}><summary>Trade {t.id} · {t.status} · {t.direction}</summary><p className="text-sm">Count: {t.wave || "unbekannt"} · Grad: {t.degree || "unbekannt"} · aktuelles Plan-CRV: {fmt(t.plannedCRV)}</p><p className="text-sm">{t.planContext ? [t.planContext.expectedMove,t.planContext.entryTrigger,t.planContext.stopManagement,t.planContext.targetManagement].filter(Boolean).join(" · ") : "Kein strukturierter Plankontext"}</p><p className="text-sm">{t.notes || "Keine Notiz"}</p><p className="text-xs text-muted-foreground">Aktuelles Plan-CRV ist kein ursprünglicher Eröffnungsplan und kein realisiertes R. Fehlender Abschluss betrifft nur Ergebniskennzahlen.</p></details>)}
-      <ResearchMetricSummary metrics={researchMetrics(samples.filter(t=>!filters.stockId || t.stockId === filters.stockId))}/>
-      </CardContent></Card>
+          <TradeAnalysis rows={tradeCoverage.filter(t => !filters.stockId || t.stockId === filters.stockId)} samples={samples.filter(t => !filters.stockId || t.stockId === filters.stockId)} instrumentFiltered={!!filters.stockId} />
           <p>Separat: eindeutig mit gefilterten Wellen verknüpfte Trades</p>
           <ResearchMetricSummary metrics={metrics} />
         </TabsContent>

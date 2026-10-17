@@ -1,3 +1,4 @@
+import { invalidateTradeAnalysis } from '@/lib/invalidate-trade-analysis'
 import { NextRequest, NextResponse } from 'next/server'
 import { and, asc, eq } from 'drizzle-orm'
 import { db } from '@/lib/db'
@@ -41,6 +42,7 @@ async function write(req: NextRequest, context: Context, correction: boolean) {
       return saveSettlementReceipt(tx, userId, eventId, receipt, version,
         typeof raw.correctionReason === 'string' ? raw.correctionReason : null)
     })
+    invalidateTradeAnalysis()
     return NextResponse.json(saved)
   } catch (e) { return apiResponseError(e) }
 }

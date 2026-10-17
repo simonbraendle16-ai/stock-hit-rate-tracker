@@ -1,3 +1,6 @@
+import { GET as getResearch } from '../app/api/assistant/v1/fibonacci/route'
+import { loadTradeCoverage } from './research-metrics-service'
+import { summarizeTradeResearch } from './trade-research-coverage'
 import { beforeAll, afterAll, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
@@ -272,3 +275,42 @@ describe('isolated PostgreSQL currency integration', () => {
     expect(t.investedAmount).toBe(t.contractInitialMargin)
   })
 })
+
+
+describe('permanent automatic trade analysis through real database and published API routes', () => {
+  const research = async () => {
+    const response = await getResearch(new NextRequest('http://localhost/api/assistant/v1/fibonacci?search=no-such-wave', { headers: {authorization:`Bearer ${token}`} }));
+    expect(response.status).toBe(200);
+    const result=await response.json();
+    expect(result.tradeSummary).toEqual(summarizeTradeResearch(await loadTradeCoverage('currency-test')));
+    return result;
+  };
+  it('includes a UI-created draft immediately, although no matching Fibonacci observation or settlement exists',async()=>{
+    const before=await research();
+    const saved=await createTrade({...body(),planContext:null,notes:'Synthetic UI draft for research',elliottWaveCount:'C',waveDegree:'Minor'} as TradeInput);
+    expect(saved.ok).toBe(true); if(!saved.ok)throw new Error(saved.message);
+    const after=await research();
+    expect(after.items).toHaveLength(0);
+    expect(after.tradeSummary.total).toBe(before.tradeSummary.total+1);
+    expect(after.tradeResearchCoverage.wave.included).toContainEqual({id:saved.id,value:'C'});
+    expect(after.tradeSummary.currentCRV.ids).toContain(saved.id);
+    expect(after.tradeSummary.actualOutcome.n).toBe(before.tradeSummary.actualOutcome.n);
+    expect(revalidatePath).toHaveBeenCalledWith('/analysis');
+  });
+  it('includes an API-created draft, reads a later metadata change, and counts an idempotent retry only once',async()=>{
+    const before=await research(), key='30000000-0000-4000-8000-000000000001';
+    const raw={...body(),planContext:null,notes:'Synthetic API draft for research'};
+    const response=await POST(request(raw,key)); expect(response.status).toBe(201);
+    const saved=await response.json();
+    let after=await research();expect(after.tradeSummary.total).toBe(before.tradeSummary.total+1);
+    const retry=await POST(request(raw,key));expect(retry.status).toBe(200);
+    expect((await research()).tradeSummary).toEqual(after.tradeSummary);
+    const patch=await patchPlan(new NextRequest('http://localhost/api/assistant/v1/trades/'+saved.id,{method:'PATCH',headers:{authorization:`Bearer ${token}`,'content-type':'application/json','x-expected-version':String(saved.version)},body:JSON.stringify({notes:'Confirmed corrected note'})}),{params:Promise.resolve({id:String(saved.id)})});
+    expect(patch.status).toBe(200);
+    after=await research();expect(after.tradeSummary.total).toBe(before.tradeSummary.total+1);
+    expect(after.tradeResearchCoverage.notes.included).toContainEqual({id:saved.id,value:'Confirmed corrected note'});
+    expect(after.tradeSummary.currentCRV.ids).toContain(saved.id);
+    expect(after.tradeCoverage.every((r:any)=>r.id!==-1)).toBe(true);
+    expect(revalidatePath).toHaveBeenCalledWith('/analysis');
+  });
+});

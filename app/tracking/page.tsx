@@ -1,3 +1,5 @@
+import { TradeAnalysis } from "@/components/trade-analysis";
+import { AnalysisAutoRefresh } from "@/components/analysis-auto-refresh";
 import { auth } from '@/lib/auth'
 import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
@@ -86,6 +88,7 @@ export default async function TrackingPage() {
       getScopeContext(),
       getFibonacciData(),
     ])
+  const tradeIds = new Set(trades.map(t => t.id))
   const completed = trades.filter((t) => t.status === 'abgeschlossen')
 
   // Ergebnis-Aufschlüsselung: 4 Buckets (Plan × Ergebnis)
@@ -151,11 +154,13 @@ export default async function TrackingPage() {
             Filtere nach Welle, Markt und Zeitraum; nur abgeschlossene Messungen zählen in die Statistik.
           </p>
           <div className="mt-4">
-            <FibonacciPanel observations={fibonacci.observations} instruments={fibonacci.instruments} />
+            <FibonacciPanel {...fibonacci} />
           </div>
         </TrackingSection>
 
         <TrackingSection id="ergebnis">
+          <AnalysisAutoRefresh />
+          <div className="mt-4"><TradeAnalysis rows={fibonacci.tradeCoverage.filter(t => tradeIds.has(t.id))} samples={fibonacci.samples.filter(t => tradeIds.has(t.id))} scopeLabel={kontext.active ? `Depot ${kontext.active.name}` : "Alle Echtgeld-Depots"} /></div>
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
           <div className="lg:col-span-2">
             <DisciplineBar stats={stats} />

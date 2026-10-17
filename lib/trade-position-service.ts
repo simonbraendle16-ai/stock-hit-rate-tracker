@@ -1,3 +1,4 @@
+import { invalidateTradeAnalysis } from '@/lib/invalidate-trade-analysis'
 import { requireFrozenFxRate, portfolioCurrency } from '@/lib/money-currency'
 import { TradeInputError } from '@/lib/trade-input-error'
 
@@ -604,6 +605,7 @@ export async function activateTradeForUser(
 
   revalidatePath('/')
   revalidatePath('/trades')
+  invalidateTradeAnalysis()
   revalidatePath('/tracking')
   return { revengeWarning, alertsCreated, deckungsHinweis }
 }
@@ -921,6 +923,7 @@ export async function updateTradePlanForUser(
     })
     revalidatePath('/')
     revalidatePath('/trades')
+    invalidateTradeAnalysis()
   } catch {
     console.warn('trade.plan.followup_failed', { tradeId: id })
   }
@@ -1117,6 +1120,7 @@ export async function closeTradeForUser(
 
   revalidatePath('/')
   revalidatePath('/trades')
+  invalidateTradeAnalysis()
   revalidatePath('/tracking')
 }
 
@@ -1169,6 +1173,7 @@ export async function partialCloseForUser(
 
   revalidatePath('/')
   revalidatePath('/trades')
+  invalidateTradeAnalysis()
   revalidatePath('/tracking')
 }
 
@@ -1226,6 +1231,7 @@ export async function addToPositionForUser(
 
   revalidatePath('/')
   revalidatePath('/trades')
+  invalidateTradeAnalysis()
   revalidatePath('/tracking')
 }
 
@@ -1343,6 +1349,7 @@ export async function executeTargetForUser(
 
   revalidatePath('/')
   revalidatePath('/trades')
+  invalidateTradeAnalysis()
   revalidatePath('/tracking')
   return { quantity: menge, price: kurs }
 }

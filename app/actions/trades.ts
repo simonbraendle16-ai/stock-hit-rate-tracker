@@ -1,5 +1,7 @@
 'use server'
 
+import { invalidateTradeAnalysis } from '@/lib/invalidate-trade-analysis'
+
 import { randomUUID } from 'node:crypto'
 import { TradeInputError, tradeCreationFailure, type CreateTradeResult } from '@/lib/trade-input-error'
 
@@ -524,6 +526,7 @@ export async function createTrade(
   try {
     revalidatePath('/')
     revalidatePath('/trades')
+    invalidateTradeAnalysis()
   } catch {
     // Persistence already succeeded: do not invite a duplicate by reporting failure.
     console.warn('trade.create.revalidation_failed', { tradeId: result.id })
@@ -686,6 +689,7 @@ async function markNoTradeImpl(id: number, note?: string | null): Promise<void> 
 
   revalidatePath('/')
   revalidatePath('/trades')
+  invalidateTradeAnalysis()
   revalidatePath('/tracking')
 }
 
@@ -721,6 +725,7 @@ async function abortTradeImpl(id: number): Promise<void> {
   })
   revalidatePath('/')
   revalidatePath('/trades')
+  invalidateTradeAnalysis()
 }
 
 async function deleteTradeImpl(id: number): Promise<void> {
@@ -733,6 +738,7 @@ async function deleteTradeImpl(id: number): Promise<void> {
   })
   revalidatePath('/')
   revalidatePath('/trades')
+  invalidateTradeAnalysis()
 }
 
 // ---------------------------------------------------------------------------
@@ -1143,6 +1149,7 @@ export async function updateTradeSetupTags(id: number, tags: string[]): Promise<
     .where(and(eq(trade.id, id), eq(trade.userId, userId)))
 
   revalidatePath('/trades')
+  invalidateTradeAnalysis()
   revalidatePath(`/trades/${id}`)
   revalidatePath('/tracking')
 }

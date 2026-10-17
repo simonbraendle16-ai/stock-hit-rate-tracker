@@ -1,6 +1,6 @@
 import { loadTradeCoverage, loadMetricSamples } from "@/lib/research-metrics-service";
 import { researchMetrics } from "@/lib/research-metrics";
-import { tradeResearchCoverage } from "@/lib/trade-research-coverage";
+import { summarizeTradeResearch, tradeResearchCoverage } from "@/lib/trade-research-coverage";
 import { selectResearchRows } from "@/lib/fibonacci-workspace";
 import { fibQuery } from "@/lib/fibonacci-query";
 import { NextRequest, NextResponse } from "next/server";
@@ -27,6 +27,7 @@ export async function GET(req: NextRequest) {
     const items = selectResearchRows(await listFib(userId, filters.stockId), filters, search, selection);
     const [allSamples, tradeCoverage] = await Promise.all([loadMetricSamples(userId), loadTradeCoverage(userId)]);
     return NextResponse.json({
+      tradeSummary: summarizeTradeResearch(tradeCoverage.filter(s=>!filters.stockId || s.stockId===filters.stockId)),
       tradeResearchCoverage: tradeResearchCoverage(tradeCoverage.filter(s=>!filters.stockId || s.stockId===filters.stockId)),
       tradeCoverage: tradeCoverage.filter(s => !filters.stockId || s.stockId === filters.stockId),
       allTradeMetrics: researchMetrics(allSamples.filter(s => !filters.stockId || s.stockId === filters.stockId)),

@@ -1,3 +1,5 @@
+import { TradeAnalysis } from "@/components/trade-analysis";
+import { AnalysisAutoRefresh } from "@/components/analysis-auto-refresh";
 import type { ComponentProps } from "react";
 import { FibonacciPanel } from "@/components/fibonacci-panel";
 import { StatCards } from "@/components/stat-cards";
@@ -31,6 +33,7 @@ export function AnalysisWorkspace({
 }: Props) {
   return (
     <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
+      <AnalysisAutoRefresh />
       <p className="eyebrow mb-3">Analyse & Forschung</p>
       <nav
         aria-label="Analysebereiche"
@@ -42,20 +45,25 @@ export function AnalysisWorkspace({
         >
           01 · Wellenforschung
         </a>
+        <a href="#trades" className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">02 · Trades</a>
         <a
           href="#prognosen"
           className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
         >
-          02 · Prognosen
+          03 · Prognosen
         </a>
         <a
           href="#instrumente"
           className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
         >
-          03 · Instrumente
+          04 · Instrumente
         </a>
       </nav>
       <FibonacciPanel {...fibonacci} />
+
+      <section id="trades" aria-label="Trade-Auswertung" className="mt-10 scroll-mt-36 border-t border-border pt-8">
+        <TradeAnalysis rows={fibonacci.tradeCoverage ?? []} samples={fibonacci.samples ?? []} />
+      </section>
 
       <section
         id="prognosen"

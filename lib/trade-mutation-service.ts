@@ -1,3 +1,4 @@
+import { invalidateTradeAnalysis } from './invalidate-trade-analysis'
 import { and, asc, desc, eq, sql } from 'drizzle-orm'
 import { db } from './db'
 import { trade, tradeActionRequest, tradeEvent, tradeEventRevision, tradeSettlementReceipt, tradeTarget } from './db/schema'
@@ -58,7 +59,7 @@ export async function mutateTrade(userId: string, id: number, version: number, k
   body: Record<string, unknown>, callback: (row: typeof trade.$inferSelect) => Promise<unknown>) {
   const hash = hashToken(canonicalBody({ route, id, body }))
   try {
-    return await withTradeLock(userId, id, async row => {
+    const result = await withTradeLock(userId, id, async row => {
       const [old] = await db.select().from(tradeActionRequest).where(and(eq(tradeActionRequest.userId, userId), eq(tradeActionRequest.requestKey, key)))
       if (old) {
         if (old.requestHash !== hash || old.tradeId !== id) throw new ApiError(409, 'Idempotenzschlüssel wurde mit anderen Angaben verwendet.')
@@ -69,6 +70,8 @@ export async function mutateTrade(userId: string, id: number, version: number, k
       await db.insert(tradeActionRequest).values({ userId, tradeId: id, requestKey: key, requestHash: hash, response: result })
       return result
     })
+    invalidateTradeAnalysis()
+    return result
   } catch (e) {
     if (e instanceof ApiError) throw e
     if (e instanceof Error && e.message === 'Diesen Trade gibt es nicht.') throw new ApiError(404, 'Trade nicht gefunden.')
