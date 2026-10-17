@@ -44,7 +44,47 @@ export type StopVariant = {
   outcome: "unbekannt" | "gewinn" | "verlust" | "breakeven" | "ausgelassen";
   resultR: number | null;
 };
+export type FibEvidence = {
+  approximateReachedLevel?: number | null;
+  hypotheticalExitLevel?: number | null;
+  hypotheticalCRVBasis?: string | null;
+  measurementConfidence?: "bestaetigt" | "unklar";
+  reachedLevels?: number[];
+  missedLevels?: number[];
+  reversalZone?: [number, number] | null;
+  targetZone?: [number, number] | null;
+  waveDirection?: "long" | "short" | "unbekannt";
+  approximatePercent?: number | null;
+  hypotheticalCRV?: number | null;
+  periodLabel?: string | null;
+  parentId?: string | null;
+  durationDays?: number | null;
+  reversalDurationDays?: number | null;
+  structureConfidence?: "bestaetigt" | "vermutet" | "unbekannt";
+  provenance?: string | null;
+};
+export function validateEvidence(value: unknown): FibEvidence {
+  if (value == null) return {};
+  if (typeof value !== "object" || Array.isArray(value)) return fail("Ungültige Beobachtungsangaben.");
+  const raw = value as Record<string, unknown>;
+  const keys = ["approximateReachedLevel", "hypotheticalExitLevel", "hypotheticalCRVBasis", "measurementConfidence", "reachedLevels", "missedLevels", "reversalZone", "targetZone", "waveDirection", "approximatePercent", "hypotheticalCRV", "periodLabel", "parentId", "durationDays", "reversalDurationDays", "structureConfidence", "provenance"];
+  if (Object.keys(raw).some(k => !keys.includes(k))) return fail("Unbekannte Beobachtungsangabe.");
+  const number = (n: unknown) => typeof n === "number" && Number.isFinite(n) && n >= 0;
+  for (const k of ["reachedLevels", "missedLevels"]) if (raw[k] !== undefined && (!Array.isArray(raw[k]) || raw[k].length > 50 || !raw[k].every(number) || new Set(raw[k]).size !== raw[k].length)) return fail("Ungültige Fibonacci-Level.");
+  for (const k of ["reversalZone", "targetZone"]) if (raw[k] != null && (!Array.isArray(raw[k]) || raw[k].length !== 2 || !raw[k].every(number) || raw[k][0] > raw[k][1])) return fail("Ungültige Zone.");
+  for (const k of ["approximateReachedLevel", "hypotheticalExitLevel", "approximatePercent", "hypotheticalCRV", "durationDays", "reversalDurationDays"]) if (raw[k] != null && (!number(raw[k]) || (["hypotheticalCRV", "durationDays", "reversalDurationDays"].includes(k) && raw[k] === 0))) return fail("Ungültige Verhältnis-/Dauerangabe.");
+  if (raw.waveDirection !== undefined && !["long", "short", "unbekannt"].includes(String(raw.waveDirection))) return fail("Ungültige Wellenrichtung.");
+  if (raw.structureConfidence !== undefined && !["bestaetigt", "vermutet", "unbekannt"].includes(String(raw.structureConfidence))) return fail("Ungültige Struktursicherheit.");
+  for (const k of ["periodLabel", "provenance", "hypotheticalCRVBasis"]) if (raw[k] != null && (typeof raw[k] !== "string" || !raw[k].trim() || raw[k].length > 2000)) return fail("Ungültige Herkunft/Zeitraumbeschreibung.");
+  if (raw.parentId != null && (typeof raw.parentId !== "string" || !/^[0-9a-f-]{36}$/i.test(raw.parentId))) return fail("Ungültiger Elternbezug.");
+  if (raw.measurementConfidence !== undefined && !["bestaetigt","unklar"].includes(String(raw.measurementConfidence))) return fail("Ungültige Messartsicherheit.");
+  const e = raw as FibEvidence;
+  if ((e.reachedLevels ?? []).some(n => (e.missedLevels ?? []).some(m=>m<=n))) return fail("Level kann nicht erreicht und verfehlt sein.");
+  if (Object.keys(raw).some(k => k !== "provenance") && !e.provenance?.trim()) return fail("Herkunft der strukturierten Angaben erforderlich.");
+  return e;
+}
 export type FibInput = {
+  evidence?: FibEvidence;
   stopVariants?: StopVariant[];
   stockId: number;
   wave: string;
@@ -101,6 +141,7 @@ export function retracement(start: number, end: number, extreme: number) {
 }
 export function validateFibInput(raw: Record<string, unknown>): FibInput {
   const keys = [
+    "evidence",
     "stockId",
     "wave",
     "degree",
@@ -338,8 +379,12 @@ export function validateFibInput(raw: Record<string, unknown>): FibInput {
     raw.note.length > 2000
   )
     return fail("Messnotiz/Quelle erforderlich (maximal 2000 Zeichen).");
+  const evidence=validateEvidence(raw.evidence);
+  if (percent != null && evidence.measurementConfidence !== "unklar" && ((evidence.reachedLevels ?? []).some(v=>v>Number(percent)+1e-8) || (evidence.missedLevels ?? []).some(v=>v<=Number(percent)+1e-8))) return fail("Exakte Messung widerspricht den erreichten/verfehlten Levels.");
+  if (percent != null && evidence.approximatePercent != null) return fail("Exakte und ungefähre Maximalmessung nicht gleichzeitig angeben.");
   return {
     ...extra,
+    evidence,
     stockId: raw.stockId as number,
     wave: (raw.wave as string).trim(),
     degree: raw.degree as string,
@@ -384,6 +429,7 @@ export function fibStats(
   const completed = rows.filter((r) => r.status === "abgeschlossen");
   const measured = completed.filter(
     (r) =>
+      r.evidence?.measurementConfidence !== "unklar" &&
       r.percent !== null &&
       Number.isFinite(r.percent) &&
       r.percent >= 0 &&
@@ -410,6 +456,7 @@ export function fibStats(
   const max = Math.max(0, ...zones.map((z) => z.count));
   return {
     n,
+    coverage: fibCoverage(rows, measurementKind),
     measurementKind,
     unclear: rows.filter((r) => r.status === "unklar").length,
     missing: rows.filter(
@@ -528,6 +575,7 @@ export function fibCsv(rows: readonly FibObservation[]) {
     "\uFEFF" +
     [
       [
+        "Strukturierte Angaben (JSON)",
         "ID",
         "Instrument",
         "Ticker",
@@ -560,6 +608,7 @@ export function fibCsv(rows: readonly FibObservation[]) {
         "Messnotiz",
       ],
       ...rows.map((r) => [
+        JSON.stringify(r.evidence ?? {}),
         r.id,
         r.name,
         r.ticker,
@@ -595,4 +644,57 @@ export function fibCsv(rows: readonly FibObservation[]) {
       .map((row) => row.map(cell).join(";"))
       .join("\r\n")
   );
+}
+
+/** Every metric reports its own denominator and traceable exclusions. No prose parsing. */
+export function fibCoverage(rows: readonly FibObservation[], kind: "retracement" | "expansion") {
+  rows = [...rows].sort((a,b)=>a.id.localeCompare(b.id));
+  const metric = (definition: string, value: (r: FibObservation) => unknown, needsKind = false) => {
+    const included: { id: string; value: unknown }[] = [], excluded: { id: string; reason: string }[] = [];
+    for (const r of rows) {
+      if (r.status !== "abgeschlossen") { excluded.push({ id: r.id, reason: `Status ${r.status}` }); continue; }
+      if (needsKind && r.evidence?.measurementConfidence === "unklar") { excluded.push({id:r.id,reason:"Messart/Bezugsbasis ungeklärt; separat als unzugeordnetes Level erhalten"}); continue; }
+      const v = value(r);
+      if (v == null || v === "unbekannt" || (Array.isArray(v) && !v.length)) excluded.push({ id: r.id, reason: "Bestätigte strukturierte Angabe fehlt" });
+      else included.push({ id: r.id, value: v });
+    }
+    const numeric = included.map(r=>r.value).filter((v):v is number=>typeof v === "number" && Number.isFinite(v));
+    const counts = new Map<string,number>();
+    for (const r of included) {const label=JSON.stringify(r.value);counts.set(label,(counts.get(label) ?? 0)+1);}
+    return { definition, n: included.length, denominator: rows.length, included, excluded,
+      average: numeric.length ? numeric.reduce((a,b)=>a+b,0)/numeric.length : null,
+      distribution: [...counts].map(([value,count])=>({value,count,share:count/included.length*100})) };
+
+  };
+  const e = (r: FibObservation) => r.evidence ?? {};
+  const levels = [...new Set(rows.flatMap(r => [...(e(r).reachedLevels ?? []), ...(e(r).missedLevels ?? [])]))].sort((a,b)=>a-b);
+  return {
+    total: rows.length,
+    completed: rows.filter(r=>r.status === "abgeschlossen").length,
+    exact: metric("Exakte maximale Prozentmessung; nur endliche Werte. Keine Levels, Zonen oder gerundeten Schätzungen.", r => r.percent != null && Number.isFinite(r.percent) ? r.percent : null, true),
+    approximateReached: metric("Ungefähr erreichtes Referenzlevel, keine exakte Stufe und keine maximale Messung.",r=>e(r).approximateReachedLevel,true),
+    hypotheticalExitLevel: metric("Hypothetisch geplanter Ausstiegslevel, kein tatsächlicher Exit und keine maximale Wellenausdehnung.",r=>e(r).hypotheticalExitLevel),
+    hypotheticalCRVBasis: metric("Bezugsziel des hypothetischen CRV, getrennt vom maximalen Wellenextrem.",r=>e(r).hypotheticalCRVBasis),
+    approximate: metric("Gerundete maximale Prozentmessung; separat von exakten Messungen.", r=>e(r).approximatePercent, true),
+    reached: metric("Mindestens explizit erreichtes Referenzlevel; mehrere Levels bleiben ein Fall.", r=>e(r).reachedLevels, true),
+    missed: metric("Explizit verfehltes Referenzlevel; keine Zielverfehlung eines Trades.", r=>e(r).missedLevels, true),
+    reversalZone: metric("Bestätigter beobachteter Umkehrbereich; kein Mittelpunkt als Messwert.", r=>e(r).reversalZone, true),
+    targetZone: metric("Bestätigte Ziel-/Einstiegszone; getrennt von beobachteter Umkehr.", r=>e(r).targetZone, true),
+    direction: metric("Richtung der untersuchten Welle, unabhängig von Folgetrades.", r=>e(r).waveDirection),
+    period: metric("Historischer Zeitraum mit Originalgenauigkeit, unabhängig vom Erfassungsdatum.", r=>e(r).periodLabel ?? ((r.periodFrom || r.periodTo) ? [r.periodFrom,r.periodTo] : null)),
+    duration: metric("Bestätigte Wellendauer in Tagen; nicht aus ungenauen Daten erfunden.", r=>e(r).durationDays),
+    reversalDuration: metric("Bestätigte Dauer des Umkehrbereichs in Tagen.", r=>e(r).reversalDurationDays),
+    structure: metric("Struktur der untersuchten Welle; vermutete Strukturen ausdrücklich gekennzeichnet.", r=>r.structure ? {label:r.structure, confidence:e(r).structureConfidence ?? "unbekannt"} : null),
+    basis: metric(`${kind}: bestätigte Messbasis; niemals mit anderer Messart zusammenfassen.`, r=>r.measurementBasis),
+    hypotheticalCRV: metric("Ungefähres geplantes hypothetisches Chance/Risiko-Verhältnis, kein realisiertes R.", r=>e(r).hypotheticalCRV),
+    tradability: metric("Rückblickende Nutzereinschätzung zur Handelbarkeit.", r=>r.tradability),
+    hypotheticalOutcome: metric("Hypothetischer Ausgang gemäß Nutzeraussage, ohne Geldrendite.", r=>r.hypotheticalOutcome),
+    actualOutcome: metric("Bestätigter tatsächlicher qualitativer Ausgang; keine Nettoabrechnung.", r=>r.actualOutcome),
+    unassignedLevels: metric("Bestätigte Levels bei noch ungeklärter Messart; keine Zuordnung zu gesicherter Retracement-/Expansionsverteilung.", r=>e(r).measurementConfidence === "unklar" ? e(r).reachedLevels : null),
+    levelProfile: levels.map(level => {
+      const reached = rows.filter(r=>r.status === "abgeschlossen" && e(r).measurementConfidence !== "unklar" && (e(r).reachedLevels ?? []).includes(level)).map(r=>r.id);
+      const missed = rows.filter(r=>r.status === "abgeschlossen" && e(r).measurementConfidence !== "unklar" && (e(r).missedLevels ?? []).includes(level)).map(r=>r.id);
+      return {level, reached, missed, n:reached.length+missed.length, definition:"Nur explizite Angaben zu genau diesem Level; unbekannte Fälle bleiben außerhalb des Nenners."};
+    }),
+  };
 }

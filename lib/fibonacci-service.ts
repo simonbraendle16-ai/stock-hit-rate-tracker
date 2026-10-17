@@ -72,6 +72,7 @@ export async function saveFib(
     const previous = await getFib(userId, id);
     // Legacy full-replacement clients keep new metadata they do not know about.
     const extended = [
+      "evidence",
       "measurementKind",
       "measurementBasis",
       "contextId",
@@ -227,8 +228,8 @@ export async function saveFib(
         Object.entries(values).some(
           ([key, value]) =>
             key !== "contextId" &&
-            (key === "stopVariants"
-              ? !isDeepStrictEqual(existing.stopVariants ?? [], value)
+            ((key === "stopVariants" || key === "evidence")
+              ? !isDeepStrictEqual(existing[key] ?? (key === "evidence" ? {} : []), value)
               : existing[key as keyof typeof existing] !== value),
         )
       )

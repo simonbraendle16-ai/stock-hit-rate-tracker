@@ -5,9 +5,10 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { stock } from "@/lib/db/schema";
 import { eq, asc } from "drizzle-orm";
-import { loadMetricSamples } from "@/lib/research-metrics-service";
+import { loadTradeCoverage, loadMetricSamples } from "@/lib/research-metrics-service";
 import { listHistory } from "@/lib/fibonacci-history-service";
 import { listFib, saveFib } from "@/lib/fibonacci-service";
+import { fibStats } from "@/lib/fibonacci";
 import { ApiError, uuidId } from "@/lib/assistant-api";
 async function owner() {
   const session = await auth.api.getSession({ headers: await headers() });
@@ -29,13 +30,12 @@ export async function getFibonacciData(stockId?: number) {
       .where(eq(stock.userId, userId))
       .orderBy(asc(stock.name)),
   ]);
-  const [samples, histories] = await Promise.all([
-    loadMetricSamples(userId, [
-      ...new Set(observations.flatMap((r) => (r.tradeId ? [r.tradeId] : []))),
-    ]),
+  const [samples, histories, tradeCoverage] = await Promise.all([
+    loadMetricSamples(userId),
     listHistory(userId, stockId),
+    loadTradeCoverage(userId),
   ]);
-  return { observations, instruments, samples, histories };
+  return { observations, instruments, samples, histories, tradeCoverage };
 }
 export async function saveFibonacci(
   id: string,
@@ -45,11 +45,14 @@ export async function saveFibonacci(
   const userId = await owner();
   try {
     const row = await saveFib(userId, uuidId(id), input, version);
+    const reread = (await listFib(userId,row.stockId)).find(r=>r.id===row.id);
+    if (!reread) throw new Error("Rücklesen der Beobachtung fehlgeschlagen.");
+    const coverage = fibStats([reread],reread.measurementKind).coverage;
     revalidatePath("/watchlist");
     revalidatePath("/analysis");
     revalidatePath("/tracking");
     revalidatePath(`/stock/${row.stockId}`);
-    return { ok: true as const, row };
+    return { ok: true as const, row: reread, coverage };
   } catch (e) {
     if (e instanceof ApiError) return { ok: false as const, error: e.message };
     throw e;

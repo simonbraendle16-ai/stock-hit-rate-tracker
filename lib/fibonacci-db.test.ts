@@ -17,6 +17,7 @@ vi.mock("@/lib/db", () => ({
     return state.database;
   },
 }));
+vi.mock("@/lib/research-metrics-service", () => ({loadMetricSamples: async () => [], loadTradeCoverage: async () => []}));
 import * as schema from "./db/schema";
 import { saveFib, listFib, getFib } from "./fibonacci-service";
 import {
@@ -56,8 +57,8 @@ beforeAll(async () => {
   await pg.exec(`CREATE TABLE "user" (id text PRIMARY KEY);INSERT INTO "user" VALUES ('owner'),('other');
  CREATE TABLE stock(id serial PRIMARY KEY,"userId" text NOT NULL,name text NOT NULL,ticker text NOT NULL,market text NOT NULL);
  INSERT INTO stock VALUES (1,'owner','Synthetic stock','TEST','aktien'),(2,'other','Foreign','FOREIGN','krypto');
- CREATE TABLE trade(id integer PRIMARY KEY,"userId" text,"stockId" integer);
- INSERT INTO trade VALUES (10,'owner',1),(20,'other',2);
+ CREATE TABLE trade(id integer PRIMARY KEY,"userId" text,"stockId" integer,status text DEFAULT 'geplant',direction text DEFAULT 'long',"elliottWaveCount" text,"waveDegree" text,notes text,"planContext" text,"riskRewardRatio" double precision);
+ INSERT INTO trade(id,"userId","stockId") VALUES (10,'owner',1),(20,'other',2);
  CREATE TABLE assistant_api_token(id uuid DEFAULT gen_random_uuid(),"userId" text,name text DEFAULT 'Synthetic token',"createdAt" timestamp DEFAULT now(),"tokenHash" text,scopes jsonb,"revokedAt" timestamp,"lastUsedAt" timestamp);`);
   await pg.exec(
     readFileSync(
@@ -78,6 +79,7 @@ beforeAll(async () => {
     ),
   );
   await pg.exec(readFileSync(new URL("../drizzle/0051_fibonacci_two_hour.sql", import.meta.url), "utf8"));
+  await pg.exec(readFileSync(new URL("../drizzle/0056_fibonacci_evidence.sql", import.meta.url), "utf8"));
   for (const [key, value] of Object.entries(tokens))
     await pg.query(
       'INSERT INTO assistant_api_token ("userId","tokenHash",scopes) VALUES ($1,$2,$3)',
@@ -114,6 +116,20 @@ const request = (
     },
     body: body ? JSON.stringify(body) : undefined,
   });
+it("persists structured evidence, retries unchanged, keeps metadata for legacy patches and protects versions", async()=>{
+ const id=crypto.randomUUID(); const body={...input,percent:null,anchorStart:null,anchorEnd:null,extreme:null,evidence:{reachedLevels:[38.2],reversalZone:[38.2,50],hypotheticalCRV:5,provenance:"Synthetic source"}};
+ const first=await saveFib("owner",id,body); expect(first.evidence).toEqual(body.evidence);
+ expect((await saveFib("owner",id,body)).version).toBe(1);
+ const {evidence,...legacy}=body; await saveFib("owner",id,{...legacy,note:"Synthetic correction"},1);
+ expect((await getFib("owner",id)).evidence).toEqual(evidence);
+ await expect(saveFib("owner",id,body,1)).rejects.toMatchObject({status:409});
+ const data=await (await GET(request("?stockId=1&measurementKind=retracement"))).json();
+ const searched=await (await GET(request("?search=Synthetic&selection=missing&measurementKind=retracement"))).json();
+ expect(searched.total).toBe(1);expect(searched.stats).toEqual(data.stats);
+ expect(data.stats.n).toBe(0);expect(data.stats.coverage.reached.n).toBe(1);expect(data.stats.coverage.reached.included[0].id).toBe(id);
+ for(let i=0;i<2;i++)await pg.exec(readFileSync(new URL("../drizzle/0056_fibonacci_evidence.sql",import.meta.url),"utf8"));
+ expect((await getFib("owner",id)).evidence).toEqual(evidence);
+});
 describe("Fibonacci isolated PostgreSQL and HTTP contract", () => {
   it("roundtrips a descriptive historical case through retry, correction, revisions and filtered statistics", async () => {
     const id = crypto.randomUUID(), ctx = { params: Promise.resolve({ id }) };
@@ -340,7 +356,7 @@ describe("Fibonacci isolated PostgreSQL and HTTP contract", () => {
     try {
       await legacy.exec(`CREATE TABLE "user"(id text PRIMARY KEY); INSERT INTO "user" VALUES ('owner');
         CREATE TABLE stock(id integer PRIMARY KEY,"userId" text); INSERT INTO stock VALUES(1,'owner');
-        CREATE TABLE trade(id integer PRIMARY KEY,"userId" text,"stockId" integer);`);
+        CREATE TABLE trade(id integer PRIMARY KEY,"userId" text,"stockId" integer,status text DEFAULT 'geplant',direction text DEFAULT 'long',"elliottWaveCount" text,"waveDegree" text,notes text,"planContext" text,"riskRewardRatio" double precision);`);
       const migration = (name: string) => readFileSync(new URL('../drizzle/' + name, import.meta.url), 'utf8');
       await legacy.exec(migration('0048_fibonacci_observations.sql'));
       const id = crypto.randomUUID();

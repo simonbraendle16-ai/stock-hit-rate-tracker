@@ -30,6 +30,7 @@ export function selectResearchRows(
         row.sourceKey,
         row.structure,
         row.measurementBasis,
+        JSON.stringify(row.evidence ?? {}),
       ]
         .filter(Boolean)
         .join(" "),

@@ -1,5 +1,7 @@
-import { loadMetricSamples } from "@/lib/research-metrics-service";
+import { loadTradeCoverage, loadMetricSamples } from "@/lib/research-metrics-service";
 import { researchMetrics } from "@/lib/research-metrics";
+import { tradeResearchCoverage } from "@/lib/trade-research-coverage";
+import { selectResearchRows } from "@/lib/fibonacci-workspace";
 import { fibQuery } from "@/lib/fibonacci-query";
 import { NextRequest, NextResponse } from "next/server";
 import {
@@ -21,24 +23,23 @@ export async function GET(req: NextRequest) {
   try {
     const userId = await requireApiScope(req, "trades:read"),
       p = req.nextUrl.searchParams;
-    const { filters, limit, offset } = fibQuery(p);
-    const items = filterFib(await listFib(userId, filters.stockId), filters);
+    const { filters, limit, offset, search, selection } = fibQuery(p);
+    const items = selectResearchRows(await listFib(userId, filters.stockId), filters, search, selection);
+    const [allSamples, tradeCoverage] = await Promise.all([loadMetricSamples(userId), loadTradeCoverage(userId)]);
     return NextResponse.json({
+      tradeResearchCoverage: tradeResearchCoverage(tradeCoverage.filter(s=>!filters.stockId || s.stockId===filters.stockId)),
+      tradeCoverage: tradeCoverage.filter(s => !filters.stockId || s.stockId === filters.stockId),
+      allTradeMetrics: researchMetrics(allSamples.filter(s => !filters.stockId || s.stockId === filters.stockId)),
       items: items.slice(offset, offset + limit),
       total: items.length,
       nextOffset: offset + limit < items.length ? offset + limit : null,
-      metrics: researchMetrics(
-        await loadMetricSamples(userId, [
-          ...new Set(
-            items.flatMap((r) =>
-              r.status === "abgeschlossen" && r.tradeId ? [r.tradeId] : [],
-            ),
-          ),
-        ]),
-      ),
+      allTradeSamples: allSamples.filter(s => !filters.stockId || s.stockId === filters.stockId),
+      metrics: researchMetrics(allSamples.filter(s => items.some(r=>r.status === "abgeschlossen" && r.tradeId === s.id))),
       basis: {
-        filters,
-        waves: "Abgeschlossene gültige Messungen je Kontext und Messart",
+        filters, search, selection,
+        dates: "from/to filtern observedOn (Erfassungsdatum). Historische Zeiträume stehen separat im Datensatz und sind über search auffindbar.",
+        allTrades: "Alle eingetragenen Trades qualitativ, Geldkennzahlen nur abgeschlossene Trades; nur Instrumentfilter; Wellenfilter gelten hier nicht. Fehlende Abrechnung blockiert ausschließlich Geldkennzahlen.",
+        waves: "Alle Beobachtungen; Kennzahlen jeweils nach Status und vorhandener strukturierter Angabe je Kontext und Messart",
         trades: "Eindeutig verknüpfte abgeschlossene Trades, jeweils einmal",
       },
       stats: fibStats(items, filters.measurementKind),

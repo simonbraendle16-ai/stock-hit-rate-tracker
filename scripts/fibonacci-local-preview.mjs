@@ -36,6 +36,7 @@ await migrateFibonacci({
   query: async (sql, args) =>
     args ? database.query(sql, args) : (await database.exec(sql)).at(-1),
 })
+await database.exec(readFileSync(new URL('../drizzle/0056_fibonacci_evidence.sql', import.meta.url),'utf8'));
 const owner = 'fibonacci-local-qa',
   email = 'fibonacci-qa@example.invalid',
   password = 'Local-Fibonacci-QA-2026!'
@@ -58,7 +59,7 @@ if (!process.argv.includes('--empty')) {
   ]
   for (let i = 0; i < levels.length; i++)
     await database.query(
-      'INSERT INTO fibonacci_observation(id,"contextId","userId","stockId",wave,degree,timeframe,"observedOn",status,percent,note) VALUES ($1,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+      'INSERT INTO fibonacci_observation(id,"contextId","userId","stockId",wave,degree,timeframe,"observedOn",status,percent,note,evidence) VALUES ($1,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
       [
         randomUUID(),
         owner,
@@ -68,10 +69,11 @@ if (!process.argv.includes('--empty')) {
         i % 5 ? '1d' : '1w',
         `2026-09-${String(i + 1).padStart(2, '0')}`,
         i === 0 ? 'laufend' : i === 1 ? 'ungueltig' : 'abgeschlossen',
-        levels[i],
+        i % 3 === 0 ? levels[i] : null,
         'Synthetischer lokaler Prüffall ' +
           (i + 1) +
           ' – keine echten Marktdaten.',
+        JSON.stringify({reachedLevels:i%3===1?[38.2]:[],missedLevels:i%3===1?[50]:[],reversalZone:i%3===2?[38.2,50]:null,hypotheticalCRV:i%2?5:null,provenance:'Synthetische lokale Erfassung'}),
       ],
     )
 }

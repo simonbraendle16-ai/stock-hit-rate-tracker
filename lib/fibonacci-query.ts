@@ -18,7 +18,7 @@ export function fibQuery(p: URLSearchParams, context = false) {
     ...dimensions,
     "limit",
     "offset",
-    ...(context ? ["instrument"] : []),
+    ...(context ? ["instrument"] : ["search","selection"]),
   ];
   if ([...p.keys()].some((k) => !allowed.includes(k)))
     throw new ApiError(400, "Unbekannter Filter.");
@@ -85,7 +85,12 @@ export function fibQuery(p: URLSearchParams, context = false) {
         k === "stockId" ? integer(k, 0, 1, 2147483647) : p.get(k)!,
       ]),
   ) as FibFilters;
+  const search = p.get("search") ?? "";
+  const selection = p.get("selection") ?? "all";
+  if (search.length > 2000 || !["all","missing","running","completed"].includes(selection)) throw new ApiError(400,"Ungültige Suche/Arbeitsauswahl.");
   return {
+    search,
+    selection: selection as import("@/lib/fibonacci-workspace").ResearchSelection,
     filters,
     limit: integer("limit", 100, 1, 500),
     offset: integer("offset", 0, 0, 1000000),

@@ -61,6 +61,9 @@ import {
   type HistorySummary,
 } from "@/components/fibonacci-history-panel";
 import { StopVariantsEditor } from "@/components/fibonacci-stop-variants";
+import { tradeResearchCoverage, type TradeResearchRow } from "@/lib/trade-research-coverage";
+import { EvidenceEditor } from "@/components/fibonacci-evidence";
+import type { FibEvidence } from "@/lib/fibonacci";
 import { cn } from "@/lib/utils";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { FibonacciObservationList } from "@/components/fibonacci-observation-list";
@@ -73,14 +76,15 @@ import {
 } from "@/lib/fibonacci-workspace";
 type Instrument = { id: number; name: string; ticker: string; market: string };
 type Props = {
+  tradeCoverage?: TradeResearchRow[];
   observations: FibObservation[];
   instruments: Instrument[];
   stockId?: number;
   samples?: MetricSample[];
   histories?: HistorySummary[];
 };
-const fmt = (n: number | null) =>
-  n === null
+const fmt = (n: number | null | undefined) =>
+  n == null
     ? "Nicht berechenbar"
     : n.toLocaleString("de-DE", { maximumFractionDigits: 1 });
 const marketNames: Record<string, string> = {
@@ -139,6 +143,7 @@ export function FibonacciPanel({
   stockId,
   samples = [],
   histories = [],
+  tradeCoverage = [],
 }: Props) {
   const searchId = useId();
   const [filters, setFilters] = useState<FibFilters>({
@@ -196,7 +201,7 @@ export function FibonacciPanel({
         filters.measurementKind,
       ),
     }))
-    .filter((g) => g.stats.n > 0)
+    .filter((g) => g.stats.coverage.total > 0)
     .sort((a, b) => b.stats.n - a.stats.n);
   const maxCount = Math.max(1, ...stats.zones.map((z) => z.count));
   const currentPage = Math.min(
@@ -287,7 +292,7 @@ export function FibonacciPanel({
             "In der aktuellen Auswahl",
           ],
           [
-            "Auswertbare Messungen",
+            "Exakte Prozentmessungen",
             String(stats.n),
             `${stats.running} laufend · ${stats.unclear} unklar · ${stats.invalid} ungültig`,
           ],
@@ -436,12 +441,12 @@ export function FibonacciPanel({
                   )}
                 />
                 <DateFilter
-                  label="Von"
+                  label="Erfasst von"
                   value={filters.from || ""}
                   onChange={(v) => set("from", v)}
                 />
                 <DateFilter
-                  label="Bis"
+                  label="Erfasst bis"
                   value={filters.to || ""}
                   onChange={(v) => set("to", v)}
                 />
@@ -476,6 +481,14 @@ export function FibonacciPanel({
         <p>{observations.length} Beobachtungen insgesamt</p>
       </div>
 
+      <Card><CardHeader><CardTitle>Abdeckung der Beobachtungen</CardTitle><CardDescription>{observations.length} insgesamt gespeichert · {stats.coverage.total} im aktuellen Filter · {stats.coverage.completed} abgeschlossen. Alle folgenden Kennzahlen verwenden diese Filter und ihre eigene Datenbasis.</CardDescription></CardHeader><CardContent className="flex flex-col gap-3">
+      {Object.entries(stats.coverage).filter(([,v])=>typeof v === "object" && v !== null && "definition" in v).map(([key,raw])=>{
+        const m=raw as typeof stats.coverage.exact;
+        const labels:Record<string,string>={approximateReached:"Ungefähr erreichte Levels",hypotheticalExitLevel:"Hypothetischer Ausstiegslevel",hypotheticalCRVBasis:"CRV-Bezugsziel",unassignedLevels:"Levels mit ungeklärter Messart",exact:"Exakte Prozentmessung",approximate:"Ungefähre Prozentmessung",reached:"Erreichte Levels",missed:"Verfehlte Levels",reversalZone:"Umkehrzone",targetZone:"Zielzone",direction:"Wellenrichtung",period:"Zeitraum",duration:"Wellendauer",reversalDuration:"Umkehrdauer",structure:"Struktur",basis:"Messbasis",hypotheticalCRV:"Hypothetisches CRV",tradability:"Handelbarkeit",hypotheticalOutcome:"Hypothetischer Ausgang",actualOutcome:"Tatsächlicher qualitativer Ausgang"};
+        return <details key={key}><summary>{labels[key] ?? key}: {m.n} von {m.denominator}{m.average != null ? ` · Durchschnitt ${fmt(m.average)}` : ""}</summary><p className="text-sm text-muted-foreground">{m.definition}</p>{m.distribution.map(d=><p className="text-xs" key={d.value}>{d.value}: {d.count} Fälle · {fmt(d.share)} % von {m.n}</p>)}{m.included.map(r=><p className="break-words text-xs" key={r.id}>{r.id}: {JSON.stringify(r.value)}</p>)}{m.excluded.map(r=><p className="break-words text-xs text-muted-foreground" key={r.id}>{r.id}: {r.reason}</p>)}</details>;
+      })}
+      {stats.coverage.levelProfile.map(l=><p className="text-sm" key={l.level}>{l.level} %: {l.reached.length} erreicht · {l.missed.length} verfehlt · n={l.n}. Nur explizite Angaben zu diesem Level.</p>)}
+      </CardContent></Card>
       <Tabs
         value={tab}
         onValueChange={(value) => setTab(String(value))}
@@ -634,7 +647,7 @@ export function FibonacciPanel({
                 </h3>
                 <p className="max-w-md text-sm text-muted-foreground">
                   {stats.missing
-                    ? `${stats.missing} abgeschlossene Beobachtungen haben noch keinen exakten Messwert. Ergänze einen tatsächlich gemessenen Wert im Protokoll.`
+                    ? `${stats.missing} abgeschlossene Beobachtungen haben noch keinen exakten Messwert. Levels, Zonen und qualitative Angaben werden unabhängig davon in der Abdeckung ausgewertet.`
                     : filtered.length
                       ? "Laufende, unklare und ungültige Wellen bleiben im Protokoll. Die Verteilung verwendet nur abgeschlossene gültige Messungen."
                       : "Keine Beobachtung passt zur Auswahl. Passe die Filter an oder erfasse einen neuen historischen Fall."}
@@ -860,7 +873,7 @@ export function FibonacciPanel({
                               <td className="font-mono">
                                 {s.modes.length > 1
                                   ? "Gleichstand"
-                                  : fmt(s.modes[0]) + " %"}
+                                  : percent(s.modes[0])}
                               </td>
                             </tr>
                           ))}
@@ -960,6 +973,12 @@ export function FibonacciPanel({
             Kosten-/R-Grundlagen bleiben ausgeschlossen. Hypothetische Angaben
             stehen getrennt unter „Strukturen & Stops“.
           </p>
+      <Card><CardHeader><CardTitle>Alle eingetragenen Trades</CardTitle><CardDescription>Nur der Instrumentfilter gilt hier. Wellen-, Messart- und Erfassungsdatumsfilter gelten ausschließlich für Beobachtungen. Geplante und aktive Trades bleiben qualitativ auswertbar.</CardDescription></CardHeader><CardContent className="flex flex-col gap-3">
+      {Object.entries(tradeResearchCoverage(tradeCoverage.filter(t=>!filters.stockId || t.stockId===filters.stockId))).filter(([,v])=>typeof v === "object").map(([key,raw])=>{const m=raw as ReturnType<typeof tradeResearchCoverage>["wave"];const labels:Record<string,string>={actualOutcome:"Tatsächlicher qualitativer Abschluss",status:"Status",wave:"Count/erwartete Welle",degree:"Wellengrad",direction:"Handelsrichtung",plan:"Plankontext",notes:"Qualitative Notiz",currentCRV:"Aktuelles Plan-CRV"};return <details key={key}><summary>{labels[key]}: {m.n} von {m.denominator}</summary><p className="text-sm text-muted-foreground">{m.definition}</p><p className="text-xs">Enthalten: {m.included.map(r=>r.id).join(", ") || "keine"}</p>{m.excluded.map(r=><p className="text-xs" key={r.id}>Trade {r.id}: {r.reason}</p>)}</details>;})}
+      {tradeCoverage.filter(t=>!filters.stockId || t.stockId === filters.stockId).map(t=><details key={t.id}><summary>Trade {t.id} · {t.status} · {t.direction}</summary><p className="text-sm">Count: {t.wave || "unbekannt"} · Grad: {t.degree || "unbekannt"} · aktuelles Plan-CRV: {fmt(t.plannedCRV)}</p><p className="text-sm">{t.planContext ? [t.planContext.expectedMove,t.planContext.entryTrigger,t.planContext.stopManagement,t.planContext.targetManagement].filter(Boolean).join(" · ") : "Kein strukturierter Plankontext"}</p><p className="text-sm">{t.notes || "Keine Notiz"}</p><p className="text-xs text-muted-foreground">Aktuelles Plan-CRV ist kein ursprünglicher Eröffnungsplan und kein realisiertes R. Fehlender Abschluss betrifft nur Ergebniskennzahlen.</p></details>)}
+      <ResearchMetricSummary metrics={researchMetrics(samples.filter(t=>!filters.stockId || t.stockId === filters.stockId))}/>
+      </CardContent></Card>
+          <p>Separat: eindeutig mit gefilterten Wellen verknüpfte Trades</p>
           <ResearchMetricSummary metrics={metrics} />
         </TabsContent>
         <TabsContent value="history" className="min-w-0">
@@ -1070,6 +1089,7 @@ function FibForm({
     [pending, startTransition] = useTransition(),
     [error, setError] = useState(""),
     [id] = useState(() => existing?.id || crypto.randomUUID());
+  const [evidence, setEvidence] = useState<FibEvidence>(existing?.evidence ?? {});
   const [stopVariants, setStopVariants] = useState(
     existing?.stopVariants ?? [],
   );
@@ -1143,6 +1163,7 @@ function FibForm({
             extreme: anchored ? Number(form.extreme) : null,
             note: form.note,
             stopVariants,
+            evidence,
             measurementKind: form.measurementKind,
             measurementBasis: form.measurementBasis || null,
             structure: form.structure || null,
@@ -1166,7 +1187,7 @@ function FibForm({
           router.refresh();
           return;
         }
-        toast.success("Beobachtung gespeichert und zurückgelesen.");
+        toast.success(result.coverage.completed ? "Gespeichert, zurückgelesen und den passenden Kennzahlen zugeordnet." : "Gespeichert und zurückgelesen; Status schließt den Fall derzeit aus Abschlusskennzahlen aus.");
         router.refresh();
         close();
       } catch {
@@ -1461,6 +1482,7 @@ function FibForm({
                   ),
                 )}
               </FieldGroup>
+              <EvidenceEditor value={evidence} onChange={setEvidence} />
               <StopVariantsEditor
                 value={stopVariants}
                 onChange={setStopVariants}

@@ -27,6 +27,15 @@ function Details({ row }: { row: FibObservation }) {
           {[
             ["Quelle", row.sourceRef || "In der Messnotiz dokumentiert"],
             ["Bezugsbasis", row.measurementBasis],
+            ["Erreichte Levels", row.evidence?.reachedLevels?.join(" / ")],
+            ["Verfehlte Levels", row.evidence?.missedLevels?.join(" / ")],
+            ["Umkehrzone", row.evidence?.reversalZone?.join(" bis ")],
+            ["Zielzone", row.evidence?.targetZone?.join(" bis ")],
+            ["Wellenrichtung", row.evidence?.waveDirection],
+            ["Ungefähre Messung %", row.evidence?.approximatePercent != null ? String(row.evidence.approximatePercent) : null],
+            ["Hypothetisches CRV", row.evidence?.hypotheticalCRV != null ? `1:${row.evidence.hypotheticalCRV}` : null],
+            ["Historischer Zeitraum", row.evidence?.periodLabel],
+            ["Herkunft strukturierter Angaben", row.evidence?.provenance],
             ["Struktur", row.structure],
             [
               "Referenzanker",

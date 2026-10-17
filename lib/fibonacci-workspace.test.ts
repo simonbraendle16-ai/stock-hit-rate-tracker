@@ -93,3 +93,5 @@ describe("research workspace population", () => {
     expect(fibStats(orderResearchRows(rows, "deepest"))).toEqual(before);
   });
 });
+
+it("renders the absent exact modal zone as missing for a descriptive-only instrument",()=>{const s=fibStats([{id:"synthetic",version:1,stockId:1,ticker:"TEST",name:"Synthetic",market:"aktien",wave:"B",degree:"unbekannt",timeframe:"1d",observedOn:"2026-01-01",status:"abgeschlossen",percent:null,anchorStart:null,anchorEnd:null,extreme:null,note:"Synthetic source",evidence:{reachedLevels:[38.2],provenance:"Synthetic"}}]);expect(s.coverage.total).toBe(1);expect(s.n).toBe(0);expect(formatResearchPercent(s.modes[0])).toBe("—");});

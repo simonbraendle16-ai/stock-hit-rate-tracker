@@ -34,3 +34,9 @@ export async function loadMetricSamples(userId: string, ids?: number[]) {
     map.set(e.tradeId, [...(map.get(e.tradeId) ?? []), e]);
   return metricSamples(rows, map);
 }
+
+export async function loadTradeCoverage(userId: string) {
+  return db.select({result:trade.result,id:trade.id, stockId:trade.stockId, status:trade.status, direction:trade.direction,
+    wave:trade.elliottWaveCount, degree:trade.waveDegree, notes:trade.notes, planContext:trade.planContext,
+    plannedCRV:trade.riskRewardRatio}).from(trade).where(eq(trade.userId,userId));
+}

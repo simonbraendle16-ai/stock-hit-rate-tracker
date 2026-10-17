@@ -1124,6 +1124,7 @@ export const fibonacciObservation = pgTable('fibonacci_observation', {
  observedOn:text('observedOn').notNull(),status:text('status').$type<'laufend'|'abgeschlossen'|'unklar'|'ungueltig'>().notNull(),
  percent:doublePrecision('percent'),anchorStart:doublePrecision('anchorStart'),anchorEnd:doublePrecision('anchorEnd'),extreme:doublePrecision('extreme'),
  measurementKind:text('measurementKind').$type<'retracement'|'expansion'>().notNull().default('retracement'),
+ evidence:jsonb('evidence').$type<import('@/lib/fibonacci').FibEvidence>().notNull().default({}),
  stopVariants:jsonb('stopVariants').$type<import('@/lib/fibonacci').StopVariant[]>().notNull().default([]),
  tradeId:integer('tradeId'),historyId:uuid('historyId'),
  measurementBasis:text('measurementBasis'),contextId:uuid('contextId').notNull(),sourceKey:text('sourceKey'),sourceRef:text('sourceRef'),
