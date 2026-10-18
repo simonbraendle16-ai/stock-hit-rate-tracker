@@ -1,4 +1,5 @@
 "use client";
+import { InstrumentPicker } from "@/components/instrument-picker";
 import { formatWaveDegree } from "@/lib/wave-degree-labels";
 import { useState, useTransition, useId } from "react";
 import { useRouter } from "next/navigation";
@@ -188,15 +189,10 @@ export function CategoricalFibForm({
           <FieldSet>
             <FieldLegend>1 · Kerndaten der Welle</FieldLegend>
             <FieldGroup className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <Choice
-                label="Instrument"
+              <InstrumentPicker
+                instruments={instruments}
                 value={form.stockId}
-                options={[
-                  ["none", "Bitte auswählen"],
-                  ...instruments.map(
-                    (i) => [String(i.id), `${i.ticker} · ${i.name}`] as const,
-                  ),
-                ]}
+                disabled={pending}
                 onChange={(v) => {
                   setForm((p) => ({ ...p, stockId: v, tradeId: "none" }));
                 }}
