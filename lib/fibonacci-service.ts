@@ -95,10 +95,16 @@ export async function saveFib(
     if (raw.evidence === null && previous.evidence?.targetZoneResidence) {
       throw new ApiError(422, "Gespeicherte Zielzonen-Verweildauer erhalten oder mit evidence.targetZoneResidence: null ausdrücklich entfernen; evidence: null würde sie unbeabsichtigt löschen.");
     }
-    // Older evidence writers must preserve the new nested extension too.
-    if (raw.evidence && typeof raw.evidence === "object" && !Array.isArray(raw.evidence) &&
-        !("targetZoneResidence" in raw.evidence) && previous.evidence?.targetZoneResidence) {
-      merged.evidence = {...raw.evidence, targetZoneResidence: previous.evidence.targetZoneResidence};
+    // Preserve extensions omitted by older full-replacement clients; null explicitly clears a key.
+    const newKeys = ["targetZoneResidence", "catalogueVersion", "structureCode", "entryZone", "targetContact", "expectationTiming", "reversalLocation", "durations"] as const;
+    if (raw.evidence === null && newKeys.some(key => previous.evidence?.[key] != null)) {
+      throw new ApiError(422, "Strukturierte Angaben ausdrücklich einzeln löschen; evidence:null würde gespeicherte Daten verlieren.");
+    }
+    if (raw.evidence && typeof raw.evidence === "object" && !Array.isArray(raw.evidence)) {
+      const next = (previous.evidence?.catalogueVersion === 1 ? {...previous.evidence,...raw.evidence} : {...raw.evidence}) as Record<string,unknown>;
+      for (const key of newKeys) if (!(key in next) && previous.evidence?.[key] !== undefined) next[key] = previous.evidence[key];
+      if (next.durations && typeof next.durations === "object" && !Array.isArray(next.durations)) next.durations = {...previous.evidence?.durations,...next.durations};
+      merged.evidence = next;
     }
     if (merged.contextId !== previous.contextId)
       throw new ApiError(
@@ -107,6 +113,10 @@ export async function saveFib(
       );
   }
   const validated = fibValues(merged);
+  if (version === undefined && (validated.timeframe === "unbekannt" || !["long","short"].includes(validated.evidence?.waveDirection ?? ""))) {
+    const existing = await db.select({id:observation.id}).from(observation).where(and(eq(observation.id,id),eq(observation.userId,userId)));
+    if (!existing.length) throw new ApiError(422,"Für neue Beobachtungen Richtung und Timeframe auswählen.");
+  }
   const values = { ...validated, contextId: validated.contextId ?? id };
   const [owned] = await db
     .select({ id: stock.id })

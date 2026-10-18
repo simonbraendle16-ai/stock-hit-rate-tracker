@@ -81,7 +81,7 @@ describe("Fibonacci measurement and descriptive statistics", () => {
       { percent: 501 },
       { observedOn: "2026-02-30" },
       { observedOn: "2999-01-01" },
-      { note: " " },
+      { note: "x".repeat(2001) },
       { wave: " " },
       { degree: "free" },
       { timeframe: "anything" },

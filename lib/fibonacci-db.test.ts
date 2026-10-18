@@ -46,12 +46,63 @@ const input = {
   anchorEnd: 200,
   extreme: 150,
   note: "Synthetic source",
+  evidence: {waveDirection:"short",provenance:"Synthetic fixture"},
 };
 const tokens = {
   owner: "sat_" + "a".repeat(43),
   other: "sat_" + "b".repeat(43),
   read: "sat_" + "c".repeat(43),
 };
+
+it("roundtrips a categorical C target miss without note or expansion basis and preserves new fields on older PATCH", async()=>{
+  const id=crypto.randomUUID(),ctx={params:Promise.resolve({id})};
+  const body={...input,wave:"C",percent:null,anchorStart:null,anchorEnd:null,extreme:null,note:"",measurementKind:"expansion",evidence:{catalogueVersion:1,waveDirection:"short",structureCode:"abc",targetZone:[123.6,138.2],entryZone:[138.2,161.8],targetContact:"not_reached",reversalLocation:"at_level",reversalZone:[100,100],expectationTiming:"retrospective",provenance:"Synthetic categorical API test"}};
+  for(let i=0;i<2;i++)expect((await POST(request("",tokens.owner,"POST",body,{"Idempotency-Key":id}))).status).toBe(201);
+  const first=await (await detailGET(request("/"+id),ctx)).json();
+  expect(first).toMatchObject({version:1,percent:null,note:"",measurementBasis:null,evidence:body.evidence});
+  const list=await (await GET(request("?measurementKind=expansion&wave=C&timeframe=1d&degree=Minor"))).json();
+  expect(list.stats.categorical.targets[0]).toMatchObject({n:1,miss:[id],hit:[]});
+  expect(list.stats.categorical.levels.find((v:any)=>v.level===100).reached).toEqual([id]);
+  const oldClient={...body,evidence:{provenance:"Synthetic old-client edit",waveDirection:"short"}};
+  expect((await PATCH(request("/"+id,tokens.owner,"PATCH",oldClient,{"X-Expected-Version":"1"}),ctx)).status).toBe(200);
+  const reread=await getFib("owner",id);
+  expect(reread.evidence).toMatchObject({...body.evidence,provenance:"Synthetic old-client edit"});
+  expect((await PATCH(request("/"+id,tokens.owner,"PATCH",{...body,evidence:null},{"X-Expected-Version":"2"}),ctx)).status).toBe(422);
+  expect((await getFib("owner",id)).version).toBe(2);
+});
+
+it("requires direction and timeframe for new API observations and permits incomplete legacy corrections",async()=>{
+  for(const patch of [{timeframe:"unbekannt"},{evidence:{provenance:"Synthetic missing direction"}}]) {
+    const result=await POST(request("",tokens.owner,"POST",{...input,...patch},{"Idempotency-Key":crypto.randomUUID()}));
+    expect(result.status).toBe(422);
+  }
+  const id=crypto.randomUUID();
+  await pg.query('INSERT INTO fibonacci_observation(id,"contextId","userId","stockId",wave,degree,timeframe,"observedOn",status,note,evidence) VALUES ($1,$1,\'owner\',1,\'B\',\'unbekannt\',\'unbekannt\',\'2026-01-01\',\'abgeschlossen\',\'\',\'{}\')',[id]);
+  const old=await getFib("owner",id);
+  const {userId:_,createdAt:__,updatedAt:___,version:____,id:_____,...body}=old as any;
+  const corrected=await saveFib("owner",id,{...body,note:"Synthetic legacy correction"},1);
+  expect(corrected).toMatchObject({timeframe:"unbekannt",version:2});
+});
+
+it("preserves independent duration classes and historical zone snapshots through versioned PATCH",async()=>{
+  const id=crypto.randomUUID();
+  const residence={bucket:"h4_12",timeBasis:"calendar",convention:"first_visit",zone:[100,138.2]};
+  const body={...input,percent:null,anchorStart:null,anchorEnd:null,extreme:null,evidence:{catalogueVersion:1,waveDirection:"short",provenance:"Synthetic duration",targetZone:[100,138.2],durations:{residence,wave:{bucket:"d3_7",timeBasis:"calendar",convention:"whole_wave"}}}};
+  await saveFib("owner",id,body);
+  const older={...body,evidence:{waveDirection:"short",provenance:"Synthetic older duration writer",targetZone:[138.2,161.8],durations:{wave:{bucket:"d7_30",timeBasis:"calendar",convention:"whole_wave"}}}};
+  await saveFib("owner",id,older,1);
+  const saved=await getFib("owner",id);expect(saved.evidence.durations?.residence).toEqual(residence);
+  const stats=(await (await GET(request("?measurementKind=retracement"))).json()).stats;
+  expect(stats.categorical.durations.groups.find((g:any)=>g.type==="residence").zone).toEqual([100,138.2]);
+});
+
+it("applies the optional-note migration twice without changing any observation or revision",async()=>{
+  const id=crypto.randomUUID();await saveFib("owner",id,input);
+  const fingerprint=async()=>({observations:(await pg.query('SELECT * FROM fibonacci_observation ORDER BY id')).rows,revisions:(await pg.query('SELECT * FROM fibonacci_revision ORDER BY "observationId",version')).rows});
+  const before=await fingerprint();
+  for(let i=0;i<2;i++)await pg.exec(readFileSync(new URL("../drizzle/0057_fibonacci_categorical_form.sql",import.meta.url),"utf8"));
+  expect(await fingerprint()).toEqual(before);
+});
 beforeAll(async () => {
   pg = new PGlite();
   state.database = drizzle(pg, { schema });
@@ -81,6 +132,7 @@ beforeAll(async () => {
   );
   await pg.exec(readFileSync(new URL("../drizzle/0051_fibonacci_two_hour.sql", import.meta.url), "utf8"));
   await pg.exec(readFileSync(new URL("../drizzle/0056_fibonacci_evidence.sql", import.meta.url), "utf8"));
+  await pg.exec(readFileSync(new URL("../drizzle/0057_fibonacci_categorical_form.sql", import.meta.url), "utf8"));
   for (const [key, value] of Object.entries(tokens))
     await pg.query(
       'INSERT INTO assistant_api_token ("userId","tokenHash",scopes) VALUES ($1,$2,$3)',
@@ -118,7 +170,7 @@ const request = (
     body: body ? JSON.stringify(body) : undefined,
   });
 it("persists structured evidence, retries unchanged, keeps metadata for legacy patches and protects versions", async()=>{
- const id=crypto.randomUUID(); const body={...input,percent:null,anchorStart:null,anchorEnd:null,extreme:null,evidence:{reachedLevels:[38.2],reversalZone:[38.2,50],hypotheticalCRV:5,provenance:"Synthetic source"}};
+ const id=crypto.randomUUID(); const body={...input,percent:null,anchorStart:null,anchorEnd:null,extreme:null,evidence:{waveDirection:"short",reachedLevels:[38.2],reversalZone:[38.2,50],hypotheticalCRV:5,provenance:"Synthetic source"}};
  const first=await saveFib("owner",id,body); expect(first.evidence).toEqual(body.evidence);
  expect((await saveFib("owner",id,body)).version).toBe(1);
  const {evidence,...legacy}=body; await saveFib("owner",id,{...legacy,note:"Synthetic correction"},1);
@@ -134,7 +186,7 @@ it("persists structured evidence, retries unchanged, keeps metadata for legacy p
 it("roundtrips residence through HTTP, retry, revision and an older nested evidence writer", async () => {
  const id=crypto.randomUUID(), ctx={params:Promise.resolve({id})};
  const residence={kind:"upper_bound",upper:1,upperInclusive:false,touchAndGo:true,unit:"day",timeBasis:"unknown",zone:[61.8,88.7],measurementConvention:null,originalText:"weniger als einen Tag"};
- const evidence={provenance:"Synthetic isolated residence",reversalDurationDays:2,targetZone:[61.8,88.7],targetZoneResidence:residence};
+ const evidence={waveDirection:"short",provenance:"Synthetic isolated residence",reversalDurationDays:2,targetZone:[61.8,88.7],targetZoneResidence:residence};
  const body={...input,percent:null,anchorStart:null,anchorEnd:null,extreme:null,evidence};
  expect((await POST(request("",tokens.owner,"POST",body,{"Idempotency-Key":id}))).status).toBe(201);
  expect((await POST(request("",tokens.owner,"POST",body,{"Idempotency-Key":id}))).status).toBe(201);
@@ -174,7 +226,7 @@ it("roundtrips residence through HTTP, retry, revision and an older nested evide
 describe("Fibonacci isolated PostgreSQL and HTTP contract", () => {
   it("still accepts a legacy evidence clear when no residence is stored", async () => {
     const id=crypto.randomUUID(),ctx={params:Promise.resolve({id})};
-    const body={...input,evidence:{provenance:"Synthetic",durationDays:2}};
+    const body={...input,evidence:{waveDirection:"short",provenance:"Synthetic",durationDays:2}};
     await saveFib("owner",id,body);
     const result=await PATCH(request("/"+id,tokens.owner,"PATCH",{...body,evidence:null},{"X-Expected-Version":"1"}),ctx);
     expect(result.status).toBe(200);

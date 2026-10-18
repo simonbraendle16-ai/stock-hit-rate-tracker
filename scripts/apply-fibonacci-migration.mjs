@@ -25,7 +25,7 @@ export async function migrateFibonacci(client) {
         'utf8',
       ),
     )
-    for (const file of ['0049_fibonacci_research.sql','0050_fibonacci_history.sql','0051_fibonacci_two_hour.sql']) await client.query(readFileSync(new URL('../drizzle/'+file,import.meta.url),'utf8'))
+    for (const file of ['0049_fibonacci_research.sql','0050_fibonacci_history.sql','0051_fibonacci_two_hour.sql','0057_fibonacci_categorical_form.sql']) await client.query(readFileSync(new URL('../drizzle/'+file,import.meta.url),'utf8'))
     const after = await fingerprint()
     if (JSON.stringify(before) !== JSON.stringify(after))
       throw new Error('Historical data changed')
@@ -34,7 +34,7 @@ export async function migrateFibonacci(client) {
     )
     if (rows[0].n !== 32) throw new Error('Incomplete Fibonacci schema')
     await client.query('COMMIT')
-    return { migration: '0048-0051', historyUnchanged: true, columns: rows[0].n }
+    return { migration: '0048-0051+0057', historyUnchanged: true, columns: rows[0].n }
   } catch (e) {
     await client.query('ROLLBACK')
     throw e

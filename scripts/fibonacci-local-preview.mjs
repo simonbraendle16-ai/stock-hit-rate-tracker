@@ -9,6 +9,8 @@ import { spawn } from 'node:child_process'
 import { hashPassword } from 'better-auth/crypto'
 import { randomUUID } from 'node:crypto'
 import { migrateFibonacci } from './apply-fibonacci-migration.mjs'
+const qaPort = Number(process.env.FIBONACCI_QA_PORT ?? 3018), qaDbPort = Number(process.env.FIBONACCI_QA_DB_PORT ?? 5548);
+if (![qaPort,qaDbPort].every(p=>Number.isInteger(p)&&p>1024&&p<65536)) throw Error('Invalid QA ports');
 const database = await PGlite.create(),
   dialect = new PgDialect()
 for (const table of Object.values(schema)) {
@@ -37,6 +39,7 @@ await migrateFibonacci({
     args ? database.query(sql, args) : (await database.exec(sql)).at(-1),
 })
 await database.exec(readFileSync(new URL('../drizzle/0056_fibonacci_evidence.sql', import.meta.url),'utf8'));
+await database.exec(readFileSync(new URL('../drizzle/0057_fibonacci_categorical_form.sql', import.meta.url),'utf8'));
 const owner = 'fibonacci-local-qa',
   email = 'fibonacci-qa@example.invalid',
   password = 'Local-Fibonacci-QA-2026!'
@@ -84,20 +87,20 @@ if (process.argv.includes('--block-a')) {
 const server = new PGLiteSocketServer({
   db: database,
   host: '127.0.0.1',
-  port: 5548,
+  port: qaDbPort,
   maxConnections: 20,
 })
 await server.start()
 const env = {
   ...process.env,
-  DATABASE_URL: 'postgresql://postgres:postgres@127.0.0.1:5548/postgres',
+  DATABASE_URL: `postgresql://postgres:postgres@127.0.0.1:${qaDbPort}/postgres`,
   DATABASE_URL_UNPOOLED:
-    'postgresql://postgres:postgres@127.0.0.1:5548/postgres',
-  BETTER_AUTH_URL: 'http://localhost:3018',
+    `postgresql://postgres:postgres@127.0.0.1:${qaDbPort}/postgres`,
+  BETTER_AUTH_URL: `http://localhost:${qaPort}`,
   BETTER_AUTH_SECRET: 'local-fibonacci-qa-secret-only-2026-08-10',
   VERCEL_URL: '',
   VERCEL_PROJECT_PRODUCTION_URL: '',
-  V0_RUNTIME_URL: 'http://localhost:3018',
+  V0_RUNTIME_URL: `http://localhost:${qaPort}`,
   NEXT_TELEMETRY_DISABLED: '1',
 }
 const production = process.argv.includes('--production')
@@ -110,7 +113,7 @@ const child = spawn(
     '--hostname',
     '127.0.0.1',
     '--port',
-    '3018',
+    String(qaPort),
   ],
   {
     cwd: new URL('..', import.meta.url),
@@ -120,7 +123,7 @@ const child = spawn(
   },
 )
 console.log(
-  'LOCAL SYNTHETIC QA ONLY: http://localhost:3018/analysis; sign in fibonacci-qa@example.invalid / Local-Fibonacci-QA-2026!',
+  `LOCAL SYNTHETIC QA ONLY: http://localhost:${qaPort}/analysis; sign in fibonacci-qa@example.invalid / Local-Fibonacci-QA-2026!`,
 )
 async function stop() {
   child.kill()

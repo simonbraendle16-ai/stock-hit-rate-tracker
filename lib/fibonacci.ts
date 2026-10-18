@@ -1,3 +1,5 @@
+import { researchEvidenceError, RESEARCH_EVIDENCE_KEYS, STRUCTURES, structureCode, type ResearchEvidence } from "./fibonacci-catalogue";
+import { categoricalStats } from "./fibonacci-categorical-stats";
 import { residenceError, residenceLabel, residenceKindLabels, residenceComparisons, type TargetZoneResidence } from "./fibonacci-residence";
 export const FIB_LEVELS = [
   0, 23.6, 38.2, 50, 61.8, 78.6, 100, 127.2, 161.8, 200, 261.8, 423.6,
@@ -45,7 +47,7 @@ export type StopVariant = {
   outcome: "unbekannt" | "gewinn" | "verlust" | "breakeven" | "ausgelassen";
   resultR: number | null;
 };
-export type FibEvidence = {
+export type FibEvidence = ResearchEvidence & {
   approximateReachedLevel?: number | null;
   hypotheticalExitLevel?: number | null;
   hypotheticalCRVBasis?: string | null;
@@ -69,7 +71,7 @@ export function validateEvidence(value: unknown): FibEvidence {
   if (value == null) return {};
   if (typeof value !== "object" || Array.isArray(value)) return fail("Ungültige Beobachtungsangaben.");
   const raw = value as Record<string, unknown>;
-  const keys = ["targetZoneResidence", "approximateReachedLevel", "hypotheticalExitLevel", "hypotheticalCRVBasis", "measurementConfidence", "reachedLevels", "missedLevels", "reversalZone", "targetZone", "waveDirection", "approximatePercent", "hypotheticalCRV", "periodLabel", "parentId", "durationDays", "reversalDurationDays", "structureConfidence", "provenance"];
+  const keys = [...RESEARCH_EVIDENCE_KEYS, "targetZoneResidence", "approximateReachedLevel", "hypotheticalExitLevel", "hypotheticalCRVBasis", "measurementConfidence", "reachedLevels", "missedLevels", "reversalZone", "targetZone", "waveDirection", "approximatePercent", "hypotheticalCRV", "periodLabel", "parentId", "durationDays", "reversalDurationDays", "structureConfidence", "provenance"];
   if (Object.keys(raw).some(k => !keys.includes(k))) return fail("Unbekannte Beobachtungsangabe.");
   const number = (n: unknown) => typeof n === "number" && Number.isFinite(n) && n >= 0;
   for (const k of ["reachedLevels", "missedLevels"]) if (raw[k] !== undefined && (!Array.isArray(raw[k]) || raw[k].length > 50 || !raw[k].every(number) || new Set(raw[k]).size !== raw[k].length)) return fail("Ungültige Fibonacci-Level.");
@@ -84,6 +86,8 @@ export function validateEvidence(value: unknown): FibEvidence {
     const error = residenceError(raw.targetZoneResidence);
     if (error) return fail(error);
   }
+  const researchError = researchEvidenceError(raw);
+  if (researchError) return fail(researchError);
   const e = raw as FibEvidence;
   if ((e.reachedLevels ?? []).some(n => (e.missedLevels ?? []).some(m=>m<=n))) return fail("Level kann nicht erreicht und verfehlt sein.");
   if (Object.keys(raw).some(k => k !== "provenance") && !e.provenance?.trim()) return fail("Herkunft der strukturierten Angaben erforderlich.");
@@ -224,8 +228,7 @@ export function validateFibInput(raw: Record<string, unknown>): FibInput {
   if (!["retracement", "expansion"].includes(String(measurementKind)))
     return fail("Ungültige Messart.");
   const measurementBasis = text("measurementBasis");
-  if (measurementKind === "expansion" && !measurementBasis)
-    return fail("Bezugsbasis der Expansion erforderlich.");
+
   const contextId = text("contextId", 36);
   if (
     contextId &&
@@ -380,11 +383,9 @@ export function validateFibInput(raw: Record<string, unknown>): FibInput {
   )
     return fail("Retracement muss zwischen 0 und 500 % liegen.");
   if (
-    typeof raw.note !== "string" ||
-    !raw.note.trim() ||
-    raw.note.length > 2000
+    raw.note != null && (typeof raw.note !== "string" || raw.note.length > 2000)
   )
-    return fail("Messnotiz/Quelle erforderlich (maximal 2000 Zeichen).");
+    return fail("Messnotiz darf maximal 2000 Zeichen enthalten.");
   const evidence=validateEvidence(raw.evidence);
   if (percent != null && evidence.measurementConfidence !== "unklar" && ((evidence.reachedLevels ?? []).some(v=>v>Number(percent)+1e-8) || (evidence.missedLevels ?? []).some(v=>v<=Number(percent)+1e-8))) return fail("Exakte Messung widerspricht den erreichten/verfehlten Levels.");
   if (percent != null && evidence.approximatePercent != null) return fail("Exakte und ungefähre Maximalmessung nicht gleichzeitig angeben.");
@@ -401,7 +402,7 @@ export function validateFibInput(raw: Record<string, unknown>): FibInput {
     anchorStart: hasPrices ? (prices[0] as number) : null,
     anchorEnd: hasPrices ? (prices[1] as number) : null,
     extreme: hasPrices ? (prices[2] as number) : null,
-    note: raw.note.trim(),
+    note: typeof raw.note === "string" ? raw.note.trim() : "",
   };
 }
 export function fibZone(value: number) {
@@ -470,6 +471,7 @@ export function fibStats(
   const max = Math.max(0, ...zones.map((z) => z.count));
   return {
     n,
+    categorical: categoricalStats(rows),
     coverage: fibCoverage(rows, measurementKind),
     measurementKind,
     unclear: rows.filter((r) => r.status === "unklar").length,
@@ -555,6 +557,7 @@ export type FibFilters = {
   wave?: string;
   degree?: string;
   timeframe?: string;
+  structure?: string;
   from?: string;
   to?: string;
 };
@@ -574,6 +577,7 @@ export function filterFib(
       (!filters.wave || r.wave === filters.wave) &&
       (!filters.degree || r.degree === filters.degree) &&
       (!filters.timeframe || r.timeframe === filters.timeframe) &&
+      (!filters.structure || (filters.structure.startsWith("family:") ? STRUCTURES.find(([code])=>code===(r.evidence?.structureCode ?? structureCode(r.structure)))?.[2]===filters.structure.slice(7) : (r.evidence?.structureCode ?? structureCode(r.structure) ?? "unknown")===filters.structure)) &&
       (!filters.from || r.observedOn >= filters.from) &&
       (!filters.to || r.observedOn <= filters.to),
   );
@@ -699,8 +703,8 @@ function observationCoverage(rows: readonly FibObservation[], kind: "retracement
     targetZone: metric("Bestätigte Ziel-/Einstiegszone; getrennt von beobachteter Umkehr.", r=>e(r).targetZone, true),
     direction: metric("Richtung der untersuchten Welle, unabhängig von Folgetrades.", r=>e(r).waveDirection),
     period: metric("Historischer Zeitraum mit Originalgenauigkeit, unabhängig vom Erfassungsdatum.", r=>e(r).periodLabel ?? ((r.periodFrom || r.periodTo) ? [r.periodFrom,r.periodTo] : null)),
-    duration: metric("Bestätigte Wellendauer in Tagen; nicht aus ungenauen Daten erfunden.", r=>e(r).durationDays),
-    reversalDuration: metric("Bestätigte Dauer des Umkehrbereichs in Tagen.", r=>e(r).reversalDurationDays),
+    duration: {...metric("Historische Wellendauer in Tagen; kein gemeinsamer Durchschnitt. Neue Dauerklassen werden getrennt ausgewertet.", r=>e(r).durationDays),average:null},
+    reversalDuration: {...metric("Historische Umkehrdauer in Tagen; kein gemeinsamer Durchschnitt. Neue Dauerklassen werden getrennt ausgewertet.", r=>e(r).reversalDurationDays),average:null},
     targetZoneResidence: metric("Berichteter Aufenthalt mit gespeichertem Zielzonenbezug; keine abgeleitete Dauer.", r=>e(r).targetZoneResidence ? residenceLabel(e(r).targetZoneResidence) : null),
     residenceKind: metric("Genauigkeitsklasse der Dauer; unbekannt und nicht erhoben getrennt nachvollziehbar.", r=>e(r).targetZoneResidence ? residenceKindLabels[e(r).targetZoneResidence!.kind] : null),
     touchAndGo: metric("Nur ausdrücklich bekanntes Verhalten: Touch-and-Go oder länger verweilt. Unbekannt zählt nicht als Nein.", r=>e(r).targetZoneResidence?.touchAndGo === true ? "Touch-and-Go" : e(r).targetZoneResidence?.touchAndGo === false ? "Länger verweilt" : null),

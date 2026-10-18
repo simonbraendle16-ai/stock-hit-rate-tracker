@@ -10,7 +10,7 @@ it("retains strict under-one-day and Touch-and-Go without a point duration or re
   const a = row("bound",r), s = fibStats([a]);
   expect(a.evidence?.targetZoneResidence).toEqual(r);
   expect(a.evidence?.targetZoneResidence).not.toHaveProperty("value");
-  expect(s.coverage.reversalDuration.average).toBe(2);
+  expect(s.coverage.reversalDuration.n).toBe(1);expect(s.coverage.reversalDuration.average).toBeNull();
   expect(s.coverage.duration.n).toBe(0);
   expect(s.coverage.touchAndGo.included).toEqual([{id:"bound",value:"Touch-and-Go"}]);
   expect(s.coverage.residenceComparisons.groups).toEqual([]);

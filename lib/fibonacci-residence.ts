@@ -55,10 +55,10 @@ export function residenceLabel(r?: TargetZoneResidence | null): string {
 /** Exact averages are grouped by explicit time basis and convention; never fill gaps. */
 export function residenceComparisons(rows: readonly FibObservation[]) {
   const excluded: {id: string; reason: string}[] = [];
-  const groups = new Map<string, {timeBasis: string; convention: string; unit: TargetZoneResidence["unit"]; included: {id: string; value: number}[]}>();
+  const groups = new Map<string, {wave:string;degree:string;timeframe:string;measurementKind:string;zone:[number,number];timeBasis: string; convention: string; unit: TargetZoneResidence["unit"]; included: {id: string; value: number}[]}>();
   for (const row of rows) {
     const r = row.evidence?.targetZoneResidence;
-    const reason = row.status !== "abgeschlossen" ? `Status ${row.status}` : !r ? "Nicht erhoben" :
+    const reason = row.evidence?.targetContact === "not_reached" ? "Zielzone nicht erreicht" : row.status !== "abgeschlossen" ? `Status ${row.status}` : !r ? "Nicht erhoben" :
       r.kind !== "exact" ? `Keine exakte Dauer: ${residenceKindLabels[r.kind]}` :
       r.timeBasis === "unknown" || !r.measurementConvention ? "Zeitbasis oder Messkonvention offen" : null;
     if (reason || !r) { excluded.push({id: row.id, reason: reason!}); continue; }
@@ -66,8 +66,9 @@ export function residenceComparisons(rows: readonly FibObservation[]) {
     const unit = r.timeBasis === "calendar" ? "hour" : r.unit;
     const value = r.value! * (r.timeBasis === "calendar" ? {minute: 1 / 60, hour: 1, day: 24}[r.unit] : 1);
     if (!Number.isFinite(value) || value <= 0) { excluded.push({id:row.id,reason:"Dauer nicht verlustfrei normalisierbar"}); continue; }
-    const key = JSON.stringify([r.timeBasis, r.measurementConvention, unit]);
-    const group = groups.get(key) ?? {timeBasis: r.timeBasis, convention: r.measurementConvention!, unit, included: []};
+    const dimensions = {wave:row.wave,degree:row.degree,timeframe:row.timeframe,measurementKind:row.measurementKind ?? "retracement",zone:r.zone};
+    const key = JSON.stringify([dimensions, r.timeBasis, r.measurementConvention, unit]);
+    const group = groups.get(key) ?? {...dimensions,timeBasis: r.timeBasis, convention: r.measurementConvention!, unit, included: []};
     group.included.push({id: row.id, value});
     groups.set(key, group);
   }

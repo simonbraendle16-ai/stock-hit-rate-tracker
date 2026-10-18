@@ -1,10 +1,11 @@
 "use client";
+import { CategoricalFibForm } from "@/components/fibonacci-categorical-form";
+import { CategoricalResults } from "@/components/fibonacci-categorical-results";
+import { STRUCTURES } from "@/lib/fibonacci-catalogue";
 import { TradeAnalysis } from "@/components/trade-analysis";
 import { fibonacciReadModel } from "@/lib/fibonacci-read-model";
 import { ResearchDataGroups } from "@/components/research-data-groups";
-import { useMemo, useState, useTransition, useId } from "react";
-import { useRouter } from "next/navigation";
-import { toast } from "sonner";
+import { useMemo, useState, useId } from "react";
 import {
   Download,
   Plus,
@@ -23,7 +24,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Field,
   FieldGroup,
@@ -45,7 +45,6 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { saveFibonacci } from "@/app/actions/fibonacci";
 import {
   FIB_LEVELS,
   FIB_WAVES,
@@ -53,7 +52,6 @@ import {
   FIB_TIMEFRAMES,
   fibStats,
   fibCsv,
-  retracement,
   type FibObservation,
   type FibFilters,
 } from "@/lib/fibonacci";
@@ -63,11 +61,7 @@ import {
   FibonacciHistoryPanel,
   type HistorySummary,
 } from "@/components/fibonacci-history-panel";
-import { StopVariantsEditor } from "@/components/fibonacci-stop-variants";
 import { type TradeResearchRow } from "@/lib/trade-research-coverage";
-import { EvidenceEditor } from "@/components/fibonacci-evidence";
-import { ResidenceEditor } from "@/components/fibonacci-residence";
-import type { FibEvidence } from "@/lib/fibonacci";
 import { cn } from "@/lib/utils";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { FibonacciObservationList } from "@/components/fibonacci-observation-list";
@@ -213,11 +207,9 @@ export function FibonacciPanel({
     [filtered, order],
   );
   const shown = sorted.slice(currentPage * 20, (currentPage + 1) * 20);
-  const missing = filtered.filter((row) => row.percent == null).length;
   const advancedCount = [
     filters.status,
     filters.market,
-    filters.degree,
     filters.from,
     filters.to,
   ].filter(Boolean).length;
@@ -259,8 +251,7 @@ export function FibonacciPanel({
             Messen. Wiederfinden. Vergleichen.
           </h2>
           <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-            Eine konkrete Welle pro Beobachtung. Exakte Werte, Quelle und offene
-            Angaben bleiben zusammen.
+            Eine konkrete Welle pro Beobachtung. Feste Fibonacci-Levels, Wellenstrukturen und getrennte Dauergruppen.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -291,23 +282,9 @@ export function FibonacciPanel({
             String(filtered.length),
             "In der aktuellen Auswahl",
           ],
-          [
-            "Exakte Prozentmessungen",
-            String(stats.n),
-            `${stats.running} laufend · ${stats.unclear} unklar · ${stats.invalid} ungültig`,
-          ],
-          [
-            "Median",
-            percent(stats.median),
-            stats.n
-              ? `Mittlere 50 %: ${fmt(stats.q1)}–${fmt(stats.q3)} %`
-              : "Exakte abgeschlossene Werte fehlen",
-          ],
-          [
-            "Ohne Messwert",
-            String(missing),
-            `${stats.missing} davon abgeschlossen · beschreibend nutzbar`,
-          ],
+          ["Abgeschlossene Wellen", String(stats.coverage.completed), `${stats.running} laufend · ${stats.unclear} unklar · ${stats.invalid} ungültig`],
+          ["Mit Levelangaben", String(filtered.filter(r=>r.evidence?.reachedLevels?.length || r.evidence?.missedLevels?.length || r.evidence?.reversalZone).length), "Erreichte/verfehlte Levels oder beobachtete Umkehr"],
+          ["Dauergruppen", String(stats.categorical.durations.groups.length), "Nach Welle, Wellengrad und Timeframe getrennt"],
         ].map(([label, value, description]) => (
           <Card className="panel" key={label}>
             <CardHeader className="pb-0">
@@ -361,7 +338,7 @@ export function FibonacciPanel({
               }}
               options={[
                 { value: "all", label: "Alle Beobachtungen" },
-                { value: "missing", label: "Ohne Messwert" },
+                { value: "missing", label: "Ohne exakten Alt-Messwert" },
                 { value: "running", label: "Laufende Wellen" },
                 { value: "completed", label: "Abgeschlossene Wellen" },
               ]}
@@ -401,6 +378,14 @@ export function FibonacciPanel({
               onChange={(v) => set("timeframe", v)}
               options={choices(FIB_TIMEFRAMES)}
             />
+            <Choice
+              label="Wellengrad"
+              value={filters.degree || ""}
+              onChange={(v) => set("degree", v)}
+              options={choices(FIB_DEGREES)}
+            />
+            <Choice label="Wellenstruktur" value={filters.structure || ""} onChange={v=>set("structure",v)} options={[...STRUCTURES.map(([value,label])=>({value,label})),...([...new Set(STRUCTURES.map(([, ,parent])=>parent))].filter(p=>p!=="unknown").map(parent=>({value:`family:${parent}`,label:`Hauptstruktur: ${parent}`})))]}/>
+
           </FieldGroup>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <details
@@ -415,12 +400,6 @@ export function FibonacciPanel({
                 </span>
               </summary>
               <FieldGroup className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-3">
-                <Choice
-                  label="Wellengrad"
-                  value={filters.degree || ""}
-                  onChange={(v) => set("degree", v)}
-                  options={choices(FIB_DEGREES)}
-                />
                 <Choice
                   label="Status"
                   value={filters.status || ""}
@@ -481,6 +460,8 @@ export function FibonacciPanel({
         <p>{observations.length} Beobachtungen insgesamt</p>
       </div>
 
+      <CategoricalResults stats={stats.categorical}/>
+      <details><summary className="cursor-pointer text-sm text-muted-foreground">Bestandsdaten und ergänzende Kennzahlen</summary>
       <Card><CardHeader><CardTitle>Abdeckung abgeschlossener Beobachtungen</CardTitle><CardDescription>{observations.length} insgesamt gespeichert · {stats.coverage.total} im aktuellen Filter · {stats.coverage.completed} abgeschlossen. Jede Abschlusskennzahl verwendet ihre eigene Datenbasis. Vorläufige Angaben stehen unter „Laufend &amp; Simulation“.</CardDescription></CardHeader><CardContent className="flex flex-col gap-3">
       {Object.entries(stats.coverage).filter(([,v])=>typeof v === "object" && v !== null && "definition" in v).map(([key,raw])=>{
         const m=raw as typeof stats.coverage.exact;
@@ -489,11 +470,11 @@ export function FibonacciPanel({
       })}
       <details><summary>Vergleichbare exakte Verweildauern: {stats.coverage.residenceComparisons.groups.reduce((n,g)=>n+g.n,0)} von {stats.coverage.total}</summary>
         <p className="text-sm text-muted-foreground">Nur abgeschlossene Fälle mit exakter Dauer, bekannter Zeitbasis und identischer Messkonvention. Schätzungen und Grenzen bleiben außerhalb der Mittelwerte.</p>
-        {stats.coverage.residenceComparisons.groups.map((g,i)=><div key={i} className="text-sm"><p>{g.timeBasis === "calendar" ? "Kalenderzeit" : "Handelszeit"} · {g.convention} · n={g.n} · Mittel {fmt(g.average)} / Median {fmt(g.median)} {g.unit === "hour" ? "Stunden" : g.unit === "day" ? "Tage" : "Minuten"}</p>{g.included.map(r=><p key={r.id} className="text-xs">{r.id}: {fmt(r.value)}</p>)}</div>)}
+        {stats.coverage.residenceComparisons.groups.map((g,i)=><div key={i} className="text-sm"><p>Welle {g.wave} · {g.degree} · {g.timeframe} · {g.zone.join("–")} % · {g.timeBasis === "calendar" ? "Kalenderzeit" : "Handelszeit"} · {g.convention} · n={g.n} · Mittel {fmt(g.average)} / Median {fmt(g.median)} {g.unit === "hour" ? "Stunden" : g.unit === "day" ? "Tage" : "Minuten"}</p>{g.included.map(r=><p key={r.id} className="text-xs">{r.id}: {fmt(r.value)}</p>)}</div>)}
         {stats.coverage.residenceComparisons.excluded.map(r=><p key={r.id} className="text-xs text-muted-foreground">{r.id}: {r.reason}</p>)}
       </details>
       {stats.coverage.levelProfile.map(l=><p className="text-sm" key={l.level}>{l.level} %: {l.reached.length} erreicht · {l.missed.length} verfehlt · n={l.n}. Nur explizite Angaben zu diesem Level.</p>)}
-      </CardContent></Card>
+      </CardContent></Card></details>
       <Tabs
         value={tab}
         onValueChange={(value) => setTab(String(value))}
@@ -509,7 +490,7 @@ export function FibonacciPanel({
             <TabsTrigger value="protocol">
               Messprotokoll <Badge variant="secondary">{filtered.length}</Badge>
             </TabsTrigger>
-            <TabsTrigger value="distribution">Verteilungen</TabsTrigger>
+            <TabsTrigger value="distribution">Altbestand · exakte Werte</TabsTrigger>
             <TabsTrigger value="context">Strukturen & Stops</TabsTrigger>
             <TabsTrigger value="data-groups">Laufend & Simulation</TabsTrigger>
             <TabsTrigger value="trades">Tradebezug</TabsTrigger>
@@ -649,7 +630,7 @@ export function FibonacciPanel({
               <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
                 <Waves className="size-8 text-primary" />
                 <h3 className="font-heading text-xl">
-                  Noch keine auswertbaren Messwerte
+                  Keine exakten Messwerte im Altbestand
                 </h3>
                 <p className="max-w-md text-sm text-muted-foreground">
                   {stats.missing
@@ -1034,8 +1015,9 @@ export function FibonacciPanel({
             </DialogDescription>
           </DialogHeader>
           {open && (
-            <FibForm
+            <CategoricalFibForm
               key={editing?.id || "new"}
+              trades={tradeCoverage}
               instruments={instruments}
               stockId={stockId || filters.stockId}
               existing={editing}
@@ -1068,447 +1050,5 @@ function DateFilter({
         onChange={(e) => onChange(e.target.value)}
       />
     </Field>
-  );
-}
-function FibForm({
-  instruments,
-  stockId,
-  existing,
-  defaults,
-  close,
-}: {
-  instruments: Instrument[];
-  stockId?: number;
-  existing: FibObservation | null;
-  defaults: FibFilters;
-  close: () => void;
-}) {
-  const router = useRouter(),
-    prefix = useId(),
-    [pending, startTransition] = useTransition(),
-    [error, setError] = useState(""),
-    [id] = useState(() => existing?.id || crypto.randomUUID());
-  const [evidence, setEvidence] = useState<FibEvidence>(existing?.evidence ?? {});
-  const [stopVariants, setStopVariants] = useState(
-    existing?.stopVariants ?? [],
-  );
-  const [form, setForm] = useState({
-    stockId: String(existing?.stockId || stockId || instruments[0]?.id || ""),
-    wave: existing?.wave || defaults.wave || "B",
-    degree: existing?.degree || defaults.degree || "unbekannt",
-    timeframe: existing?.timeframe || defaults.timeframe || "unbekannt",
-    observedOn: existing?.observedOn || new Date().toISOString().slice(0, 10),
-    status: existing?.status || "laufend",
-    mode: existing?.anchorStart != null ? "anchors" : "direct",
-    percent: existing?.percent != null ? String(existing.percent) : "",
-    measurementKind:
-      existing?.measurementKind || defaults.measurementKind || "retracement",
-    measurementBasis: existing?.measurementBasis || "",
-    structure: existing?.structure || "",
-    target: existing?.target != null ? String(existing.target) : "",
-    stopDescription: existing?.stopDescription || "",
-    sourceRef: existing?.sourceRef || "",
-    sourceKey: existing?.sourceKey || "",
-    periodFrom: existing?.periodFrom || "",
-    periodTo: existing?.periodTo || "",
-    tradeId: existing?.tradeId ? String(existing.tradeId) : "",
-    historyId: existing?.historyId || "",
-    contextId: existing?.contextId || "",
-    tradability: existing?.tradability || "unbekannt",
-    hypotheticalOutcome: existing?.hypotheticalOutcome || "unbekannt",
-    actualOutcome: existing?.actualOutcome || "unbekannt",
-    anchorStart:
-      existing?.anchorStart != null ? String(existing.anchorStart) : "",
-    anchorEnd: existing?.anchorEnd != null ? String(existing.anchorEnd) : "",
-    extreme: existing?.extreme != null ? String(existing.extreme) : "",
-    note: existing?.note || "",
-  });
-  const set = (key: keyof typeof form, value: string) =>
-    setForm((f) => ({ ...f, [key]: value }));
-  let preview: number | null = null;
-  if (
-    form.mode === "anchors" &&
-    form.anchorStart &&
-    form.anchorEnd &&
-    form.extreme
-  ) {
-    try {
-      preview = retracement(
-        Number(form.anchorStart),
-        Number(form.anchorEnd),
-        Number(form.extreme),
-      );
-    } catch {}
-  }
-  const submit = (event: React.FormEvent) => {
-    event.preventDefault();
-    setError("");
-    startTransition(async () => {
-      try {
-        const anchored = form.mode === "anchors";
-        const result = await saveFibonacci(
-          id,
-          {
-            stockId: Number(form.stockId),
-            wave: form.wave,
-            degree: form.degree,
-            timeframe: form.timeframe,
-            observedOn: form.observedOn,
-            status: form.status,
-            percent:
-              anchored || form.percent === "" ? null : Number(form.percent),
-            anchorStart: anchored ? Number(form.anchorStart) : null,
-            anchorEnd: anchored ? Number(form.anchorEnd) : null,
-            extreme: anchored ? Number(form.extreme) : null,
-            note: form.note,
-            stopVariants,
-            evidence,
-            measurementKind: form.measurementKind,
-            measurementBasis: form.measurementBasis || null,
-            structure: form.structure || null,
-            target: form.target ? Number(form.target) : null,
-            stopDescription: form.stopDescription || null,
-            sourceRef: form.sourceRef || null,
-            sourceKey: form.sourceKey || null,
-            periodFrom: form.periodFrom || null,
-            periodTo: form.periodTo || null,
-            tradeId: form.tradeId ? Number(form.tradeId) : null,
-            historyId: form.historyId || null,
-            contextId: form.contextId || null,
-            tradability: form.tradability,
-            hypotheticalOutcome: form.hypotheticalOutcome,
-            actualOutcome: form.actualOutcome,
-          },
-          existing?.version,
-        );
-        if (!result.ok) {
-          setError(result.error);
-          router.refresh();
-          return;
-        }
-        toast.success(result.coverage.completed ? "Gespeichert, zurückgelesen und den passenden Kennzahlen zugeordnet." : "Gespeichert und zurückgelesen; Status schließt den Fall derzeit aus Abschlusskennzahlen aus.");
-        router.refresh();
-        close();
-      } catch {
-        setError(
-          "Speicherung nicht bestätigt. Bitte erneut versuchen; dieselbe Erfassungs-ID verhindert Duplikate.",
-        );
-      }
-    });
-  };
-  return (
-    <form
-      onSubmit={submit}
-      className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden"
-    >
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-2">
-        <fieldset disabled={pending} className="flex min-w-0 flex-col gap-4">
-          <legend className="mb-4 font-heading text-lg">
-            1 · Welle zuordnen
-          </legend>
-          <FieldGroup className="grid grid-cols-2 gap-3">
-            <Choice
-              all={false}
-              label="Instrument"
-              value={form.stockId}
-              onChange={(v) => set("stockId", v)}
-              options={instruments.map((i) => ({
-                value: String(i.id),
-                label: `${i.ticker} · ${i.name}`,
-              }))}
-            />
-            <Field>
-              <FieldLabel htmlFor={prefix + "wave"}>
-                Welle / eigenes Label
-              </FieldLabel>
-              <Input
-                id={prefix + "wave"}
-                value={form.wave}
-                required
-                maxLength={40}
-                onChange={(e) => set("wave", e.target.value)}
-              />
-            </Field>
-            <Choice
-              all={false}
-              label="Wellengrad"
-              value={form.degree}
-              onChange={(v) => set("degree", v)}
-              options={choices(FIB_DEGREES)}
-            />
-            <Choice
-              all={false}
-              label="Zeiteinheit"
-              value={form.timeframe}
-              onChange={(v) => set("timeframe", v)}
-              options={choices(FIB_TIMEFRAMES)}
-            />
-            <DateFilter
-              label="Beobachtungsdatum"
-              value={form.observedOn}
-              onChange={(v) => set("observedOn", v)}
-            />
-            <Choice
-              all={false}
-              label="Wellenstatus"
-              value={form.status}
-              onChange={(v) => set("status", v)}
-              options={[
-                { value: "laufend", label: "Laufend" },
-                { value: "abgeschlossen", label: "Abgeschlossen" },
-                { value: "unklar", label: "Unklar" },
-                { value: "ungueltig", label: "Ungültig" },
-              ]}
-            />
-          </FieldGroup>
-          <h3 className="border-t border-border pt-4 font-heading text-lg">
-            2 · Messwert festhalten
-          </h3>
-          <Choice
-            all={false}
-            label="Messart"
-            value={form.measurementKind}
-            options={[
-              { value: "retracement", label: "Retracement" },
-              { value: "expansion", label: "Expansion" },
-            ]}
-            onChange={(v) =>
-              setForm((f) => ({
-                ...f,
-                measurementKind: v as "retracement" | "expansion",
-                mode: "direct",
-                anchorStart: "",
-                anchorEnd: "",
-                extreme: "",
-              }))
-            }
-          />
-          <Choice
-            all={false}
-            label="Messmethode"
-            value={form.mode}
-            onChange={(v) => set("mode", v)}
-            options={[
-              { value: "direct", label: "Tiefe direkt in Prozent" },
-              ...(form.measurementKind === "retracement"
-                ? [{ value: "anchors", label: "Aus Referenzankern berechnen" }]
-                : []),
-            ]}
-          />
-          <FieldGroup className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            {(form.mode === "anchors"
-              ? [
-                  ["anchorStart", "Anfang der Referenz"],
-                  ["anchorEnd", "Ende der Referenz"],
-                  ["extreme", "Beobachtetes Extrem"],
-                ]
-              : [
-                  [
-                    "percent",
-                    form.measurementKind === "expansion"
-                      ? "Expansion in %"
-                      : "Retracement in %",
-                  ],
-                ]
-            ).map(([key, label]) => (
-              <Field key={key}>
-                <FieldLabel htmlFor={prefix + key}>{label}</FieldLabel>
-                <Input
-                  id={prefix + key}
-                  type="number"
-                  step="any"
-                  min={key === "percent" ? 0 : 0.00000001}
-                  max={
-                    key === "percent" && form.measurementKind === "retracement"
-                      ? 500
-                      : undefined
-                  }
-                  required={form.mode === "anchors"}
-                  value={form[key as keyof typeof form]}
-                  onChange={(e) =>
-                    set(key as keyof typeof form, e.target.value)
-                  }
-                  aria-invalid={!!error}
-                />
-              </Field>
-            ))}
-          </FieldGroup>
-          {form.mode === "anchors" && (
-            <p className="rounded-lg bg-muted p-3 font-mono text-sm">
-              Berechnete Tiefe:{" "}
-              <strong>{formatResearchPercent(preview)}</strong>
-              <span className="mt-1 block font-sans text-xs text-muted-foreground">
-                Chronologisch Anfang → Ende; Korrekturextrem danach. Gleiche
-                Währung und Kursskala.
-              </span>
-            </p>
-          )}
-          <FieldDescription>
-            Ein unbekannter Messwert darf leer bleiben. Er wird als fehlend
-            ausgewiesen und nicht als null Prozent gerechnet.
-          </FieldDescription>
-          <h3 className="border-t border-border pt-4 font-heading text-lg">
-            3 · Herkunft & Zeitraum
-          </h3>
-          <FieldGroup className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field>
-              <FieldLabel htmlFor={prefix + "sourceRef"}>
-                Quelle / Referenz
-              </FieldLabel>
-              <Input
-                id={prefix + "sourceRef"}
-                value={form.sourceRef}
-                onChange={(e) => set("sourceRef", e.target.value)}
-                placeholder="z. B. eigener Chart, Datum und Markierung"
-              />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor={prefix + "measurementBasis"}>
-                {form.measurementKind === "expansion"
-                  ? "Bezugsbasis der Expansion"
-                  : "Bezugsbasis (optional)"}
-              </FieldLabel>
-              <Input
-                id={prefix + "measurementBasis"}
-                value={form.measurementBasis}
-                required={form.measurementKind === "expansion"}
-                onChange={(e) => set("measurementBasis", e.target.value)}
-              />
-            </Field>
-            <DateFilter
-              label="Zeitraum von"
-              value={form.periodFrom}
-              onChange={(v) => set("periodFrom", v)}
-            />
-            <DateFilter
-              label="Zeitraum bis"
-              value={form.periodTo}
-              onChange={(v) => set("periodTo", v)}
-            />
-          </FieldGroup>
-          <Field data-invalid={!!error}>
-            <FieldLabel htmlFor={prefix + "note"}>
-              Messnotiz / Quelle
-            </FieldLabel>
-            <Textarea
-              id={prefix + "note"}
-              required
-              maxLength={2000}
-              value={form.note}
-              onChange={(e) => set("note", e.target.value)}
-              placeholder="Welche Welle und welcher Zeitraum? Quelle, Referenzpunkte, Abschlusskriterium …"
-              aria-invalid={!!error}
-            />
-            <FieldDescription>
-              Unterscheidet die konkrete Welle von früheren Fällen. Bei
-              Änderungen am Extrem diese Beobachtung korrigieren.
-            </FieldDescription>
-          </Field>
-          <ResidenceEditor value={evidence.targetZoneResidence} zone={evidence.targetZone ?? null} onChange={targetZoneResidence=>setEvidence(previous=>({...previous,targetZoneResidence,provenance:previous.provenance || "Direkte Formulareingabe des Nutzers"}))}/>
-          <details
-            className="rounded-lg border border-border p-4"
-            open={existing?.stopVariants?.length ? true : undefined}
-          >
-            <summary className="cursor-pointer text-sm font-medium">
-              Levels, Zonen, Richtung, CRV & weitere Angaben{" "}
-              <span className="font-normal text-muted-foreground">
-                · optional
-              </span>
-            </summary>
-            <div className="mt-4 flex flex-col gap-4">
-              <FieldGroup className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                {(
-                  [
-                    ["structure", "Struktur / Korrekturtyp"],
-                    ["target", "Kursziel"],
-                    [
-                      "stopDescription",
-                      "Stop relativ zu Box / Trendwendebereich",
-                    ],
-                    ["sourceKey", "Stabile Quellenkennung (optional)"],
-                    ["tradeId", "Trade-ID (optional)"],
-                    ["historyId", "Kursdatensatz-ID (optional)"],
-                    ["contextId", "Wellenkontext-ID (optional)"],
-                  ] as const
-                ).map(([key, label]) => (
-                  <Field key={key}>
-                    <FieldLabel htmlFor={prefix + key}>{label}</FieldLabel>
-                    <Input
-                      id={prefix + key}
-                      value={form[key]}
-                      type={
-                        key === "target" || key === "tradeId"
-                          ? "number"
-                          : "text"
-                      }
-                      step="any"
-                      onChange={(e) => set(key, e.target.value)}
-                    />
-                  </Field>
-                ))}
-              </FieldGroup>
-              <FieldGroup className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                <Choice
-                  all={false}
-                  label="Handelbarkeit (vorläufig)"
-                  value={form.tradability}
-                  onChange={(v) => set("tradability", v)}
-                  options={choices([
-                    "unbekannt",
-                    "handelbar",
-                    "nicht_handelbar",
-                  ])}
-                />
-                {(["hypotheticalOutcome", "actualOutcome"] as const).map(
-                  (key) => (
-                    <Choice
-                      key={key}
-                      all={false}
-                      label={
-                        key === "hypotheticalOutcome"
-                          ? "Hypothetischer Ausgang"
-                          : "Tatsächlicher Ausgang (Nutzerangabe)"
-                      }
-                      value={form[key]}
-                      onChange={(v) => set(key, v)}
-                      options={choices([
-                        "unbekannt",
-                        "gewinn",
-                        "verlust",
-                        "breakeven",
-                        "ausgelassen",
-                      ])}
-                    />
-                  ),
-                )}
-              </FieldGroup>
-              <EvidenceEditor value={evidence} onChange={setEvidence} />
-              <StopVariantsEditor
-                value={stopVariants}
-                onChange={setStopVariants}
-              />
-            </div>
-          </details>
-        </fieldset>
-      </div>
-      {error && (
-        <p role="alert" className="text-sm text-destructive">
-          {error}
-        </p>
-      )}
-      <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-border bg-popover pb-1 pt-4">
-        <Button
-          type="button"
-          variant="outline"
-          onClick={close}
-          disabled={pending}
-        >
-          Abbrechen
-        </Button>
-        <Button type="submit" disabled={pending}>
-          {pending ? "Wird gespeichert …" : "Speichern"}
-        </Button>
-      </div>
-    </form>
   );
 }

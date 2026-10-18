@@ -1,3 +1,4 @@
+import { STRUCTURES } from "./fibonacci-catalogue";
 import { ApiError } from "@/lib/assistant-api";
 import { FIB_DEGREES, FIB_TIMEFRAMES, type FibFilters } from "@/lib/fibonacci";
 export function fibQuery(p: URLSearchParams, context = false) {
@@ -5,6 +6,7 @@ export function fibQuery(p: URLSearchParams, context = false) {
     "stockId",
     "market",
     "wave",
+    "structure",
     "degree",
     "timeframe",
     "from",
@@ -35,6 +37,7 @@ export function fibQuery(p: URLSearchParams, context = false) {
     return n;
   };
   for (const [key, options] of Object.entries({
+    structure: [...STRUCTURES.map(([c])=>c),...new Set(STRUCTURES.map(([, ,p])=>`family:${p}`))],
     degree: FIB_DEGREES,
     timeframe: FIB_TIMEFRAMES,
     measurementKind: ["retracement", "expansion"],

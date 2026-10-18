@@ -1132,6 +1132,6 @@ export const fibonacciObservation = pgTable('fibonacci_observation', {
  tradability:text('tradability').$type<'unbekannt'|'handelbar'|'nicht_handelbar'>().notNull().default('unbekannt'),
  hypotheticalOutcome:text('hypotheticalOutcome').$type<'unbekannt'|'gewinn'|'verlust'|'breakeven'|'ausgelassen'>().notNull().default('unbekannt'),
  actualOutcome:text('actualOutcome').$type<'unbekannt'|'gewinn'|'verlust'|'breakeven'|'ausgelassen'>().notNull().default('unbekannt'),
- note:text('note').notNull(),version:integer('version').notNull().default(1),
+ note:text('note').notNull().default(''),version:integer('version').notNull().default(1),
  createdAt:timestamp('createdAt').notNull().defaultNow(),updatedAt:timestamp('updatedAt').notNull().defaultNow(),
 },table=>[index('fibonacci_owner_instrument').on(table.userId,table.stockId,table.observedOn)])

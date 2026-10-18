@@ -1,0 +1,30 @@
+{
+  "localSyntheticOnly": true,
+  "actualNextHttpAndPostgres": true,
+  "noteAndExpansionBasisOptional": true,
+  "levelSelectionWithoutExactMaximum": true,
+  "cTargetMissConfirmed": true,
+  "reversalDistributionConfirmed": true,
+  "stableRetryVersion": 1,
+  "requiredTimeframeRejection": true,
+  "separateDurationGroups": [
+    {
+      "degree": "Minor",
+      "timeframe": "30m",
+      "n": 1,
+      "buckets": [
+        "h4_12"
+      ]
+    },
+    {
+      "degree": "Zyklus",
+      "timeframe": "1w",
+      "n": 1,
+      "buckets": [
+        "d90_180"
+      ]
+    }
+  ],
+  "apiDatabaseReadbackEqual": true,
+  "catalogueLevels": 28
+}

@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { FibObservation } from "@/lib/fibonacci";
 import { formatResearchPercent } from "@/lib/fibonacci-workspace";
+import { DURATION_CLASSES } from "@/lib/fibonacci-catalogue";
 import { residenceLabel } from "@/lib/fibonacci-residence";
 
 const statusName = {
@@ -26,12 +27,15 @@ function Details({ row }: { row: FibObservation }) {
         <p className="whitespace-pre-wrap">{row.note}</p>
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2">
           {[
-            ["Quelle", row.sourceRef || "In der Messnotiz dokumentiert"],
+            ["Quelle", row.sourceRef || "Keine Quelle angegeben"],
             ["Bezugsbasis", row.measurementBasis],
             ["Erreichte Levels", row.evidence?.reachedLevels?.join(" / ")],
             ["Verfehlte Levels", row.evidence?.missedLevels?.join(" / ")],
             ["Umkehrzone", row.evidence?.reversalZone?.join(" bis ")],
-            ["Zielzone", row.evidence?.targetZone?.join(" bis ")],
+            ["Erwartete Zielzone", row.evidence?.targetZone?.join(" bis ")],
+            ["Mögliche Einstiegszone", row.evidence?.entryZone?.join(" bis ")],
+            ["Zielzone erreicht", row.evidence?.targetContact === "reached" ? "Ja" : row.evidence?.targetContact === "not_reached" ? "Nein" : "Unbekannt"],
+            ...(["wave","reversal","residence"] as const).map(k=>[({wave:"Wellendauerklasse",reversal:"Umkehrdauerklasse",residence:"Aufenthaltsdauerklasse"})[k], DURATION_CLASSES.find(([id])=>id===row.evidence?.durations?.[k]?.bucket)?.[1]]),
             ["Verweildauer in der Zielzone", residenceLabel(row.evidence?.targetZoneResidence)],
             ["Ursprüngliche Dauerangabe", row.evidence?.targetZoneResidence?.originalText],
             ["Zeitbasis der Verweildauer", row.evidence?.targetZoneResidence ? ({unknown:"Noch offen",calendar:"Kalenderzeit",trading:"Handelszeit"}[row.evidence.targetZoneResidence.timeBasis]) : null],
@@ -127,7 +131,7 @@ export function FibonacciObservationList({
               </div>
               <div className="shrink-0 text-right">
                 <p className="font-mono text-xl">
-                  {formatResearchPercent(row.percent)}
+                  {row.evidence?.reversalZone ? `${row.evidence.reversalZone.join("–")} % · Umkehr` : row.evidence?.reachedLevels?.length ? `${row.evidence.reachedLevels.join(" / ")} % · erreicht` : formatResearchPercent(row.percent)}
                 </p>
                 <p className="text-xs text-muted-foreground">
                   {row.measurementKind === "expansion"
@@ -138,8 +142,8 @@ export function FibonacciObservationList({
             </div>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <Badge variant="outline">{statusName[row.status]}</Badge>
-              {row.percent == null && (
-                <Badge variant="secondary">Messwert fehlt</Badge>
+              {row.percent == null && !row.evidence?.reversalZone && !row.evidence?.reachedLevels?.length && (
+                <Badge variant="secondary">Keine Levelangabe</Badge>
               )}
               <span className="text-xs text-muted-foreground">
                 {date(row.observedOn)}
@@ -194,11 +198,11 @@ export function FibonacciObservationList({
                 </td>
                 <td className="py-4 pr-4">
                   <span className="whitespace-nowrap font-mono font-medium">
-                    {formatResearchPercent(row.percent)}
+                    {row.evidence?.reversalZone ? `${row.evidence.reversalZone.join("–")} % · Umkehr` : row.evidence?.reachedLevels?.length ? `${row.evidence.reachedLevels.join(" / ")} % · erreicht` : formatResearchPercent(row.percent)}
                   </span>
                   <p className="mt-1 text-xs text-muted-foreground">
                     {row.percent == null
-                      ? "Messwert fehlt"
+                      ? row.evidence?.reversalZone || row.evidence?.reachedLevels?.length ? "Levelbeobachtung" : "Keine Levelangabe"
                       : row.measurementKind === "expansion"
                         ? "Expansion"
                         : "Retracement"}
