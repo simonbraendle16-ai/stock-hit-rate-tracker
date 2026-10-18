@@ -94,6 +94,7 @@ export type ClassifiedDuration = {
     | "unknown";
 };
 export type ResearchEvidence = {
+  keyFibLevel?: number | null;
   catalogueVersion?: 1;
   structureCode?: StructureCode | null;
   entryZone?: [number, number] | null;
@@ -107,6 +108,7 @@ export type ResearchEvidence = {
   } | null;
 };
 export const RESEARCH_EVIDENCE_KEYS = [
+  "keyFibLevel",
   "catalogueVersion",
   "structureCode",
   "entryZone",
@@ -118,6 +120,20 @@ export const RESEARCH_EVIDENCE_KEYS = [
 export function researchEvidenceError(
   e: Record<string, unknown>,
 ): string | null {
+  if (e.keyFibLevel != null) {
+    if (typeof e.keyFibLevel !== "number" || !RESEARCH_LEVELS.includes(e.keyFibLevel))
+      return "Schlüsselfibonacci aus den Fibonacci-Levels auswählen.";
+    const level = e.keyFibLevel;
+    if (Array.isArray(e.missedLevels) && e.missedLevels.some(m => m <= level))
+      return "Schlüsselfibonacci widerspricht den verfehlten Levels.";
+    const z = e.reversalZone;
+    if (Array.isArray(z) && (level > z[1] ||
+      (e.reversalLocation === "between_levels" && level === z[1])))
+      return "Schlüsselfibonacci wurde vor dem angegebenen Umkehrbereich nicht erreicht.";
+    if (e.targetContact === "not_reached" && Array.isArray(e.targetZone) &&
+      level >= e.targetZone[0] && level <= e.targetZone[1])
+      return "Schlüsselfibonacci liegt in der als unerreicht markierten Zielzone.";
+  }
   if (e.catalogueVersion !== undefined && e.catalogueVersion !== 1)
     return "Unbekannte Auswahlversion.";
   if (

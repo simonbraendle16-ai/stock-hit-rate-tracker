@@ -86,6 +86,7 @@ export function categoricalStats(rows: readonly FibObservation[]) {
       .filter(
         (r) =>
           r.evidence?.reachedLevels?.includes(level) ||
+          r.evidence?.keyFibLevel === level ||
           (r.evidence?.reversalLocation === "at_level" &&
             r.evidence.reversalZone?.[0] === level),
       )
@@ -257,6 +258,7 @@ export function categoricalStats(rows: readonly FibObservation[]) {
     definition:
       "Beobachtete relative Häufigkeiten; unbekannte Angaben sind keine Verfehlungen. Jede Welle zählt pro Kennzahl einmal.",
     total: rows.length,
+    keyFibonacci: keyFibonacciStats(rows),
     levels,
     structures,
     structureFamilies: [...new Set(STRUCTURES.map(([, , parent]) => parent))]
@@ -337,5 +339,35 @@ export function categoricalStats(rows: readonly FibObservation[]) {
         }),
       })),
     },
+  };
+}
+
+function keyFibonacciStats(rows: readonly FibObservation[]) {
+  const groups = new Map<string, {
+    wave: string; degree: string; timeframe: string; measurementKind: string;
+    included: FibObservation[];
+  }>();
+  const excluded: { id: string; reason: string }[] = [];
+  for (const r of rows) {
+    if (r.status !== "abgeschlossen" || r.evidence?.measurementConfidence === "unklar" || r.evidence?.keyFibLevel == null) {
+      excluded.push({ id: r.id, reason: r.status !== "abgeschlossen" ? `Status ${r.status}` : r.evidence?.measurementConfidence === "unklar" ? "Messart ungeklärt" : "Schlüsselfibonacci nicht erhoben" });
+      continue;
+    }
+    const dimensions = { wave: r.wave, degree: r.degree, timeframe: r.timeframe, measurementKind: r.measurementKind ?? "retracement" };
+    const key = JSON.stringify(dimensions);
+    const g = groups.get(key) ?? { ...dimensions, included: [] };
+    g.included.push(r);
+    groups.set(key, g);
+  }
+  return {
+    excluded,
+    groups: [...groups.values()].map(({ included, ...g }) => ({
+      ...g,
+      n: included.length,
+      distribution: RESEARCH_LEVELS.flatMap(level => {
+        const ids = included.filter(r => r.evidence!.keyFibLevel === level).map(r => r.id);
+        return ids.length ? [{ level, ids, n: ids.length, share: ids.length / included.length * 100 }] : [];
+      }),
+    })),
   };
 }

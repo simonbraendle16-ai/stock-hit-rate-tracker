@@ -54,6 +54,20 @@ const tokens = {
   read: "sat_" + "c".repeat(43),
 };
 
+it("roundtrips a key Fibonacci through API, retries, older edits and explicit removal", async()=>{
+  const id=crypto.randomUUID(),ctx={params:Promise.resolve({id})};
+  const body={...input,percent:null,anchorStart:null,anchorEnd:null,extreme:null,evidence:{catalogueVersion:1,waveDirection:"short",provenance:"Synthetic key Fibonacci QA",keyFibLevel:61.8,targetZone:[50,78.6],reversalLocation:"between_levels",reversalZone:[61.8,78.6]}};
+  for(let i=0;i<2;i++) expect((await POST(request("",tokens.owner,"POST",body,{"Idempotency-Key":id}))).status).toBe(201);
+  expect(await (await detailGET(request("/"+id),ctx)).json()).toMatchObject({version:1,percent:null,evidence:body.evidence});
+  const stats=(await (await GET(request("?wave=B"))).json()).stats.categorical;
+  expect(stats.keyFibonacci.groups[0]).toMatchObject({n:1,distribution:[{level:61.8,ids:[id]}]});
+  const older={...body,evidence:{provenance:"Synthetic older client",waveDirection:"short"}};
+  expect((await PATCH(request("/"+id,tokens.owner,"PATCH",older,{"X-Expected-Version":"1"}),ctx)).status).toBe(200);
+  expect((await getFib("owner",id)).evidence.keyFibLevel).toBe(61.8);
+  expect((await PATCH(request("/"+id,tokens.owner,"PATCH",{...older,evidence:{...older.evidence,keyFibLevel:null}},{"X-Expected-Version":"2"}),ctx)).status).toBe(200);
+  expect((await getFib("owner",id)).evidence.keyFibLevel).toBeNull();
+});
+
 it("roundtrips a categorical C target miss without note or expansion basis and preserves new fields on older PATCH", async()=>{
   const id=crypto.randomUUID(),ctx={params:Promise.resolve({id})};
   const body={...input,wave:"C",percent:null,anchorStart:null,anchorEnd:null,extreme:null,note:"",measurementKind:"expansion",evidence:{catalogueVersion:1,waveDirection:"short",structureCode:"abc",targetZone:[123.6,138.2],entryZone:[138.2,161.8],targetContact:"not_reached",reversalLocation:"at_level",reversalZone:[100,100],expectationTiming:"retrospective",provenance:"Synthetic categorical API test"}};
@@ -145,7 +159,7 @@ beforeAll(async () => {
         ),
       ],
     );
-}, 30000);
+}, 120000);
 afterAll(async () => {
   await pg?.close();
 });

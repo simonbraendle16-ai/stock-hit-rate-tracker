@@ -25,6 +25,23 @@ export function CategoricalResults({
       </CardHeader>
       <CardContent className="flex flex-col gap-5">
         <details open>
+          <summary className="cursor-pointer font-medium">Welche Schlüsselfibonaccis wurden angelaufen?</summary>
+          <FieldNote>Ausdrücklich erfasste Schlüssellevel je Welle, Wellengrad, Timeframe und Messart. Zielzone und Umkehrbereich bleiben getrennt. Fehlende Angaben werden ausgeschlossen.</FieldNote>
+          {!stats.keyFibonacci.groups.length && <p className="text-sm">Noch kein bestätigtes Schlüsselfibonacci in dieser Auswahl.</p>}
+          {stats.keyFibonacci.groups.map((g, i) => (
+            <div key={i} className="mt-3 text-sm">
+              <p>{g.wave} · {formatWaveDegree(g.degree)} · {g.timeframe} · {g.measurementKind} · n={g.n}</p>
+              {g.distribution.map(d => <details key={d.level}>
+                <summary>{levelLabel(d.level)} · {d.n}/{g.n} · {d.share.toLocaleString("de-DE", { maximumFractionDigits: 1 })} %</summary>
+                <p className="break-words text-xs">Fälle: {d.ids.join(", ")}</p>
+              </details>)}
+            </div>
+          ))}
+          <details><summary>Ausschlüsse ({stats.keyFibonacci.excluded.length})</summary>
+            {stats.keyFibonacci.excluded.map(r => <p className="break-words text-xs text-muted-foreground" key={r.id}>{r.id}: {r.reason}</p>)}
+          </details>
+        </details>
+        <details open>
           <summary className="cursor-pointer font-medium">
             Wie häufig wurden die Fibonacci-Levels erreicht?
           </summary>

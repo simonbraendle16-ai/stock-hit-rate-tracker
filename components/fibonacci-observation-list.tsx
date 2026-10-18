@@ -31,6 +31,7 @@ function Details({ row }: { row: FibObservation }) {
           {[
             ["Quelle", row.sourceRef || "Keine Quelle angegeben"],
             ["Bezugsbasis", row.measurementBasis],
+            ["Schlüsselfibonacci", row.evidence?.keyFibLevel != null ? `${row.evidence.keyFibLevel.toLocaleString("de-DE")} %` : "Nicht erhoben"],
             ["Erreichte Levels", row.evidence?.reachedLevels?.join(" / ")],
             ["Verfehlte Levels", row.evidence?.missedLevels?.join(" / ")],
             ["Umkehrzone", row.evidence?.reversalZone?.join(" bis ")],
@@ -146,7 +147,8 @@ export function FibonacciObservationList({
             </div>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <Badge variant="outline">{statusName[row.status]}</Badge>
-              {row.percent == null && !row.evidence?.reversalZone && !row.evidence?.reachedLevels?.length && (
+              {row.evidence?.keyFibLevel != null && <Badge variant="secondary">Schlüsselfibonacci {row.evidence.keyFibLevel.toLocaleString("de-DE")} %</Badge>}
+              {row.percent == null && row.evidence?.keyFibLevel == null && !row.evidence?.reversalZone && !row.evidence?.reachedLevels?.length && (
                 <Badge variant="secondary">Keine Levelangabe</Badge>
               )}
               <span className="text-xs text-muted-foreground">
@@ -206,7 +208,7 @@ export function FibonacciObservationList({
                   </span>
                   <p className="mt-1 text-xs text-muted-foreground">
                     {row.percent == null
-                      ? row.evidence?.reversalZone || row.evidence?.reachedLevels?.length ? "Levelbeobachtung" : "Keine Levelangabe"
+                      ? row.evidence?.reversalZone || row.evidence?.reachedLevels?.length || row.evidence?.keyFibLevel != null ? "Levelbeobachtung" : "Keine Levelangabe"
                       : row.measurementKind === "expansion"
                         ? "Expansion"
                         : "Retracement"}
@@ -214,6 +216,7 @@ export function FibonacciObservationList({
                 </td>
                 <td className="max-w-sm py-4 pr-4">
                   <Badge variant="outline">{statusName[row.status]}</Badge>
+                  {row.evidence?.keyFibLevel != null && <p className="mt-1 text-xs">Schlüsselfibonacci {row.evidence.keyFibLevel.toLocaleString("de-DE")} %</p>}
                   <Details row={row} />
                 </td>
                 <td className="py-4 text-right">{edit(row)}</td>

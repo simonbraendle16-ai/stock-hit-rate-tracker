@@ -47,6 +47,28 @@ const row = (
 });
 
 describe("categorical Fibonacci research", () => {
+  it("keeps the key Fibonacci distinct from target, reversal and exact measurement", () => {
+    const r = row("key", { keyFibLevel: 61.8, targetZone: [50,78.6], reversalLocation: "between_levels", reversalZone: [61.8,78.6] }, {wave: "B"});
+    expect(r.percent).toBeNull();
+    expect(targetResult(r)).toBe("hit");
+    const stats = categoricalStats([r, row("absent"), row("open", {keyFibLevel:50}, {status:"laufend"})]);
+    expect(stats.keyFibonacci.groups[0]).toMatchObject({wave:"B",n:1,distribution:[{level:61.8,ids:["key"],n:1,share:100}]});
+    expect(stats.keyFibonacci.excluded).toHaveLength(2);
+    expect(stats.levels.find(l=>l.level===61.8)?.reached).toEqual(["key"]);
+    expect(stats.reversals.groups[0].distribution[0].zone).toEqual([61.8,78.6]);
+    expect(fibCsv([r])).toContain('""keyFibLevel"":61.8');
+    expect(validateEvidence(evidence({keyFibLevel:0})).keyFibLevel).toBe(0);
+    expect(validateEvidence(evidence({keyFibLevel:null})).keyFibLevel).toBeNull();
+  });
+  it("rejects invalid or contradictory key Fibonacci values without guessing missing values", () => {
+    for (const keyFibLevel of [76.4, NaN, Infinity, -1, "61.8", []])
+      expect(()=>validateEvidence({...evidence(),keyFibLevel})).toThrow();
+    expect(()=>validateEvidence(evidence({keyFibLevel:61.8,missedLevels:[50]}))).toThrow();
+    expect(()=>validateEvidence(evidence({keyFibLevel:78.6,reversalLocation:"between_levels",reversalZone:[61.8,78.6]}))).toThrow();
+    expect(()=>validateEvidence(evidence({keyFibLevel:61.8,targetZone:[50,78.6],targetContact:"not_reached"}))).toThrow();
+    expect(()=>row("exact",{keyFibLevel:61.8},{...validateFibInput({stockId:1,wave:"B",degree:"Minor",timeframe:"1d",observedOn:"2026-01-01",status:"abgeschlossen",percent:50,evidence:evidence({keyFibLevel:61.8})})})).toThrow();
+    expect(row("legacy",{reachedLevels:[61.8],reversalZone:[61.8,78.6],reversalLocation:"between_levels"}).evidence?.keyFibLevel).toBeUndefined();
+  });
   it("offers exactly four orders of the confirmed levels without 76.4 or 127.2", () => {
     expect(RESEARCH_LEVELS).toHaveLength(28);
     expect(new Set(RESEARCH_LEVELS).size).toBe(28);

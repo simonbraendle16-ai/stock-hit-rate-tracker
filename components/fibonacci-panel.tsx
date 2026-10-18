@@ -290,7 +290,7 @@ export function FibonacciPanel({
             "In der aktuellen Auswahl",
           ],
           ["Abgeschlossene Wellen", String(stats.coverage.completed), `${stats.running} laufend · ${stats.unclear} unklar · ${stats.invalid} ungültig`],
-          ["Mit Levelangaben", String(filtered.filter(r=>r.evidence?.reachedLevels?.length || r.evidence?.missedLevels?.length || r.evidence?.reversalZone).length), "Erreichte/verfehlte Levels oder beobachtete Umkehr"],
+          ["Mit Levelangaben", String(filtered.filter(r=>r.evidence?.keyFibLevel != null || r.evidence?.reachedLevels?.length || r.evidence?.missedLevels?.length || r.evidence?.reversalZone).length), "Schlüsselfibonacci, erreichte/verfehlte Levels oder beobachtete Umkehr"],
           ["Dauergruppen", String(stats.categorical.durations.groups.length), "Nach Welle, Wellengrad und Timeframe getrennt"],
         ].map(([label, value, description]) => (
           <Card className="panel" key={label}>

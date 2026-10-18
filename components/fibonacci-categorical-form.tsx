@@ -17,6 +17,7 @@ import {
 import {
   RESEARCH_WAVES,
   STRUCTURES,
+  RESEARCH_LEVELS,
   structureCode,
 } from "@/lib/fibonacci-catalogue";
 import { targetResult } from "@/lib/fibonacci-categorical-stats";
@@ -25,6 +26,7 @@ import {
   ZoneChoice,
   LevelChoices,
   DurationChoice,
+  levelLabel,
 } from "@/components/fibonacci-categorical-inputs";
 import { Button } from "@/components/ui/button";
 import {
@@ -331,6 +333,16 @@ export function CategoricalFibForm({
           </FieldSet>
           <FieldSet>
             <FieldLegend>3 · Tatsächliche Beobachtung</FieldLegend>
+            <Choice
+              label="Schlüsselfibonacci · tatsächlich angelaufenes Level"
+              value={evidence.keyFibLevel == null ? "none" : String(evidence.keyFibLevel)}
+              options={[["none", "Nicht erhoben"], ...RESEARCH_LEVELS.map(v => [String(v), levelLabel(v)] as const)]}
+              onChange={v => setE({ keyFibLevel: v === "none" ? null : Number(v) })}
+            />
+            <FieldDescription>
+              Das entscheidende angelaufene Level, unabhängig von Zielzone und Umkehrbereich.
+              Beispiel: Schlüsselfibonacci 61,8 %, Umkehr zwischen 61,8 und 78,6 %.
+            </FieldDescription>
             <Choice
               label="Zielzone berührt / durchlaufen?"
               value={evidence.targetContact ?? "unknown"}

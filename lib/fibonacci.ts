@@ -400,7 +400,7 @@ export function validateFibInput(raw: Record<string, unknown>): FibInput {
   )
     return fail("Messnotiz darf maximal 2000 Zeichen enthalten.");
   const evidence=validateEvidence(raw.evidence);
-  if (percent != null && evidence.measurementConfidence !== "unklar" && ((evidence.reachedLevels ?? []).some(v=>v>Number(percent)+1e-8) || (evidence.missedLevels ?? []).some(v=>v<=Number(percent)+1e-8))) return fail("Exakte Messung widerspricht den erreichten/verfehlten Levels.");
+  if (percent != null && evidence.measurementConfidence !== "unklar" && ((evidence.keyFibLevel != null && evidence.keyFibLevel > Number(percent)+1e-8) || (evidence.reachedLevels ?? []).some(v=>v>Number(percent)+1e-8) || (evidence.missedLevels ?? []).some(v=>v<=Number(percent)+1e-8))) return fail("Exakte Messung widerspricht den erreichten/verfehlten Levels.");
   if (percent != null && evidence.approximatePercent != null) return fail("Exakte und ungefähre Maximalmessung nicht gleichzeitig angeben.");
   return {
     ...extra,
