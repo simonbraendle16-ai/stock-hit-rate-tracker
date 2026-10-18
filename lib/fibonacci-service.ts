@@ -92,6 +92,9 @@ export async function saveFib(
     ] as const;
     merged = { ...raw };
     for (const key of extended) if (!(key in raw)) merged[key] = previous[key];
+    if (raw.evidence === null && previous.evidence?.targetZoneResidence) {
+      throw new ApiError(422, "Gespeicherte Zielzonen-Verweildauer erhalten oder mit evidence.targetZoneResidence: null ausdrücklich entfernen; evidence: null würde sie unbeabsichtigt löschen.");
+    }
     // Older evidence writers must preserve the new nested extension too.
     if (raw.evidence && typeof raw.evidence === "object" && !Array.isArray(raw.evidence) &&
         !("targetZoneResidence" in raw.evidence) && previous.evidence?.targetZoneResidence) {

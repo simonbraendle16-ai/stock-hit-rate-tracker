@@ -143,6 +143,10 @@ it("roundtrips residence through HTTP, retry, revision and an older nested evide
  const older={...body,evidence:{provenance:evidence.provenance,reversalDurationDays:3,targetZone:[50,61.8]}};
  expect((await PATCH(request("/"+id,tokens.owner,"PATCH",older,{"X-Expected-Version":"1"}),ctx)).status).toBe(200);
  expect((await get()).evidence.targetZoneResidence).toEqual(residence);
+ const bulkClear=await PATCH(request("/"+id,tokens.owner,"PATCH",{...body,evidence:null},{"X-Expected-Version":"2"}),ctx);
+ expect(bulkClear.status).toBe(422);
+ expect((await get()).version).toBe(2);
+ expect((await get()).evidence.targetZoneResidence).toEqual(residence);
  expect((await PATCH(request("/"+id,tokens.owner,"PATCH",body,{"X-Expected-Version":"1"}),ctx)).status).toBe(409);
  const revisions=await (await revisionGET(request("/"+id+"/revisions"),ctx)).json();
  expect(revisions.items).toHaveLength(2);
@@ -168,6 +172,14 @@ it("roundtrips residence through HTTP, retry, revision and an older nested evide
  }
 });
 describe("Fibonacci isolated PostgreSQL and HTTP contract", () => {
+  it("still accepts a legacy evidence clear when no residence is stored", async () => {
+    const id=crypto.randomUUID(),ctx={params:Promise.resolve({id})};
+    const body={...input,evidence:{provenance:"Synthetic",durationDays:2}};
+    await saveFib("owner",id,body);
+    const result=await PATCH(request("/"+id,tokens.owner,"PATCH",{...body,evidence:null},{"X-Expected-Version":"1"}),ctx);
+    expect(result.status).toBe(200);
+    expect((await getFib("owner",id)).evidence).toEqual({});
+  });
   it("roundtrips a descriptive historical case through retry, correction, revisions and filtered statistics", async () => {
     const id = crypto.randomUUID(), ctx = { params: Promise.resolve({ id }) };
     const historical = {

@@ -1,5 +1,7 @@
 # Zielzonen-Verweildauer – lokale Umsetzung vom 18.10.2026
 
+Nachtrag zum erneuten Nutzerauftrag: [Kreuzverhör vor Push](zielzonen-kreuzverhoer-2026-10-18.md). Schutz gegen pauschales `evidence:null` bei bestehender Verweildauer ergänzt; anschließend 77 Fibonacci-Tests, Typprüfung und Diffprüfung bestanden. Vorherige Zahlen unten beschreiben die erste lokale Abnahme. Feature-Branch wird ausdrücklich beauftragt gepusht; kein Merge auf `main` und kein bestätigter Produktionsbetrieb.
+
 Ausgangsrevision des führenden Trackers: `9d98769`. Isolierter Worktree `C:/Users/sabin/Documents/Trading-Assistent/.worktrees/tracker-zielzone`. Keine Änderungen im Hauptcheckout, kein Merge/Push/Deployment, keine Produktivmigration oder persönlichen Schreibtests.
 
 Auswahl direkt im Hauptformular: Nicht erhoben, Touch-and-Go, länger verweilt, unbekannt. Dauer unabhängig als exakt berichtet, ungefähr, Bereich, obere Grenze oder unbekannt. Einheit Minuten/Stunden/Tage; die Dauer-Einheit ist vom Chart-Timeframe getrennt beschriftet. Touch-and-Go darf ebenfalls eine bekannte Dauer haben. Zonen-Snapshot und Originalangabe bleiben erhalten. `unknown` erzwingt keine Zahl. Null-Dauer ist im ersten Ausbau ungültig und wird niemals aus Touch abgeleitet.
