@@ -8,7 +8,7 @@ import { db } from "@/lib/db";
 import { stock } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { listFib } from "@/lib/fibonacci-service";
-import { filterFib } from "@/lib/fibonacci";
+import { selectResearchRows, researchTimeGroups } from "@/lib/fibonacci-workspace";
 import { fibQuery } from "@/lib/fibonacci-query";
 export async function GET(req: NextRequest) {
   try {
@@ -36,10 +36,8 @@ export async function GET(req: NextRequest) {
           s.ticker.toLocaleLowerCase() === query),
     );
     const ids = new Set(instruments.map((s) => s.id));
-    const matches = filterFib(
-      await listFib(userId, filters.stockId),
-      filters,
-    ).filter((r) => ids.has(r.stockId));
+    const rows = (await listFib(userId, filters.stockId)).filter(r=>ids.has(r.stockId));
+    const matches = selectResearchRows(rows,filters);
     const contexts = [
       ...new Map(
         matches.map((r) => [
@@ -57,6 +55,7 @@ export async function GET(req: NextRequest) {
       ).values(),
     ];
     return NextResponse.json({
+      timeSelection: researchTimeGroups(rows,filters),
       contexts,
       instruments,
       candidates: matches.slice(offset, offset + limit),

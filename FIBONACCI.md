@@ -22,7 +22,7 @@ Alle Pfade unter `/api/assistant/v1`, bestehende Tokenrechte `trades:read`/`trad
 - GET/POST `/fibonacci/history`, GET `/fibonacci/history/{uuid}`. Liste stockId optional, aktuell höchstens 100 neueste Datensätze. POST CSV-normalisierte candles oder origin=cache mit from/to in Unix-Sekunden; immer Idempotency-Key. Imports unveränderlich, version=1; Korrektur als neuer Datensatz, danach Beobachtungsbezug versioniert ändern.
 - GET `/instruments`: items mit denselben kontoweiten Kartenwerten, separaten research-Kennzahlen, fibonacci-Fallzahlen und quote, basis nennt Gesamtwerte über alle Depots.
 
-Fibonacci-GET liefert items, total, nextOffset, stats, statsByKind, metrics und basis. Filter/Statistik gelten für die vollständige Auswahl vor Pagination. Messarten getrennt; abgeschlossene gültige Wellen je Kontext einmal. `metrics` zählt eindeutig verknüpfte abgeschlossene Trades einmal, dieselbe Berechnung wie UI. Kartenwerte bleiben kontoweit, auch bei Seiten-/Depotfiltern.
+Fibonacci-GET liefert items, total, nextOffset, stats, statsByKind, metrics und basis. Filter/Statistik gelten für die vollständige Auswahl vor Pagination. Messarten getrennt; abgeschlossene gültige Wellen je Beobachtungs-ID einmal, neueste Revision. `metrics` zählt eindeutig verknüpfte abgeschlossene Trades einmal, dieselbe Berechnung wie UI. Kartenwerte bleiben kontoweit, auch bei Seiten-/Depotfiltern.
 
 ## Kurse und Kennzahlen
 
@@ -51,6 +51,16 @@ Auf **Auswertung → Fibonacci** liegt die instrumentübergreifende Fibonacci-Au
 5. „Speichern“ schreibt und liest den gespeicherten Datensatz serverseitig zurück. Die Stift-Schaltfläche lädt die aktuelle Messung in den Editor. Bei einem Versionskonflikt den aktuellen Stand neu laden, bevor die Korrektur wiederholt wird.
 
 Filter: Instrument, Anlageklasse, Welle, Wellengrad, Zeiteinheit und inklusiver Zeitraum. „Übergeordnet“ umfasst die Gesamtstichprobe über Instrumente sowie die Auswahl höherer Wellengrade. Aktien und Krypto sind separat filterbar. Der CSV-Export enthält alle zur Auswahl passenden Beobachtungen einschließlich Status und exakter Werte, nicht nur die sichtbare Protokollseite. UTF-8 mit BOM, Semikolon, korrekt maskierte Texte und Formelpräfixschutz; Zahlen verwenden einen Dezimalpunkt. Keine Positions- oder Geldbuchung wird verändert.
+
+## T3: historische Zeit und Wellenhierarchie
+
+`evidence.historicalTime = {start, end, source?}` ist optional. Jede Grenze ist `null` (unbekannt) oder `{precision: "day"|"month"|"year", date, approximate?, earliest?, latest?}`. `date` verwendet `JJJJ-MM-TT`, `JJJJ-MM` oder `JJJJ`. Belegte Unsicherheitsgrenzen sind volle ISO-Tage; sie sind nur bei `approximate:true` erlaubt und müssen die nominale Kalenderangabe umschließen. Ungefähre Angaben ohne solche Grenzen erhalten keine erfundene Toleranz. Alte `periodFrom`/`periodTo` bleiben genaue historische Tagesgrenzen, wenn keine strukturierte Zeit vorhanden ist. Widersprechende Angaben werden abgelehnt. `observedOn` bleibt das dokumentierte Erfassungsdatum, unabhängig von `createdAt`.
+
+GET `/fibonacci` und `/fibonacci/context`: `from`/`to` erlauben Tag/Monat/Jahr und wählen standardmäßig historische **Intervallüberlappung**, einschließlich der Suchgrenzen. `timeBasis=recorded` wählt ausdrücklich `observedOn`. `timeMatch=certain|possible|unknown|all` (Standard `certain`) wählt sichere, mögliche oder unbekannte Fälle; `all` umfasst alle außer nachweislich ausgeschlossenen Fällen. `timeSelection` enthält `basis`, `selected`, `denominator` und die disjunkten ID-Gruppen `certain`, `possible`, `unknown`, `excluded` **vor Pagination**. Ohne Zeitgrenzen bleibt die Population ungefiltert; daraus folgt keine Datumsgenauigkeit. Ungültige Suchgrenzen ergeben HTTP 400.
+
+`evidence.parentId` verweist auf eine eigene Beobachtung desselben Instruments. Fehlende/fremde Eltern, Selbstbezug, Zyklen und unvereinbare Instrumentwechsel werden abgelehnt; die additive Migration `0058_fibonacci_hierarchy.sql` sichert konkurrierende Hierarchieänderungen in der DB. `observationId=<UUID>&waveScope=self|descendants` wählt eine Welle allein oder samt Nachkommen; ohne Ausgangswelle ist `waveScope` ungültig. Andere ausdrücklich gesetzte Filter bleiben Schnittmengen. `hierarchyRole=main|subwaves` filtert nach fehlendem/vorhandenem Elternbezug. Das ist keine fachliche Bestätigung eines Hauptcounts.
+
+GET `/fibonacci` liefert außerdem `hierarchyGroups` mit Rolle, IDs, Fallzahl und eigenen `statsByKind`. Kinder behalten eigene IDs; Revisionen ersetzen nur dieselbe Beobachtungs-ID. Liste, Statistik und CSV verwenden dieselbe Auswahl. CSV erhält strukturierte Zeit und Elternbezug im bestehenden JSON-Inhalt. Ältere Schreibclients erhalten ausgelassene neue Angaben; ausdrückliches Löschen erfolgt je Schlüssel mit `null`. Details und Abnahmematrix: [T3-Bericht](docs/tracker-t3-2026-10-18.md).
 
 ## Messdefinition und Statistik
 

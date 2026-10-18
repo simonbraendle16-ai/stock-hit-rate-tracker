@@ -1,3 +1,4 @@
+import { hierarchyError } from "./fibonacci-hierarchy";
 import { isDeepStrictEqual } from "node:util";
 import { db } from "@/lib/db";
 import {
@@ -96,7 +97,7 @@ export async function saveFib(
       throw new ApiError(422, "Gespeicherte Zielzonen-Verweildauer erhalten oder mit evidence.targetZoneResidence: null ausdrücklich entfernen; evidence: null würde sie unbeabsichtigt löschen.");
     }
     // Preserve extensions omitted by older full-replacement clients; null explicitly clears a key.
-    const newKeys = ["targetZoneResidence", "catalogueVersion", "structureCode", "entryZone", "targetContact", "expectationTiming", "reversalLocation", "durations"] as const;
+    const newKeys = ["parentId", "historicalTime", "targetZoneResidence", "catalogueVersion", "structureCode", "entryZone", "targetContact", "expectationTiming", "reversalLocation", "durations"] as const;
     if (raw.evidence === null && newKeys.some(key => previous.evidence?.[key] != null)) {
       throw new ApiError(422, "Strukturierte Angaben ausdrücklich einzeln löschen; evidence:null würde gespeicherte Daten verlieren.");
     }
@@ -144,6 +145,8 @@ export async function saveFib(
       throw new ApiError(404, "Passender Kursdatensatz nicht gefunden.");
   }
   const peers = await listFib(userId);
+  const hierarchyIssue = hierarchyError(peers, {...values,id,version:version ?? 1,ticker:"",name:"",market:""});
+  if (hierarchyIssue) throw new ApiError(422,hierarchyIssue);
   if (
     version === undefined &&
     !validated.contextId &&

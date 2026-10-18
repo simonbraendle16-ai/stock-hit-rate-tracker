@@ -67,7 +67,7 @@ import { cn } from "@/lib/utils";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { FibonacciObservationList } from "@/components/fibonacci-observation-list";
 import {
-  selectResearchRows,
+  selectResearchRows, researchTimeGroups,
   orderResearchRows,
   formatResearchPercent,
   type ResearchSelection,
@@ -116,7 +116,7 @@ function Choice({
       <Select
         items={items}
         value={value || "all"}
-        onValueChange={(v) => onChange(v === "all" ? "" : String(v ?? ""))}
+        onValueChange={(v) => onChange(all && v === "all" ? "" : String(v ?? ""))}
       >
         <SelectTrigger id={id} className="w-full">
           <SelectValue />
@@ -168,6 +168,7 @@ export function FibonacciPanel({
     ...new Set([...FIB_WAVES, ...observations.map((r) => r.wave)]),
   ];
   const readModel = useMemo(()=>fibonacciReadModel(filtered,tradeCoverage,samples,filters.stockId),[filtered,tradeCoverage,samples,filters.stockId]);
+  const timeGroups = useMemo(()=>researchTimeGroups(observations,filters,search,selection),[observations,filters,search,selection]);
   const metrics = readModel.metrics;
   const set = (key: keyof FibFilters, value: string) => {
     setFilters((f) => ({
@@ -213,6 +214,11 @@ export function FibonacciPanel({
     filters.market,
     filters.from,
     filters.to,
+    filters.timeBasis === "recorded",
+    filters.timeMatch && filters.timeMatch !== "certain",
+    filters.hierarchyRole,
+    filters.observationId,
+    filters.observationId && filters.waveScope === "descendants",
   ].filter(Boolean).length;
   const reset = () => {
     setFilters({ stockId, measurementKind: "retracement" });
@@ -420,13 +426,18 @@ export function FibonacciPanel({
                     ([value, label]) => ({ value, label }),
                   )}
                 />
+                <Choice all={false} label="Zeitbasis" value={filters.timeBasis ?? "historical"} onChange={v=>set("timeBasis",v)} options={[{value:"historical",label:"Historische Wellenzeit"},{value:"recorded",label:"Erfassungsdatum"}]}/>
+                <Choice all={false} label="Zeittreffer" value={filters.timeMatch ?? "certain"} onChange={v=>set("timeMatch",v)} options={[{value:"certain",label:"Sichere Treffer"},{value:"possible",label:"Mögliche Treffer"},{value:"unknown",label:"Zeitlich unbekannt"},{value:"all",label:"Alle außer ausgeschlossenen"}]}/>
+                <Choice label="Hierarchiegruppe" value={filters.hierarchyRole ?? ""} onChange={v=>set("hierarchyRole",v)} options={[{value:"main",label:"Hauptwellen / ohne Elternbezug"},{value:"subwaves",label:"Unterwellen"}]}/>
+                <Choice label="Ausgangswelle" value={filters.observationId ?? ""} onChange={v=>{set("observationId",v);if(!v)set("waveScope","");}} options={observations.map(r=>({value:r.id,label:`${r.ticker} · ${r.wave} · ${r.id}`}))}/>
+                {filters.observationId && <Choice all={false} label="Wellenumfang" value={filters.waveScope ?? "self"} onChange={v=>set("waveScope",v)} options={[{value:"self",label:"Welle selbst"},{value:"descendants",label:"Einschließlich Unterwellen"}]}/>}
                 <DateFilter
-                  label="Erfasst von"
+                  label="Zeitraum von (JJJJ, JJJJ-MM oder Datum)"
                   value={filters.from || ""}
                   onChange={(v) => set("from", v)}
                 />
                 <DateFilter
-                  label="Erfasst bis"
+                  label="Zeitraum bis (JJJJ, JJJJ-MM oder Datum)"
                   value={filters.to || ""}
                   onChange={(v) => set("to", v)}
                 />
@@ -436,11 +447,10 @@ export function FibonacciPanel({
               Auswahl zurücksetzen
             </Button>
           </div>
-          {filters.from && filters.to && filters.from > filters.to && (
-            <p role="alert" className="text-sm text-destructive">
-              Der Beginn liegt nach dem Ende. Bitte Zeitraum korrigieren.
-            </p>
-          )}
+          {timeGroups.error && <p role="alert">{timeGroups.error}</p>}
+          {!timeGroups.error && (filters.from || filters.to) && <p className="text-sm" role="status">Zeitbasis: {timeGroups.basis === "historical" ? "historische Wellenzeit" : "Erfassungsdatum"}. {timeGroups.groups.certain.length} sicher · {timeGroups.groups.possible.length} möglich · {timeGroups.groups.unknown.length} unbekannt · {timeGroups.groups.excluded.length} ausgeschlossen / {timeGroups.denominator} Fälle.</p>}
+          <p className="text-sm">Getrennte Hierarchiegruppen: {readModel.hierarchyGroups.map(g=>`${g.role === "main" ? "Hauptwellen / ohne Elternbezug" : "Unterwellen"}: ${g.n}`).join(" · ")}</p>
+
         </CardContent>
       </Card>
 
@@ -1018,6 +1028,7 @@ export function FibonacciPanel({
           {open && (
             <CategoricalFibForm
               key={editing?.id || "new"}
+              observations={observations}
               trades={tradeCoverage}
               instruments={instruments}
               stockId={stockId || filters.stockId}
@@ -1046,7 +1057,8 @@ function DateFilter({
       <FieldLabel htmlFor={id}>{label}</FieldLabel>
       <Input
         id={id}
-        type="date"
+        type="text"
+        placeholder="2008 oder 2008-03 oder 2008-03-12"
         value={value}
         onChange={(e) => onChange(e.target.value)}
       />

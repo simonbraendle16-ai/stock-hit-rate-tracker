@@ -3,7 +3,7 @@ import { RESEARCH_LEVELS, RESEARCH_WAVES, STRUCTURES, DURATION_CLASSES } from "@
 import { loadTradeCoverage, loadMetricSamples } from "@/lib/research-metrics-service";
 import { researchMetrics } from "@/lib/research-metrics";
 import { fibonacciReadModel } from "@/lib/fibonacci-read-model";
-import { selectResearchRows } from "@/lib/fibonacci-workspace";
+import { selectResearchRows, researchTimeGroups } from "@/lib/fibonacci-workspace";
 import { fibQuery } from "@/lib/fibonacci-query";
 import { NextRequest, NextResponse } from "next/server";
 import {
@@ -22,7 +22,8 @@ export async function GET(req: NextRequest) {
     const userId = await requireApiScope(req, "trades:read"),
       p = req.nextUrl.searchParams;
     const { filters, limit, offset, search, selection } = fibQuery(p);
-    const items = selectResearchRows(await listFib(userId, filters.stockId), filters, search, selection);
+    const rows = await listFib(userId, filters.stockId);
+    const items = selectResearchRows(rows, filters, search, selection);
     const [allSamples, tradeCoverage] = await Promise.all([loadMetricSamples(userId), loadTradeCoverage(userId)]);
     return NextResponse.json({
       ...fibonacciReadModel(items,tradeCoverage,allSamples,filters.stockId),
@@ -30,11 +31,12 @@ export async function GET(req: NextRequest) {
       allTradeMetrics: researchMetrics(allSamples.filter(s => !filters.stockId || s.stockId === filters.stockId)),
       items: items.slice(offset, offset + limit),
       total: items.length,
+      timeSelection: researchTimeGroups(rows,filters,search,selection),
       nextOffset: offset + limit < items.length ? offset + limit : null,
       allTradeSamples: allSamples.filter(s => !filters.stockId || s.stockId === filters.stockId),
       basis: {
         filters, search, selection,
-        dates: "from/to filtern observedOn (Erfassungsdatum). Historische Zeiträume stehen separat im Datensatz und sind über search auffindbar.",
+        dates: "from/to filtern standardmäßig historische Überlappung mit sicheren Treffern. timeBasis=recorded wählt observedOn als dokumentiertes Erfassungsdatum. timeMatch wählt certain/possible/unknown/all; timeSelection nennt alle Gruppen vor Pagination.",
         allTrades: "Alle eingetragenen Trades qualitativ, Geldkennzahlen nur abgeschlossene Trades; nur Instrumentfilter; Wellenfilter gelten hier nicht. Fehlende Abrechnung blockiert ausschließlich Geldkennzahlen.",
         waves: "Ausgewählte Beobachtungen nach stabiler ID und Messart; neueste Revision je ID. Abschlusskennzahlen und vorläufige laufende Angaben getrennt.",
         trades: "Eindeutig verknüpfte eigene Trades mit passendem Instrument, nach jeweiligem Trade-Status; Netto nur abgeschlossene Trades.",

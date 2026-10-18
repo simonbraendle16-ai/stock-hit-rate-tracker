@@ -1,3 +1,4 @@
+import { hierarchyGroups } from "./fibonacci-hierarchy";
 import { fibStats, runningFibStats, simulationSummary, latestObservations, type FibObservation } from "./fibonacci";
 import { researchMetrics, type MetricSample } from "./research-metrics";
 import { tradeResearchByKind, summarizeTradeResearch, tradeResearchCoverage, uniqueTrades, type TradeResearchRow } from "./trade-research-coverage";
@@ -23,6 +24,7 @@ export function fibonacciReadModel(observations: readonly FibObservation[], trad
     ...tradeResearchByKind(allTrades),
     tradeSummary: summarizeTradeResearch(allTrades),
     tradeResearchCoverage: tradeResearchCoverage(allTrades),
+    hierarchyGroups: hierarchyGroups(selected),
     simulationSummary: simulationSummary(selected),
     runningStatsByKind: {retracement:runningFibStats(selected,"retracement"),expansion:runningFibStats(selected,"expansion")},
     statsByKind: {retracement:fibStats(selected,"retracement"),expansion:fibStats(selected,"expansion")},

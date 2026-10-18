@@ -1,4 +1,6 @@
 "use client";
+import { HistoricalTimeFields } from "@/components/fibonacci-time-fields";
+import { historicalTime } from "@/lib/fibonacci-time";
 import { InstrumentPicker } from "@/components/instrument-picker";
 import { formatWaveDegree } from "@/lib/wave-degree-labels";
 import { useState, useTransition, useId } from "react";
@@ -46,6 +48,7 @@ export function CategoricalFibForm({
   defaults,
   close,
   trades = [],
+  observations = [],
 }: {
   instruments: Instrument[];
   stockId?: number;
@@ -53,6 +56,7 @@ export function CategoricalFibForm({
   defaults: FibFilters;
   close: () => void;
   trades?: TradeResearchRow[];
+  observations?: FibObservation[];
 }) {
   const router = useRouter(),
     prefix = useId(),
@@ -84,6 +88,7 @@ export function CategoricalFibForm({
         provenance: "Direkte Formulareingabe des Nutzers",
       },
   );
+  const [time, setTime] = useState(() => existing ? historicalTime(existing) : {start:null,end:null});
   const set = (k: keyof typeof form, v: string) =>
     setForm((p) => ({ ...p, [k]: v }));
   const setE = (v: Partial<FibEvidence>) =>
@@ -144,8 +149,6 @@ export function CategoricalFibForm({
           status: form.status,
           measurementKind: form.measurementKind,
           observedOn: form.observedOn,
-          periodFrom: form.periodFrom || null,
-          periodTo: form.periodTo || null,
           note: form.note,
           sourceRef: form.sourceRef || null,
           tradeId: form.tradeId === "none" ? null : Number(form.tradeId),
@@ -153,7 +156,9 @@ export function CategoricalFibForm({
           hypotheticalOutcome: form.hypotheticalOutcome,
           actualOutcome: form.actualOutcome,
           structure,
-          evidence,
+          evidence: {...evidence,historicalTime:time,provenance:evidence.provenance || "Direkte Formulareingabe des Nutzers"},
+          periodFrom: time.start?.precision === "day" && !time.start.approximate ? time.start.date : null,
+          periodTo: time.end?.precision === "day" && !time.end.approximate ? time.end.date : null,
           // Historical measurements and links survive category-only edits.
           percent: existing?.percent ?? null,
           anchorStart: existing?.anchorStart ?? null,
@@ -414,8 +419,6 @@ export function CategoricalFibForm({
               {(
                 [
                   ["observedOn", "Erfasst am"],
-                  ["periodFrom", "Historischer Zeitraum von · optional"],
-                  ["periodTo", "Historischer Zeitraum bis · optional"],
                 ] as const
               ).map(([k, l]) => (
                 <Field key={k}>
@@ -431,6 +434,8 @@ export function CategoricalFibForm({
                 </Field>
               ))}
             </FieldGroup>
+            <HistoricalTimeFields value={time} onChange={setTime}/>
+            <Choice label="Elternwelle · optional" value={evidence.parentId ?? "none"} options={[["none","Keine Elternwelle"],...observations.filter(r=>r.id !== id && r.stockId === Number(form.stockId)).map(r=>[r.id,`${r.ticker} · ${r.wave} · ${r.id}`] as const)]} onChange={v=>setE({parentId:v === "none" ? null : v})}/>
             <DurationChoice
               label="Wellendauer"
               type="wave"

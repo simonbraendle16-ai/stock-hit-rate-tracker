@@ -133,6 +133,7 @@ beforeAll(async () => {
   await pg.exec(readFileSync(new URL("../drizzle/0051_fibonacci_two_hour.sql", import.meta.url), "utf8"));
   await pg.exec(readFileSync(new URL("../drizzle/0056_fibonacci_evidence.sql", import.meta.url), "utf8"));
   await pg.exec(readFileSync(new URL("../drizzle/0057_fibonacci_categorical_form.sql", import.meta.url), "utf8"));
+  await pg.exec(readFileSync(new URL("../drizzle/0058_fibonacci_hierarchy.sql", import.meta.url), "utf8"));
   for (const [key, value] of Object.entries(tokens))
     await pg.query(
       'INSERT INTO assistant_api_token ("userId","tokenHash",scopes) VALUES ($1,$2,$3)',
@@ -632,4 +633,48 @@ it("supports two-hour observations and filters after an idempotent upgrade", asy
   expect(data.stats.n).toBe(1);
   expect(data.stats.mean).toBe(70.2);
   await expect(saveFib("owner",crypto.randomUUID(),{...input,timeframe:"3h"})).rejects.toThrow();
+});
+
+it("T3 roundtrips historical precision, parents, revisions, pagination and time groups", async()=>{
+ const root=crypto.randomUUID(),child1=crypto.randomUUID(),child2=crypto.randomUUID();
+ const historicalTime={start:{precision:"year",date:"2008"},end:{precision:"month",date:"2009-02"},source:"Synthetic chart"};
+ const rootBody={...input,evidence:{...input.evidence,historicalTime}};
+ await saveFib("owner",root,rootBody);
+ for(const [id,wave] of [[child1,"A"],[child2,"C"]]) {
+   const body={...input,wave,evidence:{...input.evidence,parentId:root,historicalTime}};
+   for(let i=0;i<2;i++)expect((await POST(request("",tokens.owner,"POST",body,{"Idempotency-Key":id}))).status).toBe(201);
+ }
+ const url="?from=2000&to=2010&observationId="+root+"&waveScope=descendants&limit=1";
+ const data=await (await GET(request(url))).json();
+ expect(data.total).toBe(3);expect(data.items).toHaveLength(1);expect(data.timeSelection.groups.certain).toHaveLength(3);
+ expect(data.hierarchyGroups.map((g:any)=>g.n)).toEqual([1,2]);
+ expect(data.stats.n).toBe(3);
+ const second=await (await GET(request(url+"&offset=1"))).json();
+ expect(second.stats).toEqual(data.stats);expect(second.items[0].id).not.toBe(data.items[0].id);
+ const ctx=await (await contextGET(request(url))).json();expect(ctx.total).toBe(3);expect(ctx.timeSelection).toEqual(data.timeSelection);
+ const oldClient={...input,wave:"A",evidence:{...input.evidence,reachedLevels:[50]}};
+ await saveFib("owner",child1,oldClient,1);
+ expect((await getFib("owner",child1)).evidence).toMatchObject({historicalTime,parentId:root});
+ const revisions=await (await revisionGET(request("/"+child1+"/revisions"),{params:Promise.resolve({id:child1})})).json();
+ expect(revisions.items).toHaveLength(2);expect(revisions.items.every((r:any)=>r.snapshot.evidence.parentId===root)).toBe(true);
+ expect((await (await GET(request("?from=2020&to=2025"))).json()).total).toBe(0);
+ expect((await (await GET(request("?from=2026&timeBasis=recorded"))).json()).total).toBe(3);
+ expect((await (await GET(request("?from=2008-03&to=2008-04&timeMatch=possible"))).json()).total).toBe(3);
+ expect((await GET(request("?from=2008-02-30"))).status).toBe(400);
+ const before=(await pg.query('SELECT to_jsonb(o) AS value FROM fibonacci_observation o ORDER BY id')).rows;
+ for(let i=0;i<2;i++) await pg.exec(readFileSync(new URL("../drizzle/0058_fibonacci_hierarchy.sql",import.meta.url),"utf8"));
+ expect((await pg.query('SELECT to_jsonb(o) AS value FROM fibonacci_observation o ORDER BY id')).rows).toEqual(before);
+});
+it("T3 rejects invalid parents in service and database, including concurrent cycles",async()=>{
+ const root=crypto.randomUUID(),child=crypto.randomUUID();
+ await saveFib("owner",root,input);
+ await saveFib("owner",child,{...input,wave:"A",evidence:{...input.evidence,parentId:root}});
+ for(const parentId of [child,root,crypto.randomUUID()]) await expect(saveFib("owner",root,{...input,evidence:{...input.evidence,parentId}},1)).rejects.toMatchObject({status:422});
+ const foreign=crypto.randomUUID();await saveFib("other",foreign,{...input,stockId:2});
+ await expect(saveFib("owner",crypto.randomUUID(),{...input,evidence:{...input.evidence,parentId:foreign}})).rejects.toMatchObject({status:422});
+ await expect(pg.query('UPDATE fibonacci_observation SET evidence=jsonb_set(evidence,\'{parentId}\',to_jsonb($1::text)) WHERE id=$2',[child,root])).rejects.toThrow();
+ const a=crypto.randomUUID(),b=crypto.randomUUID();await saveFib("owner",a,{...input,wave:"X"});await saveFib("owner",b,{...input,wave:"Y"});
+ const updates=await Promise.allSettled([saveFib("owner",a,{...input,wave:"X",evidence:{...input.evidence,parentId:b}},1),saveFib("owner",b,{...input,wave:"Y",evidence:{...input.evidence,parentId:a}},1)]);
+ expect(updates.filter(r=>r.status==="fulfilled")).toHaveLength(1);
+ expect(updates.filter(r=>r.status==="rejected")).toHaveLength(1);
 });

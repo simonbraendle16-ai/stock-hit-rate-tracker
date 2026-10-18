@@ -146,6 +146,7 @@ describe("Fibonacci measurement and descriptive statistics", () => {
         wave: "B",
         degree: "Minor",
         timeframe: "1d",
+        timeBasis: "recorded",
         from: "2026-01-01",
         to: "2026-01-01",
       }),

@@ -1,3 +1,4 @@
+import { timeMatch, dateEnvelope, boundaryEnvelope, historicalTimeError, type HistoricalTime } from "./fibonacci-time";
 import { researchEvidenceError, RESEARCH_EVIDENCE_KEYS, STRUCTURES, structureCode, type ResearchEvidence } from "./fibonacci-catalogue";
 import { categoricalStats } from "./fibonacci-categorical-stats";
 import { residenceError, residenceLabel, residenceKindLabels, residenceComparisons, type TargetZoneResidence } from "./fibonacci-residence";
@@ -61,6 +62,7 @@ export type FibEvidence = ResearchEvidence & {
   hypotheticalCRV?: number | null;
   periodLabel?: string | null;
   parentId?: string | null;
+  historicalTime?: HistoricalTime | null;
   durationDays?: number | null;
   reversalDurationDays?: number | null;
   targetZoneResidence?: TargetZoneResidence | null;
@@ -71,7 +73,7 @@ export function validateEvidence(value: unknown): FibEvidence {
   if (value == null) return {};
   if (typeof value !== "object" || Array.isArray(value)) return fail("Ungültige Beobachtungsangaben.");
   const raw = value as Record<string, unknown>;
-  const keys = [...RESEARCH_EVIDENCE_KEYS, "targetZoneResidence", "approximateReachedLevel", "hypotheticalExitLevel", "hypotheticalCRVBasis", "measurementConfidence", "reachedLevels", "missedLevels", "reversalZone", "targetZone", "waveDirection", "approximatePercent", "hypotheticalCRV", "periodLabel", "parentId", "durationDays", "reversalDurationDays", "structureConfidence", "provenance"];
+  const keys = [...RESEARCH_EVIDENCE_KEYS, "targetZoneResidence", "approximateReachedLevel", "hypotheticalExitLevel", "hypotheticalCRVBasis", "measurementConfidence", "reachedLevels", "missedLevels", "reversalZone", "targetZone", "waveDirection", "approximatePercent", "hypotheticalCRV", "periodLabel", "parentId", "historicalTime", "durationDays", "reversalDurationDays", "structureConfidence", "provenance"];
   if (Object.keys(raw).some(k => !keys.includes(k))) return fail("Unbekannte Beobachtungsangabe.");
   const number = (n: unknown) => typeof n === "number" && Number.isFinite(n) && n >= 0;
   for (const k of ["reachedLevels", "missedLevels"]) if (raw[k] !== undefined && (!Array.isArray(raw[k]) || raw[k].length > 50 || !raw[k].every(number) || new Set(raw[k]).size !== raw[k].length)) return fail("Ungültige Fibonacci-Level.");
@@ -80,12 +82,14 @@ export function validateEvidence(value: unknown): FibEvidence {
   if (raw.waveDirection !== undefined && !["long", "short", "unbekannt"].includes(String(raw.waveDirection))) return fail("Ungültige Wellenrichtung.");
   if (raw.structureConfidence !== undefined && !["bestaetigt", "vermutet", "unbekannt"].includes(String(raw.structureConfidence))) return fail("Ungültige Struktursicherheit.");
   for (const k of ["periodLabel", "provenance", "hypotheticalCRVBasis"]) if (raw[k] != null && (typeof raw[k] !== "string" || !raw[k].trim() || raw[k].length > 2000)) return fail("Ungültige Herkunft/Zeitraumbeschreibung.");
-  if (raw.parentId != null && (typeof raw.parentId !== "string" || !/^[0-9a-f-]{36}$/i.test(raw.parentId))) return fail("Ungültiger Elternbezug.");
+  if (raw.parentId != null && (typeof raw.parentId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw.parentId))) return fail("Ungültiger Elternbezug.");
   if (raw.measurementConfidence !== undefined && !["bestaetigt","unklar"].includes(String(raw.measurementConfidence))) return fail("Ungültige Messartsicherheit.");
   if (raw.targetZoneResidence != null) {
     const error = residenceError(raw.targetZoneResidence);
     if (error) return fail(error);
   }
+  const timeError = historicalTimeError(raw.historicalTime);
+  if (timeError) return fail(timeError);
   const researchError = researchEvidenceError(raw);
   if (researchError) return fail(researchError);
   const e = raw as FibEvidence;
@@ -251,6 +255,15 @@ export function validateFibInput(raw: Record<string, unknown>): FibInput {
     (periodFrom && periodTo && periodFrom > periodTo)
   )
     return fail("Ungültiger Beobachtungszeitraum.");
+  const structuredTime = (raw.evidence as FibEvidence | undefined)?.historicalTime;
+  if (structuredTime && !historicalTimeError(structuredTime)) {
+    for (const [date,boundary] of [[periodFrom,structuredTime.start],[periodTo,structuredTime.end]] as const) {
+      if (!date) continue;
+      if (!boundary) return fail("Historische Tagesangabe widerspricht der unbekannten strukturierten Grenze.");
+      const [lo,hi]=boundaryEnvelope(boundary);
+      if ((lo && date<lo) || (hi && date>hi)) return fail("Historische Tagesangabe widerspricht der strukturierten Zeitangabe.");
+    }
+  }
   const target = raw.target ?? null;
   if (
     target !== null &&
@@ -558,6 +571,11 @@ export type FibFilters = {
   degree?: string;
   timeframe?: string;
   structure?: string;
+  timeBasis?: "historical" | "recorded";
+  timeMatch?: "certain" | "possible" | "unknown" | "all";
+  observationId?: string;
+  waveScope?: "self" | "descendants";
+  hierarchyRole?: "main" | "subwaves";
   from?: string;
   to?: string;
 };
@@ -565,6 +583,8 @@ export function filterFib(
   rows: readonly FibObservation[],
   filters: FibFilters,
 ) {
+  if (filters.from) dateEnvelope(filters.from);
+  if (filters.to) dateEnvelope(filters.to);
   return rows.filter(
     (r) =>
       (!filters.measurementKind ||
@@ -578,8 +598,7 @@ export function filterFib(
       (!filters.degree || r.degree === filters.degree) &&
       (!filters.timeframe || r.timeframe === filters.timeframe) &&
       (!filters.structure || (filters.structure.startsWith("family:") ? STRUCTURES.find(([code])=>code===(r.evidence?.structureCode ?? structureCode(r.structure)))?.[2]===filters.structure.slice(7) : (r.evidence?.structureCode ?? structureCode(r.structure) ?? "unknown")===filters.structure)) &&
-      (!filters.from || r.observedOn >= filters.from) &&
-      (!filters.to || r.observedOn <= filters.to),
+      ((!filters.from && !filters.to) || (filters.timeMatch === "all" ? timeMatch(r,filters) !== "excluded" : timeMatch(r,filters) === (filters.timeMatch ?? "certain"))),
   );
 }
 export function fibCsv(rows: readonly FibObservation[]) {

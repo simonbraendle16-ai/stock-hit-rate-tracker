@@ -1,3 +1,5 @@
+import { hierarchyIds } from "./fibonacci-hierarchy";
+import { timeMatch, timeFilterError } from "./fibonacci-time";
 import { filterFib, latestObservations, type FibFilters, type FibObservation } from "./fibonacci";
 
 export type ResearchSelection = "all" | "missing" | "running" | "completed";
@@ -12,8 +14,13 @@ export function selectResearchRows(
   search = "",
   selection: ResearchSelection = "all",
 ) {
+  if (timeFilterError(filters)) return [];
   const words = searchable(search.trim()).split(/\s+/).filter(Boolean);
-  return filterFib(latestObservations(rows), filters).filter((row) => {
+  const latest = latestObservations(rows);
+  const ids = filters.observationId ? hierarchyIds(latest,filters.observationId,filters.waveScope === "descendants") : null;
+  return filterFib(latest, filters).filter((row) => {
+    if (ids && !ids.has(row.id)) return false;
+    if (filters.hierarchyRole && (Boolean(row.evidence?.parentId) !== (filters.hierarchyRole === "subwaves"))) return false;
     if (selection === "missing" && row.percent != null) return false;
     if (selection === "running" && row.status !== "laufend") return false;
     if (selection === "completed" && row.status !== "abgeschlossen")
@@ -61,4 +68,14 @@ export function formatResearchPercent(value: number | null | undefined) {
   return value == null
     ? "—"
     : value.toLocaleString("de-DE", { maximumFractionDigits: 1 }) + " %";
+}
+
+/** Same non-time selection and full population for every time group, before pagination. */
+export function researchTimeGroups(rows: readonly FibObservation[], filters: FibFilters, search = "", selection: ResearchSelection = "all") {
+  const population = selectResearchRows(rows,{...filters,from:undefined,to:undefined},search,selection);
+  const groups: Record<"certain"|"possible"|"unknown"|"excluded",string[]> = {certain:[],possible:[],unknown:[],excluded:[]};
+  const error = timeFilterError(filters);
+  if (!error) for (const row of population) groups[timeMatch(row,filters)].push(row.id);
+  for (const ids of Object.values(groups)) ids.sort();
+  return {error,basis:filters.timeBasis ?? "historical",selected:filters.timeMatch ?? "certain",denominator:population.length,groups};
 }

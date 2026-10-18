@@ -40,6 +40,7 @@ await migrateFibonacci({
 })
 await database.exec(readFileSync(new URL('../drizzle/0056_fibonacci_evidence.sql', import.meta.url),'utf8'));
 await database.exec(readFileSync(new URL('../drizzle/0057_fibonacci_categorical_form.sql', import.meta.url),'utf8'));
+await database.exec(readFileSync(new URL('../drizzle/0058_fibonacci_hierarchy.sql', import.meta.url),'utf8'));
 const owner = 'fibonacci-local-qa',
   email = 'fibonacci-qa@example.invalid',
   password = 'Local-Fibonacci-QA-2026!'
@@ -55,7 +56,7 @@ if (!process.argv.includes('--empty')) await database.query(
   "INSERT INTO stock(id,\"userId\",name,ticker,market) VALUES (1,$1,'Synthetische Aktie','FIBQA-S','aktien'),(2,$1,'Synthetisches Krypto','FIBQA-C','krypto')",
   [owner],
 )
-if (!process.argv.includes('--empty')) {
+if (!process.argv.includes('--empty') && !process.argv.includes('--t3')) {
   const levels = [
     38.2, 50, 61.8, 61.8, 61.8, 78.6, 100, 61.8, 38.2, 61.8, 78.6, 127.2, 23.6,
     61.8, 50, 161.8, 38.2, 78.6, 61.8, 100, 50, 61.8, 61.8, 78.6,
@@ -79,6 +80,21 @@ if (!process.argv.includes('--empty')) {
         JSON.stringify({reachedLevels:i%3===1?[38.2]:[],missedLevels:i%3===1?[50]:[],reversalZone:i%3===2?[38.2,50]:null,hypotheticalCRV:i%2?5:null,provenance:'Synthetische lokale Erfassung'}),
       ],
     )
+}
+if (process.argv.includes('--t3')) {
+  const root = '10000000-0000-4000-8000-000000000001';
+  const entries = [
+    [root, '4', null, {start:{precision:'day',date:'2008-01-01'},end:{precision:'day',date:'2008-12-31'}}],
+    ['10000000-0000-4000-8000-000000000002', 'A', root, {start:{precision:'year',date:'2008'},end:{precision:'year',date:'2008'}}],
+    ['10000000-0000-4000-8000-000000000003', 'C', root, {start:{precision:'month',date:'2008-03'},end:{precision:'month',date:'2008-04'}}],
+    ['10000000-0000-4000-8000-000000000004', 'B', null, {start:{precision:'year',date:'2008',approximate:true},end:null}],
+    ['10000000-0000-4000-8000-000000000005', '5', null, {start:{precision:'year',date:'2010'},end:{precision:'year',date:'2010'}}],
+  ];
+  for (const [id,wave,parentId,historicalTime] of entries) await database.query(
+    `INSERT INTO fibonacci_observation(id,"contextId","userId","stockId",wave,degree,timeframe,"observedOn",status,percent,note,evidence)
+     VALUES($1,$1,$2,1,$3,'Minor','1d','2026-10-18','abgeschlossen',50,'Synthetischer T3-Prüffall – keine echten Marktdaten.',$4)`,
+    [id,owner,wave,JSON.stringify({parentId,historicalTime,waveDirection:'long',provenance:'Synthetische lokale T3-Abnahme'})],
+  );
 }
 if (process.argv.includes('--block-a')) {
   const {seedBlockA} = await import('./seed-block-a-qa.mjs');

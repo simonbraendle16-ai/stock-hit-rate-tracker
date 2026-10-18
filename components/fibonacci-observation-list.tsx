@@ -1,4 +1,5 @@
 "use client";
+import { timeLabel } from "@/lib/fibonacci-time";
 import { formatWaveDegree } from "@/lib/wave-degree-labels";
 
 import { Pencil, ArrowUpRight } from "lucide-react";
@@ -45,6 +46,8 @@ function Details({ row }: { row: FibObservation }) {
             ["Ungefähre Messung %", row.evidence?.approximatePercent != null ? String(row.evidence.approximatePercent) : null],
             ["Hypothetisches CRV", row.evidence?.hypotheticalCRV != null ? `1:${row.evidence.hypotheticalCRV}` : null],
             ["Historischer Zeitraum", row.evidence?.periodLabel],
+            ["Elternwelle", row.evidence?.parentId],
+            ["Zeitquelle", row.evidence?.historicalTime?.source],
             ["Herkunft strukturierter Angaben", row.evidence?.provenance],
             ["Struktur", row.structure],
             [
@@ -55,8 +58,8 @@ function Details({ row }: { row: FibObservation }) {
             ],
             [
               "Zeitraum",
-              row.periodFrom || row.periodTo
-                ? `${row.periodFrom || "offen"} bis ${row.periodTo || "offen"}`
+              row.evidence?.historicalTime || row.periodFrom || row.periodTo
+                ? timeLabel(row)
                 : null,
             ],
             ["Kursziel", row.target != null ? String(row.target) : null],
