@@ -742,11 +742,11 @@ export function runningFibStats(rows: readonly FibObservation[], kind: "retracem
 
 export function simulationSummary(rows: readonly FibObservation[]) {
   const selected = latestObservations(rows);
-  const metric = (definition: string, get: (r: FibObservation) => unknown) => {
+  const metric = (definition: string, get: (r: FibObservation) => unknown, completedOnly = false) => {
     const included: {id:string;value:unknown}[] = [], excluded: {id:string;reason:string}[] = [];
     for (const r of selected) {
       const value = get(r);
-      if (r.status !== "abgeschlossen") excluded.push({id:r.id,reason:`Status ${r.status}; kein abgeschlossener hypothetischer Fall`});
+      if (r.status !== "abgeschlossen" && (completedOnly || r.status !== "laufend")) excluded.push({id:r.id,reason:`Status ${r.status}; ${completedOnly ? "kein abgeschlossener hypothetischer Fall" : "keine laufende oder abgeschlossene Beobachtung"}`});
       else if (value == null || value === "unbekannt" || (Array.isArray(value) && !value.length)) excluded.push({id:r.id,reason:"Hypothetische Angabe fehlt"});
       else included.push({id:r.id,value});
     }
@@ -757,9 +757,9 @@ export function simulationSummary(rows: readonly FibObservation[]) {
     definition: "Historische Simulation aus gespeicherten hypothetischen Angaben; keine tatsächliche Ausführung, Prognose oder Geldrendite. Varianten bleiben ihrer Beobachtung zugeordnet.",
     total: selected.length,
     hypotheticalCRV: metric("Hypothetisches Plan-CRV; kein realisiertes R.",r=>r.evidence?.hypotheticalCRV),
-    hypotheticalOutcome: metric("Gespeicherter hypothetischer Ausgang; kein tatsächlicher Gewinn.",r=>r.hypotheticalOutcome),
+    hypotheticalOutcome: metric("Gespeicherter hypothetischer Ausgang abgeschlossener Beobachtungen; kein tatsächlicher Gewinn.",r=>r.hypotheticalOutcome,true),
     hypotheticalExitLevel: metric("Hypothetischer Exit; kein Wellenendlevel.",r=>r.evidence?.hypotheticalExitLevel),
     hypotheticalCRVBasis: metric("Dokumentierter Bezug des hypothetischen CRV.",r=>r.evidence?.hypotheticalCRVBasis),
-    stopVariants: metric("Hypothetische Varianten je Beobachtung; keine zusätzlichen Fälle.",r=>(r.stopVariants ?? []).filter(v=>v.kind === "hypothetisch")),
+    stopVariants: metric("Hypothetische Ergebnisvarianten abgeschlossener Beobachtungen; keine zusätzlichen Fälle.",r=>(r.stopVariants ?? []).filter(v=>v.kind === "hypothetisch"),true),
   };
 }

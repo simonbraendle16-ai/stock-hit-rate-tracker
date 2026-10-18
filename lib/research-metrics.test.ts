@@ -94,3 +94,19 @@ it("uses original snapshot for planned CRV even when the current target changes"
 });
 it("does not count planned or active trades as closed", () =>
   expect(metricSamples([{ ...t, status: "aktiv" }], new Map())).toEqual([]));
+
+it("uses original risk for realized R even without a recorded target, and keeps CRV independent of quantity",()=>{
+  const events=(snapshot:object)=>[
+    {id:1,tradeId:1,type:"eroeffnet",at:new Date("2026-01-01"),quantity:1,price:100,fee:0,payload:JSON.stringify({planningSnapshot:snapshot})},
+    {id:2,tradeId:1,type:"geschlossen",at:new Date("2026-01-02"),quantity:1,price:120,fee:0,payload:null},
+  ] as any;
+  const risk={entryPrice:100,stopLoss:90,direction:"long",positionSize:1,quoteToAccountRate:1,quoteCurrency:"EUR",accountCurrency:"EUR"};
+  const noTarget=metricSamples([t],new Map([[1,events({...risk,takeProfit:null})]]))[0];
+  expect(noTarget).toMatchObject({net:20,plannedCRV:null,realizedR:2});
+  const noSize=metricSamples([t],new Map([[1,events({...risk,positionSize:null,takeProfit:130})]]))[0];
+  expect(noSize).toMatchObject({net:20,plannedCRV:3,realizedR:null});
+  const badFx=metricSamples([t],new Map([[1,events({...risk,quoteToAccountRate:0,takeProfit:130})]]))[0];
+  expect(badFx.plannedCRV).toBe(3);expect(badFx.realizedR).toBeNull();
+  const missingCurrency=metricSamples([t],new Map([[1,events({...risk,quoteCurrency:null,takeProfit:130})]]))[0];
+  expect(missingCurrency.plannedCRV).toBe(3);expect(missingCurrency.realizedR).toBeNull();
+});

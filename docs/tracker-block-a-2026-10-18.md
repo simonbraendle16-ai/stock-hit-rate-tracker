@@ -1,6 +1,6 @@
 # Tracker-Arbeitsblock A – T0 bis T2, 18.10.2026
 
-Lokale Implementierung im isolierten Branch `feat/tracker-block-a-20261018`, Basis `b00d9c0`. Führendes Repository: `C:/Users/sabin/Documents/Agentic Coding/Apps/stock-hit-rate-tracker`. Worktree: `C:/Users/sabin/Documents/Trading-Assistent/.worktrees/tracker-block-a`. Kein Push, keine produktive Migration und keine persönlichen Datenänderungen. T3–T7 nicht als abgeschlossen behandeln.
+Implementierung im isolierten Branch `feat/tracker-block-a-20261018`, Basis `b00d9c0`. Führendes Repository: `C:/Users/sabin/Documents/Agentic Coding/Apps/stock-hit-rate-tracker`. Worktree: `C:/Users/sabin/Documents/Trading-Assistent/.worktrees/tracker-block-a`. Der Folgeauftrag autorisiert nach dem Kreuzverhör ausdrücklich die Übernahme und den Push auf `main`. Keine produktive Migration und keine persönlichen Datenänderungen. T3–T7 nicht als abgeschlossen behandeln.
 
 ## T0 – Ausgangslage
 
@@ -50,6 +50,23 @@ Hauptcheckout sauber, Verweildauer-Ausbau bereits in Basisrevision. Vollständig
 
 ## Grenzen und Rücknahme
 
-Nur lokale Implementierung und technische Prüfung. Keine Veröffentlichung, produktive Abnahme oder Änderung persönlicher Daten. Zeitfilter, Endlevelsuche, Hierarchieausbau und Design bleiben spätere Blöcke. Bestehender Schreibschutz erlaubt weiterhin nicht beliebig mehrere gleichartige Messungen im selben Kontext; dieser Block korrigiert die lesende Zählung und erweitert keine Schreibrechte.
+Technische Prüfung und gesondert autorisierte Veröffentlichung; eine produktive Abnahme folgt erst am veröffentlichten Stand. Zeitfilter, Endlevelsuche, Hierarchieausbau und Design bleiben spätere Blöcke. Bestehender Schreibschutz erlaubt weiterhin nicht beliebig mehrere gleichartige Messungen im selben Kontext; dieser Block korrigiert die lesende Zählung und erweitert keine Schreibrechte.
 
 Rücknahme: eigenen Block-Commit auf dem isolierten Branch gezielt revertieren. Keine Datenrückmigration erforderlich. Vor einer späteren Übernahme Hauptstand und parallele Änderungen erneut prüfen; Hauptcheckout und andere Projektänderungen nicht zurücksetzen. Testwerkzeuge über lokale Junctions sind nicht Teil der veröffentlichten Anwendung.
+
+## Kreuzverhör und Restabschluss am 18.10.2026
+
+Die Ursprungssession `01a14e39-5e26-7f10-8175-3cd4f5f32e09` wurde bis zum letzten Ereignis gelesen. Sie endete am Nutzungslimit, nachdem die Korrekturen und 1.462 Tests vorlagen, aber vor Abschlussdokumentation, Commit und Push. Der spätere Prozessabschluss der lokalen Vorschau ist kein Veröffentlichungsnachweis.
+
+Belegte Lücken und Korrekturen:
+
+- Realisiertes R verlangt ursprüngliches Risiko mit gültigem eingefrorenem Währungsbezug, jedoch kein Kursziel. Plan-CRV bleibt unabhängig von Positionsgröße und Geldabrechnung. Fehler- und Gegenfälle für fehlendes Ziel, fehlende Menge, ungültigen FX-Kurs und fehlende Währung bestehen.
+- Dokumentierte hypothetische CRV-/Exitplanangaben laufender Wellen bleiben verwendbar. Hypothetische Ausgänge und Ergebnisvarianten bleiben abgeschlossenen Beobachtungen vorbehalten; ungültige Fälle ausgeschlossen.
+- Verknüpfte Geldsamples müssen Instrument und geprüfter Depotart entsprechen. Fehlende oder abweichende Samples haben eigene Ausschlussgründe und nachvollziehbare Bezugsmenge.
+- Der isolierte Integrationstest wendet die vollständigen relevanten Fibonacci-Migrationen an und prüft den tatsächlichen Kontext-/Messartindex mit einem abgewiesenen Duplikat. Keine Erweiterung der Schreibrechte.
+
+Frische Abschlussprüfung: **101 Testdateien / 1.462 Tests bestanden**, 18.10.2026 15:38:08 lokal, 39,53 s, `--maxWorkers=2`. Produktionsbuild `next build --webpack` (32 statische Seiten), separate Typprüfung `tsc --noEmit` und `git diff --check` bestanden. Die Sandbox verhinderte zunächst Test-/Build-Unterprozesse mit `spawn EPERM`; freigegebene Ausführung bestand ohne Abschalten von Schutzmechanismen. Der Build meldete fehlende lokale Better-Auth-Umgebungswerte; er wurde mit Exitcode 0 abgeschlossen. Das ist keine Prüfung produktiver Authentifizierung.
+
+Erneute echte Edge-Browserprüfung am Produktionsbuild mit flüchtiger lokaler PGlite-Datenbank und ausschließlich synthetischem Konto: eine laufende Retracement-Welle bleibt vorläufig; Simulation zeigt CRV 12/24 gegenüber 11/24 in der Abschlussabdeckung, hypothetischen Exit und CRV-Bezug jeweils 1/24, abgeschlossenen hypothetischen Ausgang unverändert 1/24. Screenshot und DOM im Abschlusschat geprüft. Keine persönlichen Daten als Testbestand.
+
+Vor der Übernahme: führender Hauptcheckout sauber auf `b00d9c0`; GitHub `refs/heads/main` frisch ebenfalls `b00d9c064634af50c2d98cd7a4068c6114aeeaac`. Veröffentlichung nur als normaler Fast-forward ohne Force-Push. Tatsächliche Commit-, Push- und Produktionsnachweise werden nach Ausführung im Projekt unter `00_Planung/Tracker-Technikplan-2026-10-18.md` ergänzt. Rücknahme umfasst den Implementierungscommit `f0fdd29` und den anschließenden Korrekturcommit in umgekehrter Reihenfolge.

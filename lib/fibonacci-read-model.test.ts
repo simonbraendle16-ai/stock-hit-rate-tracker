@@ -49,3 +49,20 @@ it("reports metric-specific IDs and missing currency without combining money sum
  expect(m.money.currencies.map(r=>[r.currency,r.net,r.ids])).toEqual([["EUR",10,[1]],["USD",20,[2]]]);
  expect(m.money.winRate.excluded[0].id).toBe(3);
 });
+
+it("uses documented simulation plans on running waves without inventing a completed hypothetical outcome",()=>{
+ const m=fibonacciReadModel([wave("running-plan",{status:"laufend",hypotheticalOutcome:"gewinn",evidence:{hypotheticalCRV:5,hypotheticalExitLevel:100,hypotheticalCRVBasis:"Early hypothetical exit"}}),wave("invalid-plan",{status:"ungueltig",evidence:{hypotheticalCRV:9}})],[],[]);
+ expect(m.simulationSummary.hypotheticalCRV).toMatchObject({n:1,average:5,included:[{id:"running-plan",value:5}]});
+ expect(m.simulationSummary.hypotheticalExitLevel.n).toBe(1);
+ expect(m.simulationSummary.hypotheticalCRVBasis.n).toBe(1);
+ expect(m.simulationSummary.hypotheticalOutcome.n).toBe(0);
+ expect(m.statsByKind.retracement.n).toBe(0);
+});
+
+it("excludes unassigned depot kinds and inconsistent linked samples from trade metrics",()=>{
+ const m=fibonacciReadModel([wave("unassigned",{tradeId:1}),wave("assigned",{tradeId:2})],[trade(1,{kind:undefined}),trade(2,{kind:"money"})],[sample(1),sample(2)]);
+ expect(m.linkedTradeBasis.ids).toEqual([2]);
+ expect(m.linkedTradeBasis.excluded.map(r=>r.observationId)).toEqual(["unassigned"]);
+ expect(m.metrics.demo.completed).toBe(0);expect(m.metrics.money.completed).toBe(0);
+ expect(m.linkedTradeBasis.samples).toEqual({denominator:1,ids:[],excluded:[{id:2,reason:"Handelsart des Trade-Samples weicht vom Depot ab"}]});
+});

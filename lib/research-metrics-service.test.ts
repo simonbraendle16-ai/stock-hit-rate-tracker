@@ -20,7 +20,8 @@ beforeAll(async()=>{
  pg=new PGlite();
  const sql=execFileSync(process.execPath,["node_modules/drizzle-kit/bin.cjs","export","--dialect","postgresql","--schema","./lib/db/schema.ts"],{encoding:"utf8"});
  await pg.exec(sql);
- await pg.exec(readFileSync("drizzle/0050_fibonacci_history.sql","utf8"));
+ for (const migration of ["0048_fibonacci_observations.sql","0049_fibonacci_research.sql","0050_fibonacci_history.sql","0051_fibonacci_two_hour.sql","0056_fibonacci_evidence.sql"])
+   await pg.exec(readFileSync(`drizzle/${migration}`,"utf8"));
  state.db=drizzle(pg,{schema});
  await state.db.insert(schema.user).values([{id:"qa-owner",name:"Synthetic",email:"owner@example.invalid"},{id:"qa-other",name:"Other",email:"other@example.invalid"}]);
  await state.db.insert(schema.portfolio).values([{id:1,userId:"qa-owner",name:"Demo",kind:"demo"},{id:2,userId:"qa-owner",name:"Real",kind:"echtgeld"},{id:3,userId:"qa-other",name:"Foreign",kind:"demo"}]);
@@ -37,8 +38,8 @@ beforeAll(async()=>{
  const context="00000000-0000-4000-8000-000000000100";
  await state.db.insert(schema.fibonacciObservation).values([
   {...obs,id:"00000000-0000-4000-8000-000000000101",contextId:context,tradeId:1,evidence:{reachedLevels:[50],provenance:"Synthetic"}},
-  {...obs,id:"00000000-0000-4000-8000-000000000102",contextId:context,tradeId:1,status:"abgeschlossen",hypotheticalOutcome:"gewinn",evidence:{hypotheticalCRV:5,provenance:"Synthetic"}},
-  {...obs,id:"00000000-0000-4000-8000-000000000103",contextId:context,tradeId:3},
+  {...obs,id:"00000000-0000-4000-8000-000000000102",contextId:context,measurementKind:"expansion",measurementBasis:"Synthetic measured expansion",tradeId:1,status:"abgeschlossen",hypotheticalOutcome:"gewinn",evidence:{hypotheticalCRV:5,provenance:"Synthetic"}},
+  {...obs,id:"00000000-0000-4000-8000-000000000103",contextId:"00000000-0000-4000-8000-000000000103",tradeId:3},
   {...obs,id:"00000000-0000-4000-8000-000000000104",contextId:context,userId:"qa-other",stockId:2,tradeId:null},
  ]);
  await state.db.insert(schema.assistantApiToken).values({userId:"qa-owner",name:"Synthetic",tokenHash:hashToken(token),scopes:["trades:read"]});
@@ -66,7 +67,10 @@ it("uses one read contract in API/internal loader with pagination-independent ba
  expect(api.tradeSummary.total).toBe(3);expect(api.tradeSummaryByKind.demo.total).toBe(2);expect(api.tradeSummaryByKind.money.total).toBe(1);
  expect(api.linkedTradeBasis.ids).toEqual([1]);expect(api.linkedTradeBasis.excluded).toHaveLength(1);
  expect(api.metrics.demo.completed).toBe(1);expect(api.simulationSummary.hypotheticalCRV.n).toBe(1);
- expect(api.runningStatsByKind.retracement.total).toBe(2);expect(api.statsByKind.retracement.coverage.total).toBe(3);
+ expect(api.runningStatsByKind.retracement.total).toBe(2);expect(api.statsByKind.retracement.coverage.total).toBe(2);expect(api.statsByKind.expansion.coverage.total).toBe(1);
  const filtered=await GET(new NextRequest("http://localhost/api/assistant/v1/fibonacci?status=abgeschlossen",{headers:{authorization:`Bearer ${token}`}}));
  const closed=await filtered.json();expect(closed.total).toBe(1);expect(closed.runningStatsByKind.retracement.total).toBe(0);expect(closed.tradeSummary.total).toBe(3);
+});
+it("retains the actual migrated context/measurement-kind uniqueness guard",async()=>{
+ await expect(pg.query(`INSERT INTO fibonacci_observation(id,"contextId","userId","stockId",wave,degree,timeframe,"observedOn",status,note) VALUES('00000000-0000-4000-8000-000000000199','00000000-0000-4000-8000-000000000100','qa-owner',1,'4','Minor','1d','2026-01-01','laufend','Synthetic duplicate')`)).rejects.toMatchObject({code:"23505"});
 });

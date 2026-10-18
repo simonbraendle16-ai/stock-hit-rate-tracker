@@ -5,6 +5,7 @@ import {
 } from "@/lib/trade-stats";
 import { settlePosition } from "@/lib/trade-events";
 import { uniqueTrades } from "@/lib/trade-research-coverage";
+import { frozenFxRate } from "@/lib/money-currency";
 export type MetricSample = {
   id: number;
   stockId: number | null;
@@ -51,24 +52,26 @@ export function metricSamples(
         const p = JSON.parse(opened?.payload ?? "{}").planningSnapshot;
         if (
           p &&
-          [p.entryPrice, p.stopLoss, p.takeProfit].every(
+          [p.entryPrice, p.stopLoss].every(
             (v: unknown) => typeof v === "number" && Number.isFinite(v),
           )
         ) {
           const d =
             p.direction === "short" ? -1 : p.direction === "long" ? 1 : 0;
           const distance = (p.entryPrice - p.stopLoss) * d,
-            chance = (p.takeProfit - p.entryPrice) * d;
-          if (distance > 0 && chance > 0) plannedCRV = chance / distance;
+            chance = typeof p.takeProfit === "number" && Number.isFinite(p.takeProfit) ? (p.takeProfit - p.entryPrice) * d : null;
+          if (distance > 0 && chance !== null && chance > 0 && Number.isFinite(chance / distance)) plannedCRV = chance / distance;
+          const riskRate = frozenFxRate(p);
           if (
             distance > 0 &&
             Number.isFinite(p.positionSize) &&
             p.positionSize > 0 &&
-            Number.isFinite(p.quoteToAccountRate) &&
-            p.quoteToAccountRate > 0 &&
+            riskRate !== null &&
+            p.quoteCurrency === t.quoteCurrency &&
             p.accountCurrency === t.accountCurrency
           )
-            risk = distance * p.positionSize * p.quoteToAccountRate;
+            risk = distance * p.positionSize * riskRate;
+          if (risk !== null && !Number.isFinite(risk)) risk = null;
         }
       } catch {}
       return {
@@ -79,7 +82,7 @@ export function metricSamples(
         currency: t.accountCurrency ?? null,
         plannedCRV,
         realizedR:
-          net !== null && risk !== null && risk > 0 ? net / risk : null,
+          net !== null && risk !== null && risk > 0 && Number.isFinite(net / risk) ? net / risk : null,
       };
     });
 }
