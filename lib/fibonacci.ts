@@ -1,3 +1,4 @@
+import { residenceError, residenceLabel, residenceKindLabels, residenceComparisons, type TargetZoneResidence } from "./fibonacci-residence";
 export const FIB_LEVELS = [
   0, 23.6, 38.2, 50, 61.8, 78.6, 100, 127.2, 161.8, 200, 261.8, 423.6,
 ] as const;
@@ -60,6 +61,7 @@ export type FibEvidence = {
   parentId?: string | null;
   durationDays?: number | null;
   reversalDurationDays?: number | null;
+  targetZoneResidence?: TargetZoneResidence | null;
   structureConfidence?: "bestaetigt" | "vermutet" | "unbekannt";
   provenance?: string | null;
 };
@@ -67,7 +69,7 @@ export function validateEvidence(value: unknown): FibEvidence {
   if (value == null) return {};
   if (typeof value !== "object" || Array.isArray(value)) return fail("Ungültige Beobachtungsangaben.");
   const raw = value as Record<string, unknown>;
-  const keys = ["approximateReachedLevel", "hypotheticalExitLevel", "hypotheticalCRVBasis", "measurementConfidence", "reachedLevels", "missedLevels", "reversalZone", "targetZone", "waveDirection", "approximatePercent", "hypotheticalCRV", "periodLabel", "parentId", "durationDays", "reversalDurationDays", "structureConfidence", "provenance"];
+  const keys = ["targetZoneResidence", "approximateReachedLevel", "hypotheticalExitLevel", "hypotheticalCRVBasis", "measurementConfidence", "reachedLevels", "missedLevels", "reversalZone", "targetZone", "waveDirection", "approximatePercent", "hypotheticalCRV", "periodLabel", "parentId", "durationDays", "reversalDurationDays", "structureConfidence", "provenance"];
   if (Object.keys(raw).some(k => !keys.includes(k))) return fail("Unbekannte Beobachtungsangabe.");
   const number = (n: unknown) => typeof n === "number" && Number.isFinite(n) && n >= 0;
   for (const k of ["reachedLevels", "missedLevels"]) if (raw[k] !== undefined && (!Array.isArray(raw[k]) || raw[k].length > 50 || !raw[k].every(number) || new Set(raw[k]).size !== raw[k].length)) return fail("Ungültige Fibonacci-Level.");
@@ -78,6 +80,10 @@ export function validateEvidence(value: unknown): FibEvidence {
   for (const k of ["periodLabel", "provenance", "hypotheticalCRVBasis"]) if (raw[k] != null && (typeof raw[k] !== "string" || !raw[k].trim() || raw[k].length > 2000)) return fail("Ungültige Herkunft/Zeitraumbeschreibung.");
   if (raw.parentId != null && (typeof raw.parentId !== "string" || !/^[0-9a-f-]{36}$/i.test(raw.parentId))) return fail("Ungültiger Elternbezug.");
   if (raw.measurementConfidence !== undefined && !["bestaetigt","unklar"].includes(String(raw.measurementConfidence))) return fail("Ungültige Messartsicherheit.");
+  if (raw.targetZoneResidence != null) {
+    const error = residenceError(raw.targetZoneResidence);
+    if (error) return fail(error);
+  }
   const e = raw as FibEvidence;
   if ((e.reachedLevels ?? []).some(n => (e.missedLevels ?? []).some(m=>m<=n))) return fail("Level kann nicht erreicht und verfehlt sein.");
   if (Object.keys(raw).some(k => k !== "provenance") && !e.provenance?.trim()) return fail("Herkunft der strukturierten Angaben erforderlich.");
@@ -684,6 +690,10 @@ export function fibCoverage(rows: readonly FibObservation[], kind: "retracement"
     period: metric("Historischer Zeitraum mit Originalgenauigkeit, unabhängig vom Erfassungsdatum.", r=>e(r).periodLabel ?? ((r.periodFrom || r.periodTo) ? [r.periodFrom,r.periodTo] : null)),
     duration: metric("Bestätigte Wellendauer in Tagen; nicht aus ungenauen Daten erfunden.", r=>e(r).durationDays),
     reversalDuration: metric("Bestätigte Dauer des Umkehrbereichs in Tagen.", r=>e(r).reversalDurationDays),
+    targetZoneResidence: metric("Berichteter Aufenthalt mit gespeichertem Zielzonenbezug; keine abgeleitete Dauer.", r=>e(r).targetZoneResidence ? residenceLabel(e(r).targetZoneResidence) : null),
+    residenceKind: metric("Genauigkeitsklasse der Dauer; unbekannt und nicht erhoben getrennt nachvollziehbar.", r=>e(r).targetZoneResidence ? residenceKindLabels[e(r).targetZoneResidence!.kind] : null),
+    touchAndGo: metric("Nur ausdrücklich bekanntes Verhalten: Touch-and-Go oder länger verweilt. Unbekannt zählt nicht als Nein.", r=>e(r).targetZoneResidence?.touchAndGo === true ? "Touch-and-Go" : e(r).targetZoneResidence?.touchAndGo === false ? "Länger verweilt" : null),
+    residenceComparisons: residenceComparisons(rows),
     structure: metric("Struktur der untersuchten Welle; vermutete Strukturen ausdrücklich gekennzeichnet.", r=>r.structure ? {label:r.structure, confidence:e(r).structureConfidence ?? "unbekannt"} : null),
     basis: metric(`${kind}: dokumentierter Messbezug einschließlich ausdrücklich offener Bezüge; Detailangabe prüfen. Messarten bleiben getrennt.`, r=>r.measurementBasis),
     hypotheticalCRV: metric("Ungefähres geplantes hypothetisches Chance/Risiko-Verhältnis, kein realisiertes R.", r=>e(r).hypotheticalCRV),

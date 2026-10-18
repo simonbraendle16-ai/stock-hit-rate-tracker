@@ -64,6 +64,7 @@ import {
 import { StopVariantsEditor } from "@/components/fibonacci-stop-variants";
 import { type TradeResearchRow } from "@/lib/trade-research-coverage";
 import { EvidenceEditor } from "@/components/fibonacci-evidence";
+import { ResidenceEditor } from "@/components/fibonacci-residence";
 import type { FibEvidence } from "@/lib/fibonacci";
 import { cn } from "@/lib/utils";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -485,9 +486,14 @@ export function FibonacciPanel({
       <Card><CardHeader><CardTitle>Abdeckung der Beobachtungen</CardTitle><CardDescription>{observations.length} insgesamt gespeichert · {stats.coverage.total} im aktuellen Filter · {stats.coverage.completed} abgeschlossen. Alle folgenden Kennzahlen verwenden diese Filter und ihre eigene Datenbasis.</CardDescription></CardHeader><CardContent className="flex flex-col gap-3">
       {Object.entries(stats.coverage).filter(([,v])=>typeof v === "object" && v !== null && "definition" in v).map(([key,raw])=>{
         const m=raw as typeof stats.coverage.exact;
-        const labels:Record<string,string>={approximateReached:"Ungefähr erreichte Levels",hypotheticalExitLevel:"Hypothetischer Ausstiegslevel",hypotheticalCRVBasis:"CRV-Bezugsziel",unassignedLevels:"Levels mit ungeklärter Messart",exact:"Exakte Prozentmessung",approximate:"Ungefähre Prozentmessung",reached:"Erreichte Levels",missed:"Verfehlte Levels",reversalZone:"Umkehrzone",targetZone:"Zielzone",direction:"Wellenrichtung",period:"Zeitraum",duration:"Wellendauer",reversalDuration:"Umkehrdauer",structure:"Struktur",basis:"Messbasis",hypotheticalCRV:"Hypothetisches CRV",tradability:"Handelbarkeit",hypotheticalOutcome:"Hypothetischer Ausgang",actualOutcome:"Tatsächlicher qualitativer Ausgang"};
+        const labels:Record<string,string>={targetZoneResidence:"Verweildauer in der Zielzone",residenceKind:"Genauigkeit der Verweildauer",touchAndGo:"Touch-and-Go / länger verweilt",approximateReached:"Ungefähr erreichte Levels",hypotheticalExitLevel:"Hypothetischer Ausstiegslevel",hypotheticalCRVBasis:"CRV-Bezugsziel",unassignedLevels:"Levels mit ungeklärter Messart",exact:"Exakte Prozentmessung",approximate:"Ungefähre Prozentmessung",reached:"Erreichte Levels",missed:"Verfehlte Levels",reversalZone:"Umkehrzone",targetZone:"Zielzone",direction:"Wellenrichtung",period:"Zeitraum",duration:"Wellendauer",reversalDuration:"Umkehrdauer",structure:"Struktur",basis:"Messbasis",hypotheticalCRV:"Hypothetisches CRV",tradability:"Handelbarkeit",hypotheticalOutcome:"Hypothetischer Ausgang",actualOutcome:"Tatsächlicher qualitativer Ausgang"};
         return <details key={key}><summary>{labels[key] ?? key}: {m.n} von {m.denominator}{m.average != null ? ` · Durchschnitt ${fmt(m.average)}` : ""}</summary><p className="text-sm text-muted-foreground">{m.definition}</p>{m.distribution.map(d=><p className="text-xs" key={d.value}>{d.value}: {d.count} Fälle · {fmt(d.share)} % von {m.n}</p>)}{m.included.map(r=><p className="break-words text-xs" key={r.id}>{r.id}: {JSON.stringify(r.value)}</p>)}{m.excluded.map(r=><p className="break-words text-xs text-muted-foreground" key={r.id}>{r.id}: {r.reason}</p>)}</details>;
       })}
+      <details><summary>Vergleichbare exakte Verweildauern: {stats.coverage.residenceComparisons.groups.reduce((n,g)=>n+g.n,0)} von {stats.coverage.total}</summary>
+        <p className="text-sm text-muted-foreground">Nur abgeschlossene Fälle mit exakter Dauer, bekannter Zeitbasis und identischer Messkonvention. Schätzungen und Grenzen bleiben außerhalb der Mittelwerte.</p>
+        {stats.coverage.residenceComparisons.groups.map((g,i)=><div key={i} className="text-sm"><p>{g.timeBasis === "calendar" ? "Kalenderzeit" : "Handelszeit"} · {g.convention} · n={g.n} · Mittel {fmt(g.average)} / Median {fmt(g.median)} {g.unit === "hour" ? "Stunden" : g.unit === "day" ? "Tage" : "Minuten"}</p>{g.included.map(r=><p key={r.id} className="text-xs">{r.id}: {fmt(r.value)}</p>)}</div>)}
+        {stats.coverage.residenceComparisons.excluded.map(r=><p key={r.id} className="text-xs text-muted-foreground">{r.id}: {r.reason}</p>)}
+      </details>
       {stats.coverage.levelProfile.map(l=><p className="text-sm" key={l.level}>{l.level} %: {l.reached.length} erreicht · {l.missed.length} verfehlt · n={l.n}. Nur explizite Angaben zu diesem Level.</p>)}
       </CardContent></Card>
       <Tabs
@@ -1396,6 +1402,7 @@ function FibForm({
               Änderungen am Extrem diese Beobachtung korrigieren.
             </FieldDescription>
           </Field>
+          <ResidenceEditor value={evidence.targetZoneResidence} zone={evidence.targetZone ?? null} onChange={targetZoneResidence=>setEvidence(previous=>({...previous,targetZoneResidence,provenance:previous.provenance || "Direkte Formulareingabe des Nutzers"}))}/>
           <details
             className="rounded-lg border border-border p-4"
             open={existing?.stopVariants?.length ? true : undefined}

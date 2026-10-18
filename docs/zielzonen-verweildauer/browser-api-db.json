@@ -1,0 +1,26 @@
+{
+  "localSyntheticOnly": true,
+  "browserWriteApiReadDatabaseMatch": true,
+  "id": "f1ac28fa-fe63-47f8-9048-2829e4cf6f91",
+  "version": 4,
+  "strictUpperBound": {
+    "kind": "upper_bound",
+    "unit": "day",
+    "zone": [
+      61.8,
+      88.7
+    ],
+    "upper": 1,
+    "timeBasis": "unknown",
+    "touchAndGo": true,
+    "originalText": "Synthetischer Prüffall: Touch-and-Go, weniger als einen Tag",
+    "upperInclusive": false,
+    "measurementConvention": null
+  },
+  "touchCoverageConfirmed": true,
+  "excludedFromExactAverage": true,
+  "longerStayEightHoursInRevision": true,
+  "revisionCount": 4,
+  "unknownBrowserCreateGetConfirmed": true,
+  "unknownId": "868c86f9-00e5-4e42-9ef6-a8d2fa58cdd2"
+}

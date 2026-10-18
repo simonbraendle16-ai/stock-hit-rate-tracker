@@ -92,6 +92,11 @@ export async function saveFib(
     ] as const;
     merged = { ...raw };
     for (const key of extended) if (!(key in raw)) merged[key] = previous[key];
+    // Older evidence writers must preserve the new nested extension too.
+    if (raw.evidence && typeof raw.evidence === "object" && !Array.isArray(raw.evidence) &&
+        !("targetZoneResidence" in raw.evidence) && previous.evidence?.targetZoneResidence) {
+      merged.evidence = {...raw.evidence, targetZoneResidence: previous.evidence.targetZoneResidence};
+    }
     if (merged.contextId !== previous.contextId)
       throw new ApiError(
         409,

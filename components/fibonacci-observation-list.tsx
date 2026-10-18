@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { FibObservation } from "@/lib/fibonacci";
 import { formatResearchPercent } from "@/lib/fibonacci-workspace";
+import { residenceLabel } from "@/lib/fibonacci-residence";
 
 const statusName = {
   laufend: "Laufend",
@@ -31,6 +32,10 @@ function Details({ row }: { row: FibObservation }) {
             ["Verfehlte Levels", row.evidence?.missedLevels?.join(" / ")],
             ["Umkehrzone", row.evidence?.reversalZone?.join(" bis ")],
             ["Zielzone", row.evidence?.targetZone?.join(" bis ")],
+            ["Verweildauer in der Zielzone", residenceLabel(row.evidence?.targetZoneResidence)],
+            ["Ursprüngliche Dauerangabe", row.evidence?.targetZoneResidence?.originalText],
+            ["Zeitbasis der Verweildauer", row.evidence?.targetZoneResidence ? ({unknown:"Noch offen",calendar:"Kalenderzeit",trading:"Handelszeit"}[row.evidence.targetZoneResidence.timeBasis]) : null],
+            ["Messkonvention der Verweildauer", row.evidence?.targetZoneResidence?.measurementConvention || (row.evidence?.targetZoneResidence ? "Noch offen" : null)],
             ["Wellenrichtung", row.evidence?.waveDirection],
             ["Ungefähre Messung %", row.evidence?.approximatePercent != null ? String(row.evidence.approximatePercent) : null],
             ["Hypothetisches CRV", row.evidence?.hypotheticalCRV != null ? `1:${row.evidence.hypotheticalCRV}` : null],

@@ -28,6 +28,7 @@ import {
 import { GET as contextGET } from "@/app/api/assistant/v1/fibonacci/context/route";
 import { hashToken } from "./assistant-api";
 import { GET, POST } from "@/app/api/assistant/v1/fibonacci/route";
+import { GET as revisionGET } from "@/app/api/assistant/v1/fibonacci/[id]/revisions/route";
 import {
   GET as detailGET,
   PATCH,
@@ -129,6 +130,42 @@ it("persists structured evidence, retries unchanged, keeps metadata for legacy p
  expect(data.stats.n).toBe(0);expect(data.stats.coverage.reached.n).toBe(1);expect(data.stats.coverage.reached.included[0].id).toBe(id);
  for(let i=0;i<2;i++)await pg.exec(readFileSync(new URL("../drizzle/0056_fibonacci_evidence.sql",import.meta.url),"utf8"));
  expect((await getFib("owner",id)).evidence).toEqual(evidence);
+});
+it("roundtrips residence through HTTP, retry, revision and an older nested evidence writer", async () => {
+ const id=crypto.randomUUID(), ctx={params:Promise.resolve({id})};
+ const residence={kind:"upper_bound",upper:1,upperInclusive:false,touchAndGo:true,unit:"day",timeBasis:"unknown",zone:[61.8,88.7],measurementConvention:null,originalText:"weniger als einen Tag"};
+ const evidence={provenance:"Synthetic isolated residence",reversalDurationDays:2,targetZone:[61.8,88.7],targetZoneResidence:residence};
+ const body={...input,percent:null,anchorStart:null,anchorEnd:null,extreme:null,evidence};
+ expect((await POST(request("",tokens.owner,"POST",body,{"Idempotency-Key":id}))).status).toBe(201);
+ expect((await POST(request("",tokens.owner,"POST",body,{"Idempotency-Key":id}))).status).toBe(201);
+ const get=async()=> (await detailGET(request("/"+id),ctx)).json();
+ expect((await get()).evidence).toEqual(evidence);
+ const older={...body,evidence:{provenance:evidence.provenance,reversalDurationDays:3,targetZone:[50,61.8]}};
+ expect((await PATCH(request("/"+id,tokens.owner,"PATCH",older,{"X-Expected-Version":"1"}),ctx)).status).toBe(200);
+ expect((await get()).evidence.targetZoneResidence).toEqual(residence);
+ expect((await PATCH(request("/"+id,tokens.owner,"PATCH",body,{"X-Expected-Version":"1"}),ctx)).status).toBe(409);
+ const revisions=await (await revisionGET(request("/"+id+"/revisions"),ctx)).json();
+ expect(revisions.items).toHaveLength(2);
+ expect(revisions.items.every((r:any)=>r.snapshot.evidence.targetZoneResidence.upperInclusive === false)).toBe(true);
+ const listed=await (await GET(request("?stockId=1&measurementKind=retracement"))).json();
+ expect(listed.stats.coverage.targetZoneResidence.included[0].id).toBe(id);
+ expect(listed.stats.coverage.residenceComparisons.groups).toEqual([]);
+ const cleared={...body,evidence:{...evidence,targetZoneResidence:null}};
+ expect((await PATCH(request("/"+id,tokens.owner,"PATCH",cleared,{"X-Expected-Version":"2"}),ctx)).status).toBe(200);
+ expect((await get()).evidence.targetZoneResidence).toBeNull();
+ let version=3;
+ for (const duration of [
+   {kind:"exact",value:8,unit:"hour",touchAndGo:true,originalText:"insgesamt acht Stunden"},
+   {kind:"unknown",touchAndGo:false},
+   {kind:"approximate",value:6,unit:"hour"},
+   {kind:"range",lower:2,upper:4,lowerInclusive:true,upperInclusive:false,unit:"hour"},
+ ]) {
+   const {upper:_,upperInclusive:__,...base}=residence;
+   const next={...base,...duration};
+   expect((await PATCH(request("/"+id,tokens.owner,"PATCH",{...body,evidence:{...evidence,targetZoneResidence:next}},{"X-Expected-Version":String(version)}),ctx)).status).toBe(200);
+   version++;
+   expect((await get()).evidence.targetZoneResidence).toEqual(next);
+ }
 });
 describe("Fibonacci isolated PostgreSQL and HTTP contract", () => {
   it("roundtrips a descriptive historical case through retry, correction, revisions and filtered statistics", async () => {
