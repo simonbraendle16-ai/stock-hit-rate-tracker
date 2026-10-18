@@ -1,4 +1,4 @@
-import { filterFib, type FibFilters, type FibObservation } from "./fibonacci";
+import { filterFib, latestObservations, type FibFilters, type FibObservation } from "./fibonacci";
 
 export type ResearchSelection = "all" | "missing" | "running" | "completed";
 export type ResearchOrder = "newest" | "oldest" | "deepest";
@@ -13,7 +13,7 @@ export function selectResearchRows(
   selection: ResearchSelection = "all",
 ) {
   const words = searchable(search.trim()).split(/\s+/).filter(Boolean);
-  return filterFib(rows, filters).filter((row) => {
+  return filterFib(latestObservations(rows), filters).filter((row) => {
     if (selection === "missing" && row.percent != null) return false;
     if (selection === "running" && row.status !== "laufend") return false;
     if (selection === "completed" && row.status !== "abgeschlossen")

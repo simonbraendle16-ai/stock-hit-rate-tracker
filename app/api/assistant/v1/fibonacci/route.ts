@@ -1,6 +1,6 @@
 import { loadTradeCoverage, loadMetricSamples } from "@/lib/research-metrics-service";
 import { researchMetrics } from "@/lib/research-metrics";
-import { summarizeTradeResearch, tradeResearchCoverage } from "@/lib/trade-research-coverage";
+import { fibonacciReadModel } from "@/lib/fibonacci-read-model";
 import { selectResearchRows } from "@/lib/fibonacci-workspace";
 import { fibQuery } from "@/lib/fibonacci-query";
 import { NextRequest, NextResponse } from "next/server";
@@ -13,11 +13,7 @@ import {
 } from "@/lib/assistant-api";
 import { listFib, saveFib } from "@/lib/fibonacci-service";
 import {
-  filterFib,
   fibStats,
-  FIB_WAVES,
-  FIB_DEGREES,
-  FIB_TIMEFRAMES,
 } from "@/lib/fibonacci";
 export async function GET(req: NextRequest) {
   try {
@@ -27,27 +23,22 @@ export async function GET(req: NextRequest) {
     const items = selectResearchRows(await listFib(userId, filters.stockId), filters, search, selection);
     const [allSamples, tradeCoverage] = await Promise.all([loadMetricSamples(userId), loadTradeCoverage(userId)]);
     return NextResponse.json({
-      tradeSummary: summarizeTradeResearch(tradeCoverage.filter(s=>!filters.stockId || s.stockId===filters.stockId)),
-      tradeResearchCoverage: tradeResearchCoverage(tradeCoverage.filter(s=>!filters.stockId || s.stockId===filters.stockId)),
+      ...fibonacciReadModel(items,tradeCoverage,allSamples,filters.stockId),
       tradeCoverage: tradeCoverage.filter(s => !filters.stockId || s.stockId === filters.stockId),
       allTradeMetrics: researchMetrics(allSamples.filter(s => !filters.stockId || s.stockId === filters.stockId)),
       items: items.slice(offset, offset + limit),
       total: items.length,
       nextOffset: offset + limit < items.length ? offset + limit : null,
       allTradeSamples: allSamples.filter(s => !filters.stockId || s.stockId === filters.stockId),
-      metrics: researchMetrics(allSamples.filter(s => items.some(r=>r.status === "abgeschlossen" && r.tradeId === s.id))),
       basis: {
         filters, search, selection,
         dates: "from/to filtern observedOn (Erfassungsdatum). Historische Zeiträume stehen separat im Datensatz und sind über search auffindbar.",
         allTrades: "Alle eingetragenen Trades qualitativ, Geldkennzahlen nur abgeschlossene Trades; nur Instrumentfilter; Wellenfilter gelten hier nicht. Fehlende Abrechnung blockiert ausschließlich Geldkennzahlen.",
-        waves: "Alle Beobachtungen; Kennzahlen jeweils nach Status und vorhandener strukturierter Angabe je Kontext und Messart",
-        trades: "Eindeutig verknüpfte abgeschlossene Trades, jeweils einmal",
+        waves: "Ausgewählte Beobachtungen nach stabiler ID und Messart; neueste Revision je ID. Abschlusskennzahlen und vorläufige laufende Angaben getrennt.",
+        trades: "Eindeutig verknüpfte eigene Trades mit passendem Instrument, nach jeweiligem Trade-Status; Netto nur abgeschlossene Trades.",
+        legacy: "tradeSummary und tradeResearchCoverage bleiben gemischte Gesamtansichten; getrennte Bereiche verwenden die ByKind-Gruppen. Prognosen bleiben eigener assessment-Bestand.",
       },
       stats: fibStats(items, filters.measurementKind),
-      statsByKind: {
-        retracement: fibStats(items, "retracement"),
-        expansion: fibStats(items, "expansion"),
-      },
     });
   } catch (e) {
     return apiResponseError(e);

@@ -9,6 +9,7 @@ import {
 import { and, asc, eq } from "drizzle-orm";
 import { computeInstrumentStats, overallGap } from "@/lib/instrument-stats";
 import { metricSamples, researchMetrics } from "@/lib/research-metrics";
+import { loadOwnedResearchTrades } from "@/lib/research-metrics-service";
 import { listFib } from "@/lib/fibonacci-service";
 import { fibStats } from "@/lib/fibonacci";
 import type { TradeEventsByTrade } from "@/lib/trade-stats";
@@ -33,7 +34,7 @@ export async function loadInstrumentData(userId: string) {
         })
         .from(assessment)
         .where(eq(assessment.userId, userId)),
-      db.select().from(trade).where(eq(trade.userId, userId)),
+      loadOwnedResearchTrades(userId),
       db
         .select()
         .from(tradeEvent)

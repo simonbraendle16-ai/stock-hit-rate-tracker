@@ -9,6 +9,7 @@ import { loadTradeCoverage, loadMetricSamples } from "@/lib/research-metrics-ser
 import { listHistory } from "@/lib/fibonacci-history-service";
 import { listFib, saveFib } from "@/lib/fibonacci-service";
 import { fibStats } from "@/lib/fibonacci";
+import { fibonacciReadModel } from "@/lib/fibonacci-read-model";
 import { ApiError, uuidId } from "@/lib/assistant-api";
 async function owner() {
   const session = await auth.api.getSession({ headers: await headers() });
@@ -35,7 +36,7 @@ export async function getFibonacciData(stockId?: number) {
     listHistory(userId, stockId),
     loadTradeCoverage(userId),
   ]);
-  return { observations, instruments, samples, histories, tradeCoverage };
+  return { observations, instruments, samples, histories, tradeCoverage, ...fibonacciReadModel(observations,tradeCoverage,samples,stockId) };
 }
 export async function saveFibonacci(
   id: string,

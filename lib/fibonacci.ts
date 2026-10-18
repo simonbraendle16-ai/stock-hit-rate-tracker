@@ -418,20 +418,22 @@ function quantile(sorted: number[], q: number): number | null {
     fraction = position - lo;
   return sorted[lo] + fraction * ((sorted[lo + 1] ?? sorted[lo]) - sorted[lo]);
 }
+/** Revisions replace only their stable observation ID, never a shared context. */
+export function latestObservations(rows: readonly FibObservation[]) {
+  const latest = new Map<string, FibObservation>();
+  for (const row of rows) {
+    if (!latest.has(row.id) || latest.get(row.id)!.version < row.version)
+      latest.set(row.id, row);
+  }
+  return [...latest.values()];
+}
 export function fibStats(
   rows: readonly FibObservation[],
   measurementKind: "retracement" | "expansion" = "retracement",
 ) {
-  rows = rows.filter(
+  rows = latestObservations(rows).filter(
     (r) => (r.measurementKind ?? "retracement") === measurementKind,
   );
-  const latest = new Map<string, FibObservation>();
-  for (const row of rows) {
-    const key = row.contextId ?? row.id;
-    if (!latest.has(key) || latest.get(key)!.version < row.version)
-      latest.set(key, row);
-  }
-  rows = [...latest.values()];
   const completed = rows.filter((r) => r.status === "abgeschlossen");
   const measured = completed.filter(
     (r) =>
@@ -454,11 +456,17 @@ export function fibStats(
         : (level + FIB_LEVELS[i + 1]) / 2,
     count: 0,
     reached: 0,
+    ids: [] as string[],
+    reachedIds: [] as string[],
+    denominator: n,
   }));
-  for (const value of values) {
+  for (const row of measured) {
+    const value = row.percent!;
     zones[fibZone(value)].count++;
-    for (const z of zones) if (value + 1e-9 >= z.level) z.reached++;
+    zones[fibZone(value)].ids.push(row.id);
+    for (const z of zones) if (value + 1e-9 >= z.level) {z.reached++;z.reachedIds.push(row.id);}
   }
+  for (const zone of zones) {zone.ids.sort();zone.reachedIds.sort();}
   const max = Math.max(0, ...zones.map((z) => z.count));
   return {
     n,
@@ -654,14 +662,17 @@ export function fibCsv(rows: readonly FibObservation[]) {
 
 /** Every metric reports its own denominator and traceable exclusions. No prose parsing. */
 export function fibCoverage(rows: readonly FibObservation[], kind: "retracement" | "expansion") {
-  rows = [...rows].sort((a,b)=>a.id.localeCompare(b.id));
+  return observationCoverage(rows, kind, "abgeschlossen");
+}
+function observationCoverage(rows: readonly FibObservation[], kind: "retracement" | "expansion", status: FibInput["status"]) {
+  rows = latestObservations(rows).filter(r => (r.measurementKind ?? "retracement") === kind).sort((a,b)=>a.id.localeCompare(b.id));
   const metric = (definition: string, value: (r: FibObservation) => unknown, needsKind = false) => {
     const included: { id: string; value: unknown }[] = [], excluded: { id: string; reason: string }[] = [];
     for (const r of rows) {
-      if (r.status !== "abgeschlossen") { excluded.push({ id: r.id, reason: `Status ${r.status}` }); continue; }
+      if (r.status !== status) { excluded.push({ id: r.id, reason: `Status ${r.status}` }); continue; }
       if (needsKind && r.evidence?.measurementConfidence === "unklar") { excluded.push({id:r.id,reason:"Messart/Bezugsbasis ungeklärt; separat als unzugeordnetes Level erhalten"}); continue; }
       const v = value(r);
-      if (v == null || v === "unbekannt" || (Array.isArray(v) && !v.length)) excluded.push({ id: r.id, reason: "Bestätigte strukturierte Angabe fehlt" });
+      if (v == null || v === "unbekannt" || (typeof v === "string" && !v.trim()) || (Array.isArray(v) && !v.length)) excluded.push({ id: r.id, reason: "Bestätigte strukturierte Angabe fehlt" });
       else included.push({ id: r.id, value: v });
     }
     const numeric = included.map(r=>r.value).filter((v):v is number=>typeof v === "number" && Number.isFinite(v));
@@ -677,7 +688,7 @@ export function fibCoverage(rows: readonly FibObservation[], kind: "retracement"
   return {
     total: rows.length,
     completed: rows.filter(r=>r.status === "abgeschlossen").length,
-    exact: metric("Exakte maximale Prozentmessung; nur endliche Werte. Keine Levels, Zonen oder gerundeten Schätzungen.", r => r.percent != null && Number.isFinite(r.percent) ? r.percent : null, true),
+    exact: metric("Exakte maximale Prozentmessung; nur endliche Werte. Gemeinsame Datenbasis für Mittelwert, Median, Quartile und Prozentverteilung. Keine Levels, Zonen oder gerundeten Schätzungen.", r => r.percent != null && Number.isFinite(r.percent) && r.percent >= 0 && (kind === "expansion" || r.percent <= 500) ? r.percent : null, true),
     approximateReached: metric("Ungefähr erreichtes Referenzlevel, keine exakte Stufe und keine maximale Messung.",r=>e(r).approximateReachedLevel,true),
     hypotheticalExitLevel: metric("Hypothetisch geplanter Ausstiegslevel, kein tatsächlicher Exit und keine maximale Wellenausdehnung.",r=>e(r).hypotheticalExitLevel),
     hypotheticalCRVBasis: metric("Bezugsziel des hypothetischen CRV, getrennt vom maximalen Wellenextrem.",r=>e(r).hypotheticalCRVBasis),
@@ -695,6 +706,8 @@ export function fibCoverage(rows: readonly FibObservation[], kind: "retracement"
     touchAndGo: metric("Nur ausdrücklich bekanntes Verhalten: Touch-and-Go oder länger verweilt. Unbekannt zählt nicht als Nein.", r=>e(r).targetZoneResidence?.touchAndGo === true ? "Touch-and-Go" : e(r).targetZoneResidence?.touchAndGo === false ? "Länger verweilt" : null),
     residenceComparisons: residenceComparisons(rows),
     structure: metric("Struktur der untersuchten Welle; vermutete Strukturen ausdrücklich gekennzeichnet.", r=>r.structure ? {label:r.structure, confidence:e(r).structureConfidence ?? "unbekannt"} : null),
+    stopDescription: metric("Dokumentierte Stopbeschreibung; keine Ausführung oder Ergebnisannahme.",r=>r.stopDescription),
+    stopVariants: metric("Dokumentierte Varianten je Beobachtung; hypothetisch und tatsächlich bleiben gekennzeichnet.",r=>r.stopVariants),
     basis: metric(`${kind}: dokumentierter Messbezug einschließlich ausdrücklich offener Bezüge; Detailangabe prüfen. Messarten bleiben getrennt.`, r=>r.measurementBasis),
     hypotheticalCRV: metric("Ungefähres geplantes hypothetisches Chance/Risiko-Verhältnis, kein realisiertes R.", r=>e(r).hypotheticalCRV),
     tradability: metric("Rückblickende Nutzereinschätzung zur Handelbarkeit.", r=>r.tradability),
@@ -704,7 +717,49 @@ export function fibCoverage(rows: readonly FibObservation[], kind: "retracement"
     levelProfile: levels.map(level => {
       const reached = rows.filter(r=>r.status === "abgeschlossen" && e(r).measurementConfidence !== "unklar" && (e(r).reachedLevels ?? []).includes(level)).map(r=>r.id);
       const missed = rows.filter(r=>r.status === "abgeschlossen" && e(r).measurementConfidence !== "unklar" && (e(r).missedLevels ?? []).includes(level)).map(r=>r.id);
-      return {level, reached, missed, n:reached.length+missed.length, definition:"Nur explizite Angaben zu genau diesem Level; unbekannte Fälle bleiben außerhalb des Nenners."};
+      const ids = new Set([...reached,...missed]);
+      return {level, reached, missed, n:ids.size, denominator:rows.length,
+        excluded: rows.filter(r=>!ids.has(r.id)).map(r=>({id:r.id,reason:r.status !== "abgeschlossen" ? `Status ${r.status}` : e(r).measurementConfidence === "unklar" ? "Messart/Bezugsbasis ungeklärt" : "Explizite Angabe zu diesem Level fehlt"})),
+        definition:"Nur explizite Angaben zu genau diesem Level; unbekannte Fälle bleiben außerhalb des Nenners."};
     }),
+  };
+}
+
+/** Descriptive running evidence only. No terminal maximum or final hit rate. */
+export function runningFibStats(rows: readonly FibObservation[], kind: "retracement" | "expansion") {
+  const selected = latestObservations(rows).filter(r => (r.measurementKind ?? "retracement") === kind && r.status === "laufend");
+  const coverage = observationCoverage(selected, kind, "laufend");
+  const { structure, direction, period, duration, reversalDuration, targetZoneResidence, residenceKind, touchAndGo, targetZone, reversalZone, reached, missed, approximateReached, basis, unassignedLevels } = coverage;
+  return {
+    provisional: true as const,
+    definition: "Vorläufig dokumentierter Stand laufender Wellen; keine endgültigen Extremwerte, Endlevelverteilung oder abgeschlossene Trefferquote.",
+    measurementKind: kind,
+    total: selected.length,
+    ids: selected.map(r => r.id),
+    coverage: {structure, direction, period, duration, reversalDuration, targetZoneResidence, residenceKind, touchAndGo, targetZone, reversalZone, reached, missed, approximateReached, basis, unassignedLevels},
+  };
+}
+
+export function simulationSummary(rows: readonly FibObservation[]) {
+  const selected = latestObservations(rows);
+  const metric = (definition: string, get: (r: FibObservation) => unknown) => {
+    const included: {id:string;value:unknown}[] = [], excluded: {id:string;reason:string}[] = [];
+    for (const r of selected) {
+      const value = get(r);
+      if (r.status !== "abgeschlossen") excluded.push({id:r.id,reason:`Status ${r.status}; kein abgeschlossener hypothetischer Fall`});
+      else if (value == null || value === "unbekannt" || (Array.isArray(value) && !value.length)) excluded.push({id:r.id,reason:"Hypothetische Angabe fehlt"});
+      else included.push({id:r.id,value});
+    }
+    const numbers = included.map(r=>r.value).filter((v):v is number=>typeof v === "number" && Number.isFinite(v));
+    return {definition,n:included.length,denominator:selected.length,included,excluded,average:numbers.length ? numbers.reduce((sum,v)=>sum+v,0)/numbers.length : null};
+  };
+  return {
+    definition: "Historische Simulation aus gespeicherten hypothetischen Angaben; keine tatsächliche Ausführung, Prognose oder Geldrendite. Varianten bleiben ihrer Beobachtung zugeordnet.",
+    total: selected.length,
+    hypotheticalCRV: metric("Hypothetisches Plan-CRV; kein realisiertes R.",r=>r.evidence?.hypotheticalCRV),
+    hypotheticalOutcome: metric("Gespeicherter hypothetischer Ausgang; kein tatsächlicher Gewinn.",r=>r.hypotheticalOutcome),
+    hypotheticalExitLevel: metric("Hypothetischer Exit; kein Wellenendlevel.",r=>r.evidence?.hypotheticalExitLevel),
+    hypotheticalCRVBasis: metric("Dokumentierter Bezug des hypothetischen CRV.",r=>r.evidence?.hypotheticalCRVBasis),
+    stopVariants: metric("Hypothetische Varianten je Beobachtung; keine zusätzlichen Fälle.",r=>(r.stopVariants ?? []).filter(v=>v.kind === "hypothetisch")),
   };
 }

@@ -13,15 +13,17 @@ const value = (v: number | null, suffix: string) =>
 export function ResearchMetricSummary({
   metrics,
   compact = false,
+  kinds = ["money", "demo"],
 }: {
   metrics: ResearchMetrics;
   compact?: boolean;
+  kinds?: readonly ("money" | "demo")[];
 }) {
   return (
     <div
       className={compact ? "flex flex-col gap-2" : "grid gap-3 md:grid-cols-2"}
     >
-      {(["money", "demo"] as const).map((kind) => {
+      {kinds.map((kind) => {
         const g = metrics[kind];
         const content = (
           <>

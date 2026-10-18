@@ -77,6 +77,10 @@ if (!process.argv.includes('--empty')) {
       ],
     )
 }
+if (process.argv.includes('--block-a')) {
+  const {seedBlockA} = await import('./seed-block-a-qa.mjs');
+  await seedBlockA(database,owner);
+}
 const server = new PGLiteSocketServer({
   db: database,
   host: '127.0.0.1',

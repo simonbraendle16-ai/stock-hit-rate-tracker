@@ -4,6 +4,7 @@ import {
   type TradeEventsByTrade,
 } from "@/lib/trade-stats";
 import { settlePosition } from "@/lib/trade-events";
+import { uniqueTrades } from "@/lib/trade-research-coverage";
 export type MetricSample = {
   id: number;
   stockId: number | null;
@@ -83,6 +84,7 @@ export function metricSamples(
     });
 }
 export function researchMetrics(samples: readonly MetricSample[]) {
+  samples = uniqueTrades(samples);
   const metric = (values: (number | null)[]) => {
     const known = values.filter(
       (v): v is number => v !== null && Number.isFinite(v),
@@ -97,7 +99,7 @@ export function researchMetrics(samples: readonly MetricSample[]) {
   };
   const group = (kind: "money" | "demo") => {
     const rows = samples.filter((s) => s.kind === kind),
-      known = rows.filter((s) => s.net !== null),
+      known = rows.filter((s) => s.net !== null && Number.isFinite(s.net) && !!s.currency),
       wins = known.filter((s) => s.net! > 0).length;
     const currencies = [
       ...new Set(rows.map((s) => s.currency).filter((c): c is string => !!c)),
@@ -105,11 +107,14 @@ export function researchMetrics(samples: readonly MetricSample[]) {
       .sort()
       .map((currency) => {
         const selected = rows.filter((s) => s.currency === currency),
-          values = selected.filter((s) => s.net !== null);
+          values = selected.filter((s) => s.net !== null && Number.isFinite(s.net));
         return {
           currency,
           n: values.length,
           missing: selected.length - values.length,
+          denominator: selected.length,
+          ids: values.map(s=>s.id),
+          excluded: selected.filter(s=>!values.includes(s)).map(s=>({id:s.id,reason:"Vollständiges Nettoergebnis fehlt"})),
           net:
             values.length === selected.length
               ? values.reduce((sum, s) => sum + s.net!, 0)
@@ -118,16 +123,25 @@ export function researchMetrics(samples: readonly MetricSample[]) {
       });
     return {
       completed: rows.length,
+      ids: rows.map(s=>s.id),
       winRate: {
         value: known.length ? (wins / known.length) * 100 : null,
         n: known.length,
         missing: rows.length - known.length,
+        denominator: rows.length,
+        ids: known.map(s=>s.id),
+        excluded: rows.filter(s=>!known.includes(s)).map(s=>({id:s.id,reason:!s.currency ? "Kontowährung fehlt" : "Vollständiges Nettoergebnis fehlt"})),
       },
-      averageCRV: metric(rows.map((s) => s.plannedCRV)),
-      averageR: metric(rows.map((s) => s.realizedR)),
+      averageCRV: metricBasis(rows, "plannedCRV"),
+      averageR: metricBasis(rows, "realizedR"),
       currencies,
     };
   };
+  function metricBasis(rows: readonly MetricSample[], key: "plannedCRV" | "realizedR") {
+    const included = rows.filter(s=>s[key] !== null && Number.isFinite(s[key]) && (key !== "realizedR" || !!s.currency));
+    return {...metric(rows.map(s=>included.includes(s) ? s[key] : null)),denominator:rows.length,
+      ids:included.map(s=>s.id),excluded:rows.filter(s=>!included.includes(s)).map(s=>({id:s.id,reason:key === "plannedCRV" ? "Ursprünglicher Plan fehlt" : "Realisiertes R mit Währungs- und Risikobezug fehlt"}))};
+  }
   return { money: group("money"), demo: group("demo") };
 }
 export type ResearchMetrics = ReturnType<typeof researchMetrics>;

@@ -1,5 +1,7 @@
 "use client";
 import { TradeAnalysis } from "@/components/trade-analysis";
+import { fibonacciReadModel } from "@/lib/fibonacci-read-model";
+import { ResearchDataGroups } from "@/components/research-data-groups";
 import { useMemo, useState, useTransition, useId } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -170,12 +172,8 @@ export function FibonacciPanel({
   const waveLabels = [
     ...new Set([...FIB_WAVES, ...observations.map((r) => r.wave)]),
   ];
-  const linkedIds = new Set(
-    filtered.flatMap((r) =>
-      r.status === "abgeschlossen" && r.tradeId ? [r.tradeId] : [],
-    ),
-  );
-  const metrics = researchMetrics(samples.filter((s) => linkedIds.has(s.id)));
+  const readModel = useMemo(()=>fibonacciReadModel(filtered,tradeCoverage,samples,filters.stockId),[filtered,tradeCoverage,samples,filters.stockId]);
+  const metrics = readModel.metrics;
   const set = (key: keyof FibFilters, value: string) => {
     setFilters((f) => ({
       ...f,
@@ -483,10 +481,10 @@ export function FibonacciPanel({
         <p>{observations.length} Beobachtungen insgesamt</p>
       </div>
 
-      <Card><CardHeader><CardTitle>Abdeckung der Beobachtungen</CardTitle><CardDescription>{observations.length} insgesamt gespeichert · {stats.coverage.total} im aktuellen Filter · {stats.coverage.completed} abgeschlossen. Alle folgenden Kennzahlen verwenden diese Filter und ihre eigene Datenbasis.</CardDescription></CardHeader><CardContent className="flex flex-col gap-3">
+      <Card><CardHeader><CardTitle>Abdeckung abgeschlossener Beobachtungen</CardTitle><CardDescription>{observations.length} insgesamt gespeichert · {stats.coverage.total} im aktuellen Filter · {stats.coverage.completed} abgeschlossen. Jede Abschlusskennzahl verwendet ihre eigene Datenbasis. Vorläufige Angaben stehen unter „Laufend &amp; Simulation“.</CardDescription></CardHeader><CardContent className="flex flex-col gap-3">
       {Object.entries(stats.coverage).filter(([,v])=>typeof v === "object" && v !== null && "definition" in v).map(([key,raw])=>{
         const m=raw as typeof stats.coverage.exact;
-        const labels:Record<string,string>={targetZoneResidence:"Verweildauer in der Zielzone",residenceKind:"Genauigkeit der Verweildauer",touchAndGo:"Touch-and-Go / länger verweilt",approximateReached:"Ungefähr erreichte Levels",hypotheticalExitLevel:"Hypothetischer Ausstiegslevel",hypotheticalCRVBasis:"CRV-Bezugsziel",unassignedLevels:"Levels mit ungeklärter Messart",exact:"Exakte Prozentmessung",approximate:"Ungefähre Prozentmessung",reached:"Erreichte Levels",missed:"Verfehlte Levels",reversalZone:"Umkehrzone",targetZone:"Zielzone",direction:"Wellenrichtung",period:"Zeitraum",duration:"Wellendauer",reversalDuration:"Umkehrdauer",structure:"Struktur",basis:"Messbasis",hypotheticalCRV:"Hypothetisches CRV",tradability:"Handelbarkeit",hypotheticalOutcome:"Hypothetischer Ausgang",actualOutcome:"Tatsächlicher qualitativer Ausgang"};
+        const labels:Record<string,string>={stopDescription:"Stopbeschreibung",stopVariants:"Stopvarianten",targetZoneResidence:"Verweildauer in der Zielzone",residenceKind:"Genauigkeit der Verweildauer",touchAndGo:"Touch-and-Go / länger verweilt",approximateReached:"Ungefähr erreichte Levels",hypotheticalExitLevel:"Hypothetischer Ausstiegslevel",hypotheticalCRVBasis:"CRV-Bezugsziel",unassignedLevels:"Levels mit ungeklärter Messart",exact:"Exakte Prozentmessung",approximate:"Ungefähre Prozentmessung",reached:"Erreichte Levels",missed:"Verfehlte Levels",reversalZone:"Umkehrzone",targetZone:"Zielzone",direction:"Wellenrichtung",period:"Zeitraum",duration:"Wellendauer",reversalDuration:"Umkehrdauer",structure:"Struktur",basis:"Messbasis",hypotheticalCRV:"Hypothetisches CRV",tradability:"Handelbarkeit",hypotheticalOutcome:"Hypothetischer Ausgang",actualOutcome:"Tatsächlicher qualitativer Ausgang"};
         return <details key={key}><summary>{labels[key] ?? key}: {m.n} von {m.denominator}{m.average != null ? ` · Durchschnitt ${fmt(m.average)}` : ""}</summary><p className="text-sm text-muted-foreground">{m.definition}</p>{m.distribution.map(d=><p className="text-xs" key={d.value}>{d.value}: {d.count} Fälle · {fmt(d.share)} % von {m.n}</p>)}{m.included.map(r=><p className="break-words text-xs" key={r.id}>{r.id}: {JSON.stringify(r.value)}</p>)}{m.excluded.map(r=><p className="break-words text-xs text-muted-foreground" key={r.id}>{r.id}: {r.reason}</p>)}</details>;
       })}
       <details><summary>Vergleichbare exakte Verweildauern: {stats.coverage.residenceComparisons.groups.reduce((n,g)=>n+g.n,0)} von {stats.coverage.total}</summary>
@@ -513,6 +511,7 @@ export function FibonacciPanel({
             </TabsTrigger>
             <TabsTrigger value="distribution">Verteilungen</TabsTrigger>
             <TabsTrigger value="context">Strukturen & Stops</TabsTrigger>
+            <TabsTrigger value="data-groups">Laufend & Simulation</TabsTrigger>
             <TabsTrigger value="trades">Tradebezug</TabsTrigger>
             <TabsTrigger value="history">Kursdaten</TabsTrigger>
           </TabsList>
@@ -972,6 +971,9 @@ export function FibonacciPanel({
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+        <TabsContent value="data-groups" className="flex min-w-0 flex-col gap-4">
+          <ResearchDataGroups model={readModel} />
         </TabsContent>
         <TabsContent value="trades" className="flex min-w-0 flex-col gap-4">
           <TradeAnalysis rows={tradeCoverage.filter(t => !filters.stockId || t.stockId === filters.stockId)} samples={samples.filter(t => !filters.stockId || t.stockId === filters.stockId)} instrumentFiltered={!!filters.stockId} />

@@ -52,7 +52,7 @@ it("keeps break-even in denominator and excludes unpriced trades, with separate 
     sample(5, 20, "demo"),
     sample(6, 50, "money", "USD"),
   ]);
-  expect(m.money.winRate).toEqual({ value: 50, n: 4, missing: 1 });
+  expect(m.money.winRate).toMatchObject({ value: 50, n: 4, missing: 1, denominator:5, ids:[1,2,3,6], excluded:[{id:4,reason:"Vollständiges Nettoergebnis fehlt"}] });
   expect(m.demo.winRate.value).toBe(100);
   expect(m.money.currencies.find((c) => c.currency === "EUR")?.net).toBeNull();
   expect(m.money.currencies.find((c) => c.currency === "USD")?.net).toBe(50);
@@ -62,7 +62,7 @@ it("requires a recorded original plan instead of reusing a later stop", () => {
   expect(a.plannedCRV).toBeNull();
   expect(a.realizedR).toBeNull();
   const m = researchMetrics([a]);
-  expect(m.money.averageCRV).toEqual({ value: null, n: 0, missing: 1 });
+  expect(m.money.averageCRV).toMatchObject({ value: null, n: 0, missing: 1, denominator:1, ids:[] });
 });
 it("uses original snapshot for planned CRV even when the current target changes", () => {
   const event = {

@@ -1,10 +1,12 @@
 import type { PlanContext } from './plan-context';
 export type TradeResearchRow = {
+  kind?: "money" | "demo"; portfolioId?: number; kindMismatch?: boolean;
   ticker?:string; result?:string|null; id:number; stockId:number|null; status:string; direction:string;
   wave:string|null; degree:string|null; notes:string|null;
   planContext:PlanContext|null; plannedCRV:number|null;
 };
 export function tradeResearchCoverage(rows:readonly TradeResearchRow[]) {
+  rows = uniqueTrades(rows);
   const field=(definition:string,get:(r:TradeResearchRow)=>unknown)=>{
     const included:{id:number;value:unknown}[]=[],excluded:{id:number;reason:string}[]=[];
     for(const r of [...rows].sort((a,b)=>a.id-b.id)) {
@@ -23,7 +25,7 @@ export function tradeResearchCoverage(rows:readonly TradeResearchRow[]) {
     direction:field('Handelsrichtung; keine Übernahme als Wellenrichtung.',r=>r.direction),
     plan:field('Bestätigter Plankontext unabhängig von Ausführung oder Abrechnung.',r=>r.planContext && ([r.planContext.expectedMove,r.planContext.entryTrigger,r.planContext.stopManagement,r.planContext.targetManagement].some(value=>typeof value === 'string' && value.trim().length>0) || r.planContext.riskConfirmed === true) ? r.planContext : null),
     notes:field('Vorhandene qualitative Angaben, unverändert mit Herkunft am Trade. Ziellevels sind keine beobachteten Umkehrlevels.',r=>r.notes),
-    actualOutcome:field("Gespeicherter tatsächlicher qualitativer Abschluss (Gewinn/Verlust/Break-even), unabhängig von einer vollständigen Nettoabrechnung.",r=>r.status === "abgeschlossen" ? r.result : null),
+    actualOutcome:field("Gespeicherter tatsächlicher qualitativer Abschluss (Gewinn/Verlust/Break-even), unabhängig von einer vollständigen Nettoabrechnung.",r=>r.status === "abgeschlossen" && ['gewinn','verlust','breakeven'].includes(r.result ?? '') ? r.result : null),
     currentCRV:field('Aktuell gespeichertes geplantes CRV; kein ursprünglicher Eröffnungsplan, kein realisiertes R.',r=>Number.isFinite(r.plannedCRV) && r.plannedCRV!>0?r.plannedCRV:null),
   };
 }
@@ -31,6 +33,7 @@ export function tradeResearchCoverage(rows:readonly TradeResearchRow[]) {
 
 /** Recomputed from owned stored trades on every read; no opt-in or copy table. */
 export function summarizeTradeResearch(rows: readonly TradeResearchRow[]) {
+  rows = uniqueTrades(rows);
   const coverage = tradeResearchCoverage(rows);
   const distribution = (metric: typeof coverage.status) => {
     const groups = new Map<string, number[]>();
@@ -57,6 +60,8 @@ export function summarizeTradeResearch(rows: readonly TradeResearchRow[]) {
       breakeven: outcomes.filter(r => r.value === 'breakeven').length,
       winRate: outcomes.length ? wins / outcomes.length : null,
       ids: outcomes.map(r => r.id),
+      excluded: coverage.actualOutcome.excluded.filter(r=>rows.some(t=>t.id === r.id && t.status === "abgeschlossen")),
+      outOfScope: rows.filter(r=>r.status !== "abgeschlossen").map(r=>({id:r.id,reason:`Status ${r.status}`})),
     },
     currentCRV: {
       definition: 'Arithmetisches Mittel aller aktuell gespeicherten positiven Plan-CRV; unabhängig von Status oder Abrechnung. Kein realisiertes R.',
@@ -64,6 +69,25 @@ export function summarizeTradeResearch(rows: readonly TradeResearchRow[]) {
       denominator: rows.length,
       average: crvs.length ? crvs.reduce((sum, r) => sum + Number(r.value), 0) / crvs.length : null,
       ids: crvs.map(r => r.id),
+      excluded: coverage.currentCRV.excluded,
+    },
+  };
+}
+
+export function uniqueTrades<T extends {id:number}>(rows:readonly T[]): T[] {
+  return [...new Map(rows.map(r=>[r.id,r])).values()].sort((a,b)=>a.id-b.id);
+}
+
+export function tradeResearchByKind(rows: readonly TradeResearchRow[]) {
+  const owned = uniqueTrades(rows);
+  const group = (kind: "money" | "demo") => owned.filter(r=>r.kind === kind);
+  return {
+    tradeSummaryByKind: {money:summarizeTradeResearch(group("money")),demo:summarizeTradeResearch(group("demo"))},
+    tradeResearchCoverageByKind: {money:tradeResearchCoverage(group("money")),demo:tradeResearchCoverage(group("demo"))},
+    tradeKindDiagnostics: {
+      definition: "Handelsart aus eigenem Depot; Abweichungen zum abgeleiteten Trade-Feld werden nur angezeigt, nicht korrigiert.",
+      mismatches: owned.filter(r=>r.kindMismatch).map(r=>({id:r.id,portfolioId:r.portfolioId,kind:r.kind})),
+      unassigned: owned.filter(r=>!r.kind).map(r=>({id:r.id,reason:"Keine geprüfte eigene Depotzuordnung"})),
     },
   };
 }
