@@ -1,4 +1,5 @@
 "use client";
+import { formatWaveDegree } from "@/lib/wave-degree-labels";
 import { CategoricalFibForm } from "@/components/fibonacci-categorical-form";
 import { CategoricalResults } from "@/components/fibonacci-categorical-results";
 import { STRUCTURES } from "@/lib/fibonacci-catalogue";
@@ -382,7 +383,7 @@ export function FibonacciPanel({
               label="Wellengrad"
               value={filters.degree || ""}
               onChange={(v) => set("degree", v)}
-              options={choices(FIB_DEGREES)}
+              options={FIB_DEGREES.map(value => ({value,label:formatWaveDegree(value)}))}
             />
             <Choice label="Wellenstruktur" value={filters.structure || ""} onChange={v=>set("structure",v)} options={[...STRUCTURES.map(([value,label])=>({value,label})),...([...new Set(STRUCTURES.map(([, ,parent])=>parent))].filter(p=>p!=="unknown").map(parent=>({value:`family:${parent}`,label:`Hauptstruktur: ${parent}`})))]}/>
 
@@ -470,7 +471,7 @@ export function FibonacciPanel({
       })}
       <details><summary>Vergleichbare exakte Verweildauern: {stats.coverage.residenceComparisons.groups.reduce((n,g)=>n+g.n,0)} von {stats.coverage.total}</summary>
         <p className="text-sm text-muted-foreground">Nur abgeschlossene Fälle mit exakter Dauer, bekannter Zeitbasis und identischer Messkonvention. Schätzungen und Grenzen bleiben außerhalb der Mittelwerte.</p>
-        {stats.coverage.residenceComparisons.groups.map((g,i)=><div key={i} className="text-sm"><p>Welle {g.wave} · {g.degree} · {g.timeframe} · {g.zone.join("–")} % · {g.timeBasis === "calendar" ? "Kalenderzeit" : "Handelszeit"} · {g.convention} · n={g.n} · Mittel {fmt(g.average)} / Median {fmt(g.median)} {g.unit === "hour" ? "Stunden" : g.unit === "day" ? "Tage" : "Minuten"}</p>{g.included.map(r=><p key={r.id} className="text-xs">{r.id}: {fmt(r.value)}</p>)}</div>)}
+        {stats.coverage.residenceComparisons.groups.map((g,i)=><div key={i} className="text-sm"><p>Welle {g.wave} · {formatWaveDegree(g.degree)} · {g.timeframe} · {g.zone.join("–")} % · {g.timeBasis === "calendar" ? "Kalenderzeit" : "Handelszeit"} · {g.convention} · n={g.n} · Mittel {fmt(g.average)} / Median {fmt(g.median)} {g.unit === "hour" ? "Stunden" : g.unit === "day" ? "Tage" : "Minuten"}</p>{g.included.map(r=><p key={r.id} className="text-xs">{r.id}: {fmt(r.value)}</p>)}</div>)}
         {stats.coverage.residenceComparisons.excluded.map(r=><p key={r.id} className="text-xs text-muted-foreground">{r.id}: {r.reason}</p>)}
       </details>
       {stats.coverage.levelProfile.map(l=><p className="text-sm" key={l.level}>{l.level} %: {l.reached.length} erreicht · {l.missed.length} verfehlt · n={l.n}. Nur explizite Angaben zu diesem Level.</p>)}

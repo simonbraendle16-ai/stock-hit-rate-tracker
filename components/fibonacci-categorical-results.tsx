@@ -1,3 +1,4 @@
+import { formatWaveDegree } from "@/lib/wave-degree-labels";
 import type { categoricalStats } from "@/lib/fibonacci-categorical-stats";
 import { levelLabel } from "@/components/fibonacci-categorical-inputs";
 import {
@@ -102,7 +103,7 @@ export function CategoricalResults({
           {stats.reversals.groups.map((g, i) => (
             <details className="mt-2" key={i}>
               <summary className="text-sm">
-                Welle {g.wave} · {g.degree} · {g.timeframe} ·{" "}
+                Welle {g.wave} · {formatWaveDegree(g.degree)} · {g.timeframe} ·{" "}
                 {g.measurementKind} · n={g.n}
               </summary>
               {g.distribution.map((d) => (
@@ -148,7 +149,7 @@ export function CategoricalResults({
           {stats.targets.map((g, i) => (
             <details key={i} className="mt-2">
               <summary className="text-sm">
-                Welle {g.wave} · {g.degree} · {g.timeframe} · {g.zone.join("–")}{" "}
+                Welle {g.wave} · {formatWaveDegree(g.degree)} · {g.timeframe} · {g.zone.join("–")}{" "}
                 % · {g.hit.length}/{g.n} Treffer
                 {g.share == null
                   ? ""
@@ -194,7 +195,7 @@ export function CategoricalResults({
                   : g.type === "reversal"
                     ? "Umkehrdauer"
                     : "Zonenaufenthalt"}{" "}
-                · Welle {g.wave} · {g.degree} · {g.timeframe} ·{" "}
+                · Welle {g.wave} · {formatWaveDegree(g.degree)} · {g.timeframe} ·{" "}
                 {g.zone ? `${g.zone.join("–")} %` : "gesamte Welle"} · n={g.n}
               </summary>
               <p className="text-xs text-muted-foreground">

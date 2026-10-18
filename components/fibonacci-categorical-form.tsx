@@ -1,4 +1,5 @@
 "use client";
+import { formatWaveDegree } from "@/lib/wave-degree-labels";
 import { useState, useTransition, useId } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -242,7 +243,7 @@ export function CategoricalFibForm({
               <Choice
                 label="Wellengrad"
                 value={form.degree}
-                options={choices(FIB_DEGREES)}
+                options={FIB_DEGREES.map(value => [value, formatWaveDegree(value)] as const)}
                 onChange={(v) => set("degree", v)}
               />
               <Choice

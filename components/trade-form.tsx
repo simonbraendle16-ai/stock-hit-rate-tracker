@@ -1,4 +1,5 @@
 'use client'
+import { formatWaveDegree } from "@/lib/wave-degree-labels";
 
 import type React from 'react'
 import { formNumber } from '@/lib/form-number'
@@ -952,7 +953,7 @@ export function TradeForm({
               <option value="">– wählen –</option>
               {waveDegrees.map((d) => (
                 <option key={d} value={d}>
-                  {d}
+                  {formatWaveDegree(d)}
                 </option>
               ))}
             </select>

@@ -1,3 +1,4 @@
+import { formatWaveDegree } from "@/lib/wave-degree-labels";
 import { RESEARCH_LEVELS, RESEARCH_WAVES, STRUCTURES, DURATION_CLASSES } from "@/lib/fibonacci-catalogue";
 import { loadTradeCoverage, loadMetricSamples } from "@/lib/research-metrics-service";
 import { researchMetrics } from "@/lib/research-metrics";
@@ -14,7 +15,7 @@ import {
 } from "@/lib/assistant-api";
 import { listFib, saveFib } from "@/lib/fibonacci-service";
 import {
-  fibStats,
+  fibStats, FIB_DEGREES,
 } from "@/lib/fibonacci";
 export async function GET(req: NextRequest) {
   try {
@@ -39,7 +40,7 @@ export async function GET(req: NextRequest) {
         trades: "Eindeutig verknüpfte eigene Trades mit passendem Instrument, nach jeweiligem Trade-Status; Netto nur abgeschlossene Trades.",
         legacy: "tradeSummary und tradeResearchCoverage bleiben gemischte Gesamtansichten; getrennte Bereiche verwenden die ByKind-Gruppen. Prognosen bleiben eigener assessment-Bestand.",
       },
-      catalogue: {version:1,levels:RESEARCH_LEVELS,waves:RESEARCH_WAVES,structures:STRUCTURES.map(([code,label,parent])=>({code,label,parent})),durationClasses:DURATION_CLASSES.map(([code,label])=>({code,label}))},
+      catalogue: {version:1,degrees:FIB_DEGREES.map(value=>({value,label:formatWaveDegree(value)})),levels:RESEARCH_LEVELS,waves:RESEARCH_WAVES,structures:STRUCTURES.map(([code,label,parent])=>({code,label,parent})),durationClasses:DURATION_CLASSES.map(([code,label])=>({code,label}))},
       stats: fibStats(items, filters.measurementKind),
     });
   } catch (e) {

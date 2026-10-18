@@ -1,4 +1,5 @@
 "use client";
+import { formatWaveDegree } from "@/lib/wave-degree-labels";
 
 import { Pencil, ArrowUpRight } from "lucide-react";
 import Link from "next/link";
@@ -126,7 +127,7 @@ export function FibonacciObservationList({
               <div className="min-w-0">
                 <p className="font-mono font-semibold">{row.ticker}</p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Welle {row.wave} · {row.degree} · {row.timeframe}
+                  Welle {row.wave} · {formatWaveDegree(row.degree)} · {row.timeframe}
                 </p>
               </div>
               <div className="shrink-0 text-right">
@@ -193,7 +194,7 @@ export function FibonacciObservationList({
                 <td className="py-4 pr-4">
                   Welle {row.wave}
                   <p className="mt-1 text-xs text-muted-foreground">
-                    {row.degree} · {row.timeframe}
+                    {formatWaveDegree(row.degree)} · {row.timeframe}
                   </p>
                 </td>
                 <td className="py-4 pr-4">
