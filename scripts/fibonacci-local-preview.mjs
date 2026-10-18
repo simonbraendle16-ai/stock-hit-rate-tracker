@@ -56,7 +56,7 @@ if (!process.argv.includes('--empty')) await database.query(
   "INSERT INTO stock(id,\"userId\",name,ticker,market) VALUES (1,$1,'Synthetische Aktie','FIBQA-S','aktien'),(2,$1,'Synthetisches Krypto','FIBQA-C','krypto')",
   [owner],
 )
-if (!process.argv.includes('--empty') && !process.argv.includes('--t3')) {
+if (!process.argv.includes('--empty') && !process.argv.includes('--t3') && !process.argv.includes('--t45')) {
   const levels = [
     38.2, 50, 61.8, 61.8, 61.8, 78.6, 100, 61.8, 38.2, 61.8, 78.6, 127.2, 23.6,
     61.8, 50, 161.8, 38.2, 78.6, 61.8, 100, 50, 61.8, 61.8, 78.6,
@@ -80,6 +80,29 @@ if (!process.argv.includes('--empty') && !process.argv.includes('--t3')) {
         JSON.stringify({reachedLevels:i%3===1?[38.2]:[],missedLevels:i%3===1?[50]:[],reversalZone:i%3===2?[38.2,50]:null,hypotheticalCRV:i%2?5:null,provenance:'Synthetische lokale Erfassung'}),
       ],
     )
+}
+if (process.argv.includes('--t45')) {
+  await database.query(`UPDATE stock SET name='Tesla QA',ticker='TSLA-QA' WHERE id=1`);
+  await database.query(`UPDATE stock SET name='Tesla Alternative QA',ticker='TES-QA' WHERE id=2`);
+  const at = {catalogueVersion:1,reversalLocation:'at_level',reversalZone:[61.8,61.8]};
+  const entries = [
+    ['1',at,'abgeschlossen',null,'4'],
+    ['2',{catalogueVersion:1,reversalLocation:'between_levels',reversalZone:[61.8,88.7]},'abgeschlossen',null,'4'],
+    ['3',{reversalLocation:'at_level',reversalZone:[61.8,61.8],reversalPrecision:'exact'},'abgeschlossen',null,'4'],
+    ['4',{reversalLocation:'at_level',reversalZone:[61.8,61.8],reversalPrecision:'approximate'},'abgeschlossen',null,'4'],
+    ['5',{catalogueVersion:1,reachedLevels:[61.8],hypotheticalExitLevel:61.8},'abgeschlossen',null,'4'],
+    ['6',at,'laufend',null,'4'],
+    ['7',{},'abgeschlossen',61.8,'4'],
+    ['8',{catalogueVersion:1,targetZone:[61.8,88.7]},'abgeschlossen',null,'4'],
+    ['9',{...at,parentId:'45000000-0000-4000-8000-000000000001'},'abgeschlossen',null,'A'],
+    ['10',{reversalLocation:'at_level',reversalZone:[61.8,61.8],approximatePercent:61.8},'abgeschlossen',null,'4'],
+  ];
+  for (const [suffix,evidence,status,percent,wave] of entries) {
+    const id=`45000000-0000-4000-8000-${suffix.padStart(12,'0')}`;
+    await database.query(`INSERT INTO fibonacci_observation(id,"contextId","userId","stockId",wave,degree,timeframe,"observedOn",status,percent,note,evidence)
+      VALUES($1,$1,$2,1,$3,'Minor','1d','2026-10-18',$4,$5,'Synthetischer T4/T5-Prüffall – keine echten Marktdaten.',$6)`,
+      [id,owner,wave,status,percent,JSON.stringify({...evidence,structureCode:'abc',historicalTime:{start:{precision:'day',date:'2021-01-01'},end:{precision:'day',date:'2021-12-31'}},provenance:'Synthetische T4/T5-Abnahme'})]);
+  }
 }
 if (process.argv.includes('--t3')) {
   const root = '10000000-0000-4000-8000-000000000001';

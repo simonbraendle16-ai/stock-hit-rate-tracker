@@ -35,6 +35,7 @@ function Details({ row }: { row: FibObservation }) {
             ["Erreichte Levels", row.evidence?.reachedLevels?.join(" / ")],
             ["Verfehlte Levels", row.evidence?.missedLevels?.join(" / ")],
             ["Umkehrzone", row.evidence?.reversalZone?.join(" bis ")],
+            ["Umkehrbedeutung", row.evidence?.catalogueVersion === 1 ? "Fibonacci-Kategorie, keine exakte Messung" : row.evidence?.reversalPrecision === "exact" ? "Historisch exakt dokumentiert" : row.evidence?.reversalPrecision === "approximate" ? "Historisch ungefähr dokumentiert" : "Genauigkeit nicht dokumentiert"],
             ["Erwartete Zielzone", row.evidence?.targetZone?.join(" bis ")],
             ["Mögliche Einstiegszone", row.evidence?.entryZone?.join(" bis ")],
             ["Zielzone erreicht", row.evidence?.targetContact === "reached" ? "Ja" : row.evidence?.targetContact === "not_reached" ? "Nein" : "Unbekannt"],

@@ -101,6 +101,8 @@ export type ResearchEvidence = {
   targetContact?: "reached" | "not_reached" | "unknown";
   expectationTiming?: "prior" | "retrospective" | "unknown";
   reversalLocation?: "at_level" | "between_levels" | "unknown";
+  /** Optional precision of an explicitly documented historical reversal, never of a maximum. */
+  reversalPrecision?: "exact" | "approximate" | "unknown";
   durations?: {
     wave?: ClassifiedDuration | null;
     reversal?: ClassifiedDuration | null;
@@ -115,6 +117,7 @@ export const RESEARCH_EVIDENCE_KEYS = [
   "targetContact",
   "expectationTiming",
   "reversalLocation",
+  "reversalPrecision",
   "durations",
 ];
 export function researchEvidenceError(
@@ -145,6 +148,7 @@ export function researchEvidenceError(
     targetContact: ["reached", "not_reached", "unknown"],
     expectationTiming: ["prior", "retrospective", "unknown"],
     reversalLocation: ["at_level", "between_levels", "unknown"],
+    reversalPrecision: ["exact", "approximate", "unknown"],
   })) {
     if (
       e[key] !== undefined &&

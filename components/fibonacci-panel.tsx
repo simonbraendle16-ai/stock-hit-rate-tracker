@@ -6,6 +6,9 @@ import { STRUCTURES } from "@/lib/fibonacci-catalogue";
 import { TradeAnalysis } from "@/components/trade-analysis";
 import { fibonacciReadModel } from "@/lib/fibonacci-read-model";
 import { ResearchDataGroups } from "@/components/research-data-groups";
+import { interpretFibSearch, describeSearchCriterion, type SearchResolutions } from "@/lib/fibonacci-search";
+import { RESEARCH_LEVELS } from "@/lib/fibonacci-catalogue";
+import { levelSearchGroups, levelGroupLabels, levelMeaningLabels } from "@/lib/fibonacci-level-search";
 import { useMemo, useState, useId } from "react";
 import {
   Download,
@@ -145,6 +148,10 @@ export function FibonacciPanel({
   tradeCoverage = [],
 }: Props) {
   const searchId = useId();
+  const queryId = useId();
+  const [query, setQuery] = useState("");
+  const [resolutions, setResolutions] = useState<SearchResolutions>({});
+  const [searchMessage, setSearchMessage] = useState("");
   const [filters, setFilters] = useState<FibFilters>({
       stockId,
       measurementKind: "retracement",
@@ -156,6 +163,8 @@ export function FibonacciPanel({
     [selection, setSelection] = useState<ResearchSelection>("all"),
     [order, setOrder] = useState<ResearchOrder>("newest"),
     [tab, setTab] = useState("protocol");
+  const interpretation = useMemo(()=>interpretFibSearch(query,instruments,filters,resolutions),[query,instruments,filters,resolutions]);
+  const searchPending = !!query.trim();
   const filtered = useMemo(
       () => selectResearchRows(observations, filters, search, selection),
       [observations, filters, search, selection],
@@ -170,11 +179,12 @@ export function FibonacciPanel({
   const readModel = useMemo(()=>fibonacciReadModel(filtered,tradeCoverage,samples,filters.stockId),[filtered,tradeCoverage,samples,filters.stockId]);
   const timeGroups = useMemo(()=>researchTimeGroups(observations,filters,search,selection),[observations,filters,search,selection]);
   const metrics = readModel.metrics;
+  const levelGroups = useMemo(()=>levelSearchGroups(filtered,filters),[filtered,filters]);
   const set = (key: keyof FibFilters, value: string) => {
     setFilters((f) => ({
       ...f,
       [key]:
-        key === "stockId"
+        ["stockId", "levelFrom", "levelTo"].includes(key)
           ? value
             ? Number(value)
             : undefined
@@ -223,6 +233,9 @@ export function FibonacciPanel({
   const reset = () => {
     setFilters({ stockId, measurementKind: "retracement" });
     setSearch("");
+    setQuery("");
+    setResolutions({});
+    setSearchMessage("");
     setSelection("all");
     setPage(0);
   };
@@ -265,7 +278,7 @@ export function FibonacciPanel({
           <Button
             variant="outline"
             onClick={download}
-            disabled={!filtered.length}
+            disabled={searchPending || !!levelGroups.error || !filtered.length}
           >
             <Download data-icon="inline-start" />
             CSV der Auswahl
@@ -277,7 +290,7 @@ export function FibonacciPanel({
         </div>
       </div>
 
-      <div
+      {!searchPending && !levelGroups.error && <div
         className="grid grid-cols-2 gap-3 lg:grid-cols-4"
         aria-label="Datenbasis der aktuellen Auswahl"
         aria-live="polite"
@@ -307,7 +320,7 @@ export function FibonacciPanel({
             </CardContent>
           </Card>
         ))}
-      </div>
+      </div>}
 
       <Card className="panel">
         <CardHeader className="pb-0">
@@ -318,11 +331,25 @@ export function FibonacciPanel({
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor={queryId}>Begriffssuche in strukturierte Filter übersetzen</FieldLabel>
+              <Input id={queryId} value={query} onChange={e=>{setQuery(e.target.value);setResolutions({});setSearchMessage("");setPage(0);}} placeholder="Tesla Welle 4 2020–2025 ABC 61,8" />
+            </Field>
+            {searchPending && <>
+              <p role="status" className="text-sm">Erkannt: {interpretation.recognized.map(c=>describeSearchCriterion(c,instruments)).join(" · ") || "noch keine Kriterien"}. Bis zur Übernahme keine endgültige Statistik.</p>
+              {interpretation.pending.map(choice=><Choice key={choice.key} label={choice.label} value={resolutions[choice.key] || ""} onChange={v=>setResolutions(r=>({...r,[choice.key]:v}))} options={choice.options} />)}
+              {!!interpretation.unknown.length && <p role="alert">Nicht verstanden: {interpretation.unknown.join(" · ")}. Bitte Suchtext korrigieren.</p>}
+              {!!interpretation.conflicts.length && <p role="alert">Widerspruch: {interpretation.conflicts.join(" · ")}. Suchtext oder bestehende Filter korrigieren.</p>}
+              <Button type="button" disabled={!interpretation.ready} onClick={()=>{setFilters(interpretation.filters);setQuery("");setResolutions({});setSearchMessage("Suchkriterien übernommen. Die manuellen Filter zeigen dieselbe Auswahl.");setPage(0);}}>Suchkriterien übernehmen</Button>
+            </>}
+            {searchMessage && <p role="status">{searchMessage}</p>}
+          </FieldGroup>
           <FieldGroup className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_14rem]">
             <Field>
               <FieldLabel htmlFor={searchId}>
                 <Search className="size-3.5" />
-                Beobachtungen durchsuchen
+                Ergänzende Textsuche (Quelle / Notiz)
               </FieldLabel>
               <Input
                 id={searchId}
@@ -391,6 +418,10 @@ export function FibonacciPanel({
               onChange={(v) => set("degree", v)}
               options={FIB_DEGREES.map(value => ({value,label:formatWaveDegree(value)}))}
             />
+            <Choice all={false} label="Wellenlabel-Umfang" value={filters.waveLabelScope ?? "self"} onChange={v=>set("waveLabelScope",v)} options={[{value:"self",label:"Welle selbst"},{value:"descendants",label:"Einschließlich Unterwellen"}]}/>
+            <Choice label="Levelbedeutung" value={filters.levelMeaning ?? ""} onChange={v=>set("levelMeaning",v)} options={Object.entries(levelMeaningLabels).map(([value,label])=>({value,label}))}/>
+            <Choice label="Fibonacci-Level / von" value={filters.levelFrom === undefined ? "" : String(filters.levelFrom)} onChange={v=>set("levelFrom",v)} options={RESEARCH_LEVELS.map(n=>({value:String(n),label:n.toLocaleString("de-DE")}))}/>
+            <Choice label="Fibonacci-Bereich bis (optional)" value={filters.levelTo === undefined ? "" : String(filters.levelTo)} onChange={v=>set("levelTo",v)} options={RESEARCH_LEVELS.map(n=>({value:String(n),label:n.toLocaleString("de-DE")}))}/>
             <Choice label="Wellenstruktur" value={filters.structure || ""} onChange={v=>set("structure",v)} options={[...STRUCTURES.map(([value,label])=>({value,label})),...([...new Set(STRUCTURES.map(([, ,parent])=>parent))].filter(p=>p!=="unknown").map(parent=>({value:`family:${parent}`,label:`Hauptstruktur: ${parent}`})))]}/>
 
           </FieldGroup>
@@ -448,12 +479,17 @@ export function FibonacciPanel({
             </Button>
           </div>
           {timeGroups.error && <p role="alert">{timeGroups.error}</p>}
+          {!searchPending && !levelGroups.error && <>
           {!timeGroups.error && (filters.from || filters.to) && <p className="text-sm" role="status">Zeitbasis: {timeGroups.basis === "historical" ? "historische Wellenzeit" : "Erfassungsdatum"}. {timeGroups.groups.certain.length} sicher · {timeGroups.groups.possible.length} möglich · {timeGroups.groups.unknown.length} unbekannt · {timeGroups.groups.excluded.length} ausgeschlossen / {timeGroups.denominator} Fälle.</p>}
           <p className="text-sm">Getrennte Hierarchiegruppen: {readModel.hierarchyGroups.map(g=>`${g.role === "main" ? "Hauptwellen / ohne Elternbezug" : "Unterwellen"}: ${g.n}`).join(" · ")}</p>
+          </>}
 
         </CardContent>
       </Card>
 
+      {levelGroups.error && <p role="alert">{levelGroups.error}</p>}
+      {!searchPending && !levelGroups.error && <>
+      {filters.levelFrom !== undefined && <Card><CardHeader><CardTitle>Getrennte Leveltreffer</CardTitle><CardDescription>{levelGroups.total} eindeutige Fälle. Gruppenzahlen werden nicht addiert. Endlagen erfordern einen dokumentierten Abschluss; Maximalmessung und hypothetischer Ausstieg sind kein Endlevel.</CardDescription></CardHeader><CardContent className="flex flex-col gap-2">{Object.entries(levelGroups.groups).map(([key,ids])=><details key={key}><summary>{levelGroupLabels[key]}: {ids.length}</summary><p className="break-all text-xs">{ids.join(" · ") || "Keine Fälle"}</p></details>)}</CardContent></Card>}
       <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
         <p>
           <Badge variant={stats.exploratory ? "outline" : "secondary"}>
@@ -980,6 +1016,7 @@ export function FibonacciPanel({
           />
         </TabsContent>
       </Tabs>
+      </>}
       <details className="rounded-lg border border-border p-4 text-xs text-muted-foreground">
         <summary className="cursor-pointer font-medium text-foreground">
           Messdefinition & Grenzen

@@ -68,6 +68,21 @@ it("roundtrips a key Fibonacci through API, retries, older edits and explicit re
   expect((await getFib("owner",id)).evidence.keyFibLevel).toBeNull();
 });
 
+it("roundtrips historical reversal precision and preserves it for legacy edits, retries and revisions",async()=>{
+  const id=crypto.randomUUID(),ctx={params:Promise.resolve({id})};
+  const evidence={...input.evidence,reversalLocation:"at_level",reversalZone:[61.8,61.8],reversalPrecision:"approximate"};
+  const body={...input,percent:null,anchorStart:null,anchorEnd:null,extreme:null,evidence};
+  for(let i=0;i<2;i++)expect((await POST(request("",tokens.owner,"POST",body,{"Idempotency-Key":id}))).status).toBe(201);
+  expect((await getFib("owner",id)).evidence).toEqual(evidence);
+  const {reversalPrecision,...oldEvidence}=evidence;
+  expect((await PATCH(request("/"+id,tokens.owner,"PATCH",{...body,evidence:oldEvidence},{"X-Expected-Version":"1"}),ctx)).status).toBe(200);
+  expect((await getFib("owner",id)).evidence.reversalPrecision).toBe(reversalPrecision);
+  expect((await PATCH(request("/"+id,tokens.owner,"PATCH",{...body,evidence:null},{"X-Expected-Version":"2"}),ctx)).status).toBe(422);
+  const revisions=await (await revisionGET(request("/"+id+"/revisions"),ctx)).json();
+  expect(JSON.stringify(revisions)).toContain('"reversalPrecision":"approximate"');
+  expect((await detailGET(request("/"+id,tokens.other),ctx)).status).toBe(404);
+});
+
 it("roundtrips a categorical C target miss without note or expansion basis and preserves new fields on older PATCH", async()=>{
   const id=crypto.randomUUID(),ctx={params:Promise.resolve({id})};
   const body={...input,wave:"C",percent:null,anchorStart:null,anchorEnd:null,extreme:null,note:"",measurementKind:"expansion",evidence:{catalogueVersion:1,waveDirection:"short",structureCode:"abc",targetZone:[123.6,138.2],entryZone:[138.2,161.8],targetContact:"not_reached",reversalLocation:"at_level",reversalZone:[100,100],expectationTiming:"retrospective",provenance:"Synthetic categorical API test"}};

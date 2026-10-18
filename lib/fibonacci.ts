@@ -1,6 +1,7 @@
 import { timeMatch, dateEnvelope, boundaryEnvelope, historicalTimeError, type HistoricalTime } from "./fibonacci-time";
 import { researchEvidenceError, RESEARCH_EVIDENCE_KEYS, STRUCTURES, structureCode, type ResearchEvidence } from "./fibonacci-catalogue";
 import { categoricalStats } from "./fibonacci-categorical-stats";
+import { levelMatchGroups, levelSearchError, type LevelSearch } from "./fibonacci-level-search";
 import { residenceError, residenceLabel, residenceKindLabels, residenceComparisons, type TargetZoneResidence } from "./fibonacci-residence";
 export const FIB_LEVELS = [
   0, 23.6, 38.2, 50, 61.8, 78.6, 100, 127.2, 161.8, 200, 261.8, 423.6,
@@ -560,7 +561,8 @@ export function frequencies(
       .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label)),
   };
 }
-export type FibFilters = {
+export type FibFilters = LevelSearch & {
+  waveLabelScope?: "self" | "descendants";
   measurementKind?: "retracement" | "expansion";
   status?: FibInput["status"];
   contextId?: string;
@@ -583,10 +585,12 @@ export function filterFib(
   rows: readonly FibObservation[],
   filters: FibFilters,
 ) {
+  if (levelSearchError(filters)) return [];
   if (filters.from) dateEnvelope(filters.from);
   if (filters.to) dateEnvelope(filters.to);
   return rows.filter(
     (r) =>
+      (filters.levelFrom === undefined || levelMatchGroups(r,filters).length > 0) &&
       (!filters.measurementKind ||
         (r.measurementKind ?? "retracement") === filters.measurementKind) &&
       (!filters.status || r.status === filters.status) &&
@@ -594,7 +598,7 @@ export function filterFib(
       (!filters.sourceKey || r.sourceKey === filters.sourceKey) &&
       (!filters.stockId || r.stockId === filters.stockId) &&
       (!filters.market || r.market === filters.market) &&
-      (!filters.wave || r.wave === filters.wave) &&
+      (!filters.wave || r.wave.trim().toUpperCase() === filters.wave.trim().toUpperCase()) &&
       (!filters.degree || r.degree === filters.degree) &&
       (!filters.timeframe || r.timeframe === filters.timeframe) &&
       (!filters.structure || (filters.structure.startsWith("family:") ? STRUCTURES.find(([code])=>code===(r.evidence?.structureCode ?? structureCode(r.structure)))?.[2]===filters.structure.slice(7) : (r.evidence?.structureCode ?? structureCode(r.structure) ?? "unknown")===filters.structure)) &&
