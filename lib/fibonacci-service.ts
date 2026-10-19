@@ -1,4 +1,4 @@
-import { residenceConflict } from "./fibonacci-duration-compatibility";
+import { residenceConflict, reversalConflict } from "./fibonacci-duration-compatibility";
 import { hierarchyError } from "./fibonacci-hierarchy";
 import { isDeepStrictEqual } from "node:util";
 import { db } from "@/lib/db";
@@ -71,9 +71,11 @@ export async function saveFib(
 ) {
   let merged = raw;
   let previousDurationPair: unknown;
+  let previousReversalPair: unknown;
   if (version !== undefined) {
     const previous = await getFib(userId, id);
     previousDurationPair = [previous.evidence?.durations?.residence, previous.evidence?.targetZoneResidence];
+    previousReversalPair = [previous.evidence?.durations?.reversal, previous.evidence?.targetZoneReversal];
     // Legacy full-replacement clients keep new metadata they do not know about.
     const extended = [
       "evidence",
@@ -100,7 +102,7 @@ export async function saveFib(
       throw new ApiError(422, "Gespeicherte Zielzonen-Verweildauer erhalten oder mit evidence.targetZoneResidence: null ausdrücklich entfernen; evidence: null würde sie unbeabsichtigt löschen.");
     }
     // Preserve extensions omitted by older full-replacement clients; null explicitly clears a key.
-    const newKeys = ["keyFibLevel", "parentId", "historicalTime", "targetZoneResidence", "catalogueVersion", "structureCode", "entryZone", "targetContact", "expectationTiming", "reversalLocation", "reversalPrecision", "durations"] as const;
+    const newKeys = ["keyFibLevel", "parentId", "historicalTime", "targetZoneResidence", "targetZoneReversal", "catalogueVersion", "structureCode", "entryZone", "targetContact", "expectationTiming", "reversalLocation", "reversalPrecision", "durations"] as const;
     if (raw.evidence === null && newKeys.some(key => previous.evidence?.[key] != null)) {
       throw new ApiError(422, "Strukturierte Angaben ausdrücklich einzeln löschen; evidence:null würde gespeicherte Daten verlieren.");
     }
@@ -119,6 +121,8 @@ export async function saveFib(
   const validated = fibValues(merged);
   const durationConflict = residenceConflict(validated.evidence);
   if (durationConflict && !isDeepStrictEqual(previousDurationPair,[validated.evidence?.durations?.residence,validated.evidence?.targetZoneResidence])) throw new ApiError(422,durationConflict);
+  const pivotConflict = reversalConflict(validated.evidence);
+  if (pivotConflict && !isDeepStrictEqual(previousReversalPair,[validated.evidence?.durations?.reversal,validated.evidence?.targetZoneReversal])) throw new ApiError(422,pivotConflict);
   if (version === undefined && (validated.timeframe === "unbekannt" || !["long","short"].includes(validated.evidence?.waveDirection ?? ""))) {
     const existing = await db.select({id:observation.id}).from(observation).where(and(eq(observation.id,id),eq(observation.userId,userId)));
     if (!existing.length) throw new ApiError(422,"Für neue Beobachtungen Richtung und Timeframe auswählen.");

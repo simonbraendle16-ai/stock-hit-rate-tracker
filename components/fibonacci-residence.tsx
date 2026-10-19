@@ -4,6 +4,7 @@ import { Field, FieldGroup, FieldLabel, FieldDescription, FieldSet, FieldLegend 
 import { Input } from "@/components/ui/input";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectGroup, SelectItem } from "@/components/ui/select";
 import { residenceKindLabels, residenceLabel, type TargetZoneResidence } from "@/lib/fibonacci-residence";
+import { CALENDAR_TIME_NOTE, durationDefinitions } from "@/lib/fibonacci-duration-definitions";
 
 function Choice({id, label, value, options, onChange}: {id: string; label: string; value: string; options: [string,string][]; onChange: (v: string)=>void}) {
   return <Field><FieldLabel htmlFor={id}>{label}</FieldLabel><Select items={options.map(([value,label])=>({value,label}))} value={value} onValueChange={v=>{if(v !== null) onChange(v);}}><SelectTrigger id={id}><SelectValue/></SelectTrigger><SelectContent><SelectGroup>{options.map(([v,l])=><SelectItem key={v} value={v}>{l}</SelectItem>)}</SelectGroup></SelectContent></Select></Field>;
@@ -11,17 +12,18 @@ function Choice({id, label, value, options, onChange}: {id: string; label: strin
 
 export function ResidenceEditor({value, zone, onChange}: {value?: TargetZoneResidence | null; zone: [number,number] | null; onChange: (v: TargetZoneResidence | null)=>void}) {
   const id = useId();
-  const base: TargetZoneResidence = value ?? {kind:"unknown", touchAndGo:null, unit:"day", timeBasis:"unknown", measurementConvention:null, zone:zone ? [...zone] : [NaN,NaN], originalText:null};
-  const set = (change: Partial<TargetZoneResidence>) => onChange({...base,...change});
+  const base: TargetZoneResidence = value ?? {kind:"unknown", touchAndGo:null, unit:"day", timeBasis:"calendar", measurementConvention:null, zone:zone ? [...zone] : [NaN,NaN], originalText:null};
+  const set = (change: Partial<TargetZoneResidence>) => onChange({...base,...change,timeBasis:"calendar"});
   const behavior = !value ? "not_recorded" : value.touchAndGo === true ? "touch" : value.touchAndGo === false ? "residence" : "unknown";
   const numeric = (key: "value" | "lower" | "upper", label: string) => <Field key={key}><FieldLabel htmlFor={id+key}>{label}</FieldLabel><Input id={id+key} type="number" min="0" step="any" value={Number.isFinite(base[key]) ? base[key] : ""} onChange={e=>set({[key]:e.target.value === "" ? undefined : Number(e.target.value)})}/></Field>;
   function changeKind(kind: TargetZoneResidence["kind"]) {
     if (kind === base.kind) return;
     const {value:_, lower:__, upper:___, lowerInclusive:____, upperInclusive:_____, ...rest} = base;
-    onChange({...rest,kind,...(kind === "range" ? {lowerInclusive:true,upperInclusive:true} : kind === "upper_bound" ? {upperInclusive:false} : {})});
+    onChange({...rest,kind,timeBasis:"calendar",...(kind === "range" ? {lowerInclusive:true,upperInclusive:true} : kind === "upper_bound" ? {upperInclusive:false} : {})});
   }
-  return <FieldSet><FieldLegend>Verweildauer in der Zielzone</FieldLegend>
-    <FieldDescription>Was hat der Kurs in der Zone gemacht? Touch-and-Go ist eine qualitative Angabe. Eine bekannte Dauer oder Grenze kannst du zusätzlich eintragen.</FieldDescription>
+  return <FieldSet className="min-w-0"><FieldLegend>Verweildauer in der Zielzone</FieldLegend>
+    <FieldDescription>{durationDefinitions.residence.description} {CALENDAR_TIME_NOTE} Touch-and-Go ist eine qualitative Angabe und keine Dauer null.</FieldDescription>
+    {value && value.timeBasis !== "calendar" && <FieldDescription>Altangabe mit Zeitbasis {value.timeBasis}; sie bleibt unverändert, bis du diese Dauer gezielt korrigierst.</FieldDescription>}
     <Choice id={id+"behavior"} label="Verhalten in der Zielzone" value={behavior} options={[["not_recorded","Nicht erhoben"],["touch","Touch-and-Go"],["residence","Länger verweilt"],["unknown","Unbekannt"]]} onChange={v=>v === "not_recorded" ? onChange(null) : set({touchAndGo:v === "touch" ? true : v === "residence" ? false : null})}/>
     {value && <FieldGroup>
       <Choice id={id+"kind"} label="Wie genau ist die Dauer bekannt?" value={base.kind} options={Object.entries(residenceKindLabels)} onChange={v=>changeKind(v as TargetZoneResidence["kind"])}/>
@@ -36,9 +38,8 @@ export function ResidenceEditor({value, zone, onChange}: {value?: TargetZoneResi
       <FieldDescription>Dieser Zonenbezug bleibt für die Dauerangabe erhalten, wenn die allgemeine Zielzone später geändert wird.</FieldDescription>
       <Field><FieldLabel htmlFor={id+"original"}>Ursprüngliche Dauerangabe (optional)</FieldLabel><Input id={id+"original"} maxLength={2000} placeholder="Zum Beispiel: insgesamt acht Stunden" value={base.originalText ?? ""} onChange={e=>set({originalText:e.target.value || null})}/></Field>
       <details><summary className="text-sm">Messweise für Dauervergleiche</summary><FieldGroup>
-        <Choice id={id+"basis"} label="Zeitbasis" value={base.timeBasis} options={[["unknown","Noch offen"],["calendar","Kalenderzeit"],["trading","Handelszeit"]]} onChange={v=>set({timeBasis:v as TargetZoneResidence["timeBasis"]})}/>
-        <Field><FieldLabel htmlFor={id+"convention"}>Messkonvention (optional)</FieldLabel><Input id={id+"convention"} maxLength={2000} placeholder="Zum Beispiel: erster Aufenthalt, Eintritt bis Austritt" value={base.measurementConvention ?? ""} onChange={e=>set({measurementConvention:e.target.value || null})}/></Field>
-        <FieldDescription>Ohne geklärte Zeitbasis und Messkonvention wird die Angabe erfasst, aber nicht in einen vergleichenden Dauermittelwert aufgenommen.</FieldDescription>
+        <Choice id={id+"convention"} label="Messweise der Verweildauer" value={base.measurementConvention ?? "unknown"} options={[["unknown","Noch offen"],["first_visit","Erster Aufenthalt: erster Kontakt bis erster Austritt"],["total_visits","Gesamter Aufenthalt: Summe der Zeiten in der Zone"],...(![null,"unknown","first_visit","total_visits"].includes(base.measurementConvention) ? [[base.measurementConvention!,base.measurementConvention!+" · Altangabe"] as [string,string]] : [])]} onChange={v=>set({measurementConvention:v === "unknown" ? null : v})}/>
+        <FieldDescription>Ohne geklärte Messweise bleibt die Angabe erfasst, wird aber nicht in einen vergleichenden Dauermittelwert aufgenommen.</FieldDescription>
       </FieldGroup></details>
       <p className="text-sm" aria-live="polite">{residenceLabel(value)}</p>
     </FieldGroup>}

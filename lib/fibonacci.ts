@@ -2,7 +2,7 @@ import { timeMatch, dateEnvelope, boundaryEnvelope, historicalTimeError, type Hi
 import { researchEvidenceError, RESEARCH_EVIDENCE_KEYS, STRUCTURES, structureCode, type ResearchEvidence } from "./fibonacci-catalogue";
 import { categoricalStats } from "./fibonacci-categorical-stats";
 import { levelMatchGroups, levelSearchError, type LevelSearch } from "./fibonacci-level-search";
-import { residenceError, residenceLabel, residenceKindLabels, residenceComparisons, type TargetZoneResidence } from "./fibonacci-residence";
+import { residenceError, residenceLabel, residenceKindLabels, residenceComparisons, reversalError, reversalLabel, reversalComparisons, type TargetZoneResidence, type TargetZoneReversal } from "./fibonacci-residence";
 export const FIB_LEVELS = [
   0, 23.6, 38.2, 50, 61.8, 78.6, 100, 127.2, 161.8, 200, 261.8, 423.6,
 ] as const;
@@ -67,6 +67,7 @@ export type FibEvidence = ResearchEvidence & {
   durationDays?: number | null;
   reversalDurationDays?: number | null;
   targetZoneResidence?: TargetZoneResidence | null;
+  targetZoneReversal?: TargetZoneReversal | null;
   structureConfidence?: "bestaetigt" | "vermutet" | "unbekannt";
   provenance?: string | null;
 };
@@ -74,7 +75,7 @@ export function validateEvidence(value: unknown): FibEvidence {
   if (value == null) return {};
   if (typeof value !== "object" || Array.isArray(value)) return fail("Ungültige Beobachtungsangaben.");
   const raw = value as Record<string, unknown>;
-  const keys = [...RESEARCH_EVIDENCE_KEYS, "targetZoneResidence", "approximateReachedLevel", "hypotheticalExitLevel", "hypotheticalCRVBasis", "measurementConfidence", "reachedLevels", "missedLevels", "reversalZone", "targetZone", "waveDirection", "approximatePercent", "hypotheticalCRV", "periodLabel", "parentId", "historicalTime", "durationDays", "reversalDurationDays", "structureConfidence", "provenance"];
+  const keys = [...RESEARCH_EVIDENCE_KEYS, "targetZoneReversal", "targetZoneResidence", "approximateReachedLevel", "hypotheticalExitLevel", "hypotheticalCRVBasis", "measurementConfidence", "reachedLevels", "missedLevels", "reversalZone", "targetZone", "waveDirection", "approximatePercent", "hypotheticalCRV", "periodLabel", "parentId", "historicalTime", "durationDays", "reversalDurationDays", "structureConfidence", "provenance"];
   if (Object.keys(raw).some(k => !keys.includes(k))) return fail("Unbekannte Beobachtungsangabe.");
   const number = (n: unknown) => typeof n === "number" && Number.isFinite(n) && n >= 0;
   for (const k of ["reachedLevels", "missedLevels"]) if (raw[k] !== undefined && (!Array.isArray(raw[k]) || raw[k].length > 50 || !raw[k].every(number) || new Set(raw[k]).size !== raw[k].length)) return fail("Ungültige Fibonacci-Level.");
@@ -87,6 +88,10 @@ export function validateEvidence(value: unknown): FibEvidence {
   if (raw.measurementConfidence !== undefined && !["bestaetigt","unklar"].includes(String(raw.measurementConfidence))) return fail("Ungültige Messartsicherheit.");
   if (raw.targetZoneResidence != null) {
     const error = residenceError(raw.targetZoneResidence);
+    if (error) return fail(error);
+  }
+  if (raw.targetZoneReversal != null) {
+    const error = reversalError(raw.targetZoneReversal);
     if (error) return fail(error);
   }
   const timeError = historicalTimeError(raw.historicalTime);
@@ -730,6 +735,9 @@ function observationCoverage(rows: readonly FibObservation[], kind: "retracement
     period: metric("Historischer Zeitraum mit Originalgenauigkeit, unabhängig vom Erfassungsdatum.", r=>e(r).periodLabel ?? ((r.periodFrom || r.periodTo) ? [r.periodFrom,r.periodTo] : null)),
     duration: {...metric("Historische Wellendauer in Tagen; kein gemeinsamer Durchschnitt. Neue Dauerklassen werden getrennt ausgewertet.", r=>e(r).durationDays),average:null},
     reversalDuration: {...metric("Historische Umkehrdauer in Tagen; kein gemeinsamer Durchschnitt. Neue Dauerklassen werden getrennt ausgewertet.", r=>e(r).reversalDurationDays),average:null},
+    targetZoneReversal: metric("Vom ersten Zielzonenkontakt bis zum Wellenwendepunkt; keine spätere Trendwendebestätigung und kein Zonenaufenthalt.", r=>e(r).targetZoneReversal ? reversalLabel(e(r).targetZoneReversal) : null,true),
+    reversalKind: metric("Genauigkeit der eigenständigen Dauer bis zum Wellenwendepunkt; alte Umkehrangaben werden nicht umgedeutet.",r=>e(r).targetZoneReversal ? residenceKindLabels[e(r).targetZoneReversal!.kind] : null,true),
+    reversalComparisons: reversalComparisons(rows),
     targetZoneResidence: metric("Berichteter Aufenthalt mit gespeichertem Zielzonenbezug; keine abgeleitete Dauer.", r=>e(r).targetZoneResidence ? residenceLabel(e(r).targetZoneResidence) : null),
     residenceKind: metric("Genauigkeitsklasse der Dauer; unbekannt und nicht erhoben getrennt nachvollziehbar.", r=>e(r).targetZoneResidence ? residenceKindLabels[e(r).targetZoneResidence!.kind] : null),
     touchAndGo: metric("Nur ausdrücklich bekanntes Verhalten: Touch-and-Go oder länger verweilt. Unbekannt zählt nicht als Nein.", r=>e(r).targetZoneResidence?.touchAndGo === true ? "Touch-and-Go" : e(r).targetZoneResidence?.touchAndGo === false ? "Länger verweilt" : null),
@@ -758,14 +766,14 @@ function observationCoverage(rows: readonly FibObservation[], kind: "retracement
 export function runningFibStats(rows: readonly FibObservation[], kind: "retracement" | "expansion") {
   const selected = latestObservations(rows).filter(r => (r.measurementKind ?? "retracement") === kind && r.status === "laufend");
   const coverage = observationCoverage(selected, kind, "laufend");
-  const { structure, direction, period, duration, reversalDuration, targetZoneResidence, residenceKind, touchAndGo, targetZone, reversalZone, reached, missed, approximateReached, basis, unassignedLevels } = coverage;
+  const { structure, direction, period, duration, reversalDuration, targetZoneReversal, reversalKind, targetZoneResidence, residenceKind, touchAndGo, targetZone, reversalZone, reached, missed, approximateReached, basis, unassignedLevels } = coverage;
   return {
     provisional: true as const,
     definition: "Vorläufig dokumentierter Stand laufender Wellen; keine endgültigen Extremwerte, Endlevelverteilung oder abgeschlossene Trefferquote.",
     measurementKind: kind,
     total: selected.length,
     ids: selected.map(r => r.id),
-    coverage: {structure, direction, period, duration, reversalDuration, targetZoneResidence, residenceKind, touchAndGo, targetZone, reversalZone, reached, missed, approximateReached, basis, unassignedLevels},
+    coverage: {structure, direction, period, duration, reversalDuration, targetZoneReversal, reversalKind, targetZoneResidence, residenceKind, touchAndGo, targetZone, reversalZone, reached, missed, approximateReached, basis, unassignedLevels},
   };
 }
 

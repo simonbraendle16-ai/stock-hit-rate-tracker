@@ -54,6 +54,38 @@ const tokens = {
   read: "sat_" + "c".repeat(43),
 };
 
+it('separately persists defined pivot and residence duration with retry, corrections, legacy preservation, revisions and owner scope',async()=>{
+  const id=crypto.randomUUID(),ctx={params:Promise.resolve({id})};
+  const pivot={kind:'exact',value:6,unit:'hour',timeBasis:'calendar',measurementConvention:'first_entry_to_pivot',zone:[50,61.8],originalText:'Synthetic six hours until pivot'};
+  const residence={kind:'exact',value:18,unit:'hour',timeBasis:'calendar',measurementConvention:'first_visit',zone:[50,61.8],touchAndGo:false,originalText:'Synthetic eighteen hours in zone'};
+  const body={...input,evidence:{...input.evidence,targetZoneReversal:pivot,targetZoneResidence:residence,reversalDurationDays:9}};
+  for(let i=0;i<2;i++)expect((await POST(request('',tokens.owner,'POST',body,{'Idempotency-Key':id}))).status).toBe(201);
+  expect((await getFib('owner',id)).version).toBe(1);
+  const listed=await (await GET(request('?limit=1'))).json();
+  expect(listed.catalogue.durationDefinitions.reversal.convention).toBe('first_entry_to_pivot');
+  expect(listed.stats.coverage.reversalComparisons.groups[0]).toMatchObject({n:1,average:6});
+  expect(listed.stats.coverage.residenceComparisons.groups[0]).toMatchObject({n:1,average:18});
+  const older={...input,evidence:{provenance:'Synthetic old client',waveDirection:'short',reversalDurationDays:10}};
+  expect((await PATCH(request('/'+id,tokens.owner,'PATCH',older,{'X-Expected-Version':'1'}),ctx)).status).toBe(200);
+  expect((await getFib('owner',id)).evidence).toMatchObject({targetZoneReversal:pivot,targetZoneResidence:residence,reversalDurationDays:10});
+  const current=await getFib('owner',id);
+  const correction={...current,evidence:{...current.evidence,targetZoneReversal:{...pivot,value:8},durations:{reversal:{bucket:'h4_12',timeBasis:'calendar',convention:'first_entry_to_pivot',zone:[50,61.8]}}}};
+  const {id:_,version:__,createdAt:___,updatedAt:____,...patch}=correction;
+  expect((await PATCH(request('/'+id,tokens.owner,'PATCH',patch,{'X-Expected-Version':'2'}),ctx)).status).toBe(200);
+  expect((await (await detailGET(request('/'+id),ctx)).json()).evidence).toMatchObject({targetZoneReversal:{value:8},targetZoneResidence:residence});
+  const conflict={...patch,evidence:{...patch.evidence,targetZoneReversal:{...pivot,value:24}}};
+  expect((await PATCH(request('/'+id,tokens.owner,'PATCH',conflict,{'X-Expected-Version':'3'}),ctx)).status).toBe(422);
+  expect((await getFib('owner',id)).version).toBe(3);
+  expect((await PATCH(request('/'+id,tokens.owner,'PATCH',{...patch,evidence:null},{'X-Expected-Version':'3'}),ctx)).status).toBe(422);
+  expect((await detailGET(request('/'+id,tokens.other),ctx)).status).toBe(404);
+  const revisions=await (await revisionGET(request('/'+id+'/revisions'),ctx)).json();
+  expect(revisions.items.map((r:any)=>r.snapshot.evidence.targetZoneReversal.value)).toEqual(expect.arrayContaining([6,8]));
+  const csv=await (await GET(request('?format=csv'))).text();expect(csv).toContain('""targetZoneReversal""');expect(csv).toContain('""targetZoneResidence""');
+  const cleared={...patch,evidence:{...patch.evidence,targetZoneReversal:null,durations:{reversal:null}}};
+  expect((await PATCH(request('/'+id,tokens.owner,'PATCH',cleared,{'X-Expected-Version':'3'}),ctx)).status).toBe(200);
+  expect((await getFib('owner',id)).evidence).toMatchObject({targetZoneReversal:null,targetZoneResidence:residence});
+});
+
 it('T6 unifies API query, full statistics, sorted pages and complete CSV while preserving owner boundaries',async()=>{
   const ids:string[]=[];
   for(let i=0;i<25;i++) {

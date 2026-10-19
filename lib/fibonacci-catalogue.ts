@@ -1,3 +1,4 @@
+import { ZONE_TO_PIVOT } from "./fibonacci-duration-definitions";
 /** Versioned categorical research inputs. Never round a reported measurement. */
 export const RESEARCH_LEVELS = [
   0,
@@ -91,6 +92,7 @@ export type ClassifiedDuration = {
     | "total_visits"
     | "whole_wave"
     | "reversal"
+    | "first_entry_to_pivot"
     | "unknown";
 };
 export type ResearchEvidence = {
@@ -182,8 +184,9 @@ export function researchEvidenceError(
       )
         return "Ungültige Dauerklasse.";
       const d = v as ClassifiedDuration;
+      if (key === "reversal" && d.convention === ZONE_TO_PIVOT && d.timeBasis !== "calendar") return "Die Dauer bis zum Wellenwendepunkt wird in Kalenderzeit erfasst.";
       if (
-        key === "residence" &&
+        (key === "residence" || (key === "reversal" && d.convention === ZONE_TO_PIVOT)) &&
         (!Array.isArray(d.zone) ||
           d.zone.length !== 2 ||
           !d.zone.every((n) => RESEARCH_LEVELS.includes(n)) ||
@@ -201,6 +204,7 @@ export function researchEvidenceError(
           "total_visits",
           "whole_wave",
           "reversal",
+          ZONE_TO_PIVOT,
           "unknown",
         ].includes(d.convention)
       )
@@ -208,7 +212,7 @@ export function researchEvidenceError(
       if (
         (key === "wave" && !["whole_wave", "unknown"].includes(d.convention)) ||
         (key === "reversal" &&
-          !["reversal", "unknown"].includes(d.convention)) ||
+          !["reversal", ZONE_TO_PIVOT, "unknown"].includes(d.convention)) ||
         (key === "residence" &&
           !["first_visit", "total_visits", "unknown"].includes(d.convention))
       )
@@ -218,9 +222,10 @@ export function researchEvidenceError(
   if (
     e.targetContact === "not_reached" &&
     ((e.durations as ResearchEvidence["durations"])?.residence ||
-      e.targetZoneResidence)
+      (e.durations as ResearchEvidence["durations"])?.reversal?.convention === ZONE_TO_PIVOT ||
+      e.targetZoneResidence || e.targetZoneReversal)
   )
-    return "Unerreichte Zielzone hat keine Aufenthaltsdauer.";
+    return "Unerreichte Zielzone hat keine Aufenthaltsdauer oder Dauer bis zum Wellenwendepunkt.";
   if (e.catalogueVersion === 1) {
     for (const key of ["reachedLevels", "missedLevels"])
       if (

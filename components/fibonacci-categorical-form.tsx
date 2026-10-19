@@ -1,6 +1,9 @@
 "use client";
 import { HistoricalTimeFields } from "@/components/fibonacci-time-fields";
 import { historicalTime } from "@/lib/fibonacci-time";
+import { ResidenceEditor } from "@/components/fibonacci-residence";
+import { ReversalEditor } from "@/components/fibonacci-reversal";
+import { ZONE_TO_PIVOT } from "@/lib/fibonacci-duration-definitions";
 import { InstrumentPicker } from "@/components/instrument-picker";
 import { formatWaveDegree } from "@/lib/wave-degree-labels";
 import { useState, useTransition, useId } from "react";
@@ -456,63 +459,22 @@ export function CategoricalFibForm({
                 setE({ durations: { ...evidence.durations, wave: v } })
               }
             />
-            <DurationChoice
-              label="Dauer der Umkehr"
-              type="reversal"
-              value={evidence.durations?.reversal}
-              onChange={(v) =>
-                setE({ durations: { ...evidence.durations, reversal: v } })
-              }
-            />
             {evidence.targetContact === "not_reached" ? (
               <p className="text-sm text-muted-foreground">
-                Zielzone nicht erreicht: keine Aufenthaltsdauer. Bereits
-                gespeicherte Aufenthaltsangaben müssen vor dieser Änderung
+                Zielzone nicht erreicht: keine Aufenthaltsdauer oder Dauer ab Zielzonenkontakt. Bereits
+                gespeicherte Angaben müssen vor dieser Änderung
                 ausdrücklich entfernt werden.
               </p>
             ) : (
               <>
-                <Choice
-                  label="Verhalten in der Zielzone"
-                  value={
-                    evidence.targetZoneResidence?.touchAndGo === true
-                      ? "touch"
-                      : evidence.targetZoneResidence?.touchAndGo === false
-                        ? "residence"
-                        : "unknown"
-                  }
-                  options={[
-                    ["unknown", "Unbekannt / nicht erhoben"],
-                    ["touch", "Touch-and-Go"],
-                    ["residence", "Länger verweilt"],
-                  ]}
-                  onChange={(v) => {
-                    if (!evidence.targetZone) {
-                      setError("Zuerst die Fibonacci-Zielzone auswählen.");
-                      return;
-                    }
-                    setE({
-                      targetZoneResidence: {
-                        ...(evidence.targetZoneResidence ?? {
-                          kind: "unknown",
-                          unit: "day",
-                          timeBasis: "unknown",
-                          measurementConvention: null,
-                          originalText: null,
-                          zone: [...evidence.targetZone],
-                        }),
-                        touchAndGo:
-                          v === "touch"
-                            ? true
-                            : v === "residence"
-                              ? false
-                              : null,
-                      },
-                    });
-                  }}
-                />
+                <ReversalEditor value={evidence.targetZoneReversal} zone={evidence.targetZone} onChange={v=>setE({targetZoneReversal:v})}/>
+                <DurationChoice label="Zielzonenkontakt bis Wellenwendepunkt · Dauerklasse" type="reversal" value={evidence.durations?.reversal} zone={evidence.targetZone} onChange={v=>{
+                  if(v && !v.zone) {setError("Zuerst die Zielzone für die Wendepunktdauer auswählen.");return;}
+                  setE({durations:{...evidence.durations,reversal:v}});
+                }}/>
+                <ResidenceEditor value={evidence.targetZoneResidence} zone={evidence.targetZone ?? null} onChange={v=>setE({targetZoneResidence:v})}/>
                 <DurationChoice
-                  label="Aufenthalt in der Zielzone"
+                  label="Verweildauer in der Zielzone · Dauerklasse"
                   type="residence"
                   zone={evidence.targetZone}
                   value={evidence.durations?.residence}
@@ -528,11 +490,13 @@ export function CategoricalFibForm({
                 />
               </>
             )}
+            {(evidence.targetZoneReversal || evidence.durations?.reversal?.convention === ZONE_TO_PIVOT) && <Button type="button" variant="outline" className="h-auto max-w-full whitespace-normal" onClick={()=>setE({targetZoneReversal:null,durations:{...evidence.durations,reversal:evidence.durations?.reversal?.convention === ZONE_TO_PIVOT ? null : evidence.durations?.reversal}})}>Wendepunktdauer ausdrücklich entfernen</Button>}
             {(evidence.targetZoneResidence ||
               evidence.durations?.residence) && (
               <Button
                 type="button"
                 variant="outline"
+                className="h-auto max-w-full whitespace-normal"
                 onClick={() =>
                   setE({
                     targetZoneResidence: null,

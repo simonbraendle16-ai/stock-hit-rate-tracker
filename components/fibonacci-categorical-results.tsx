@@ -1,4 +1,5 @@
 import { formatWaveDegree } from "@/lib/wave-degree-labels";
+import { durationDefinitions, CALENDAR_TIME_NOTE, ZONE_TO_PIVOT } from "@/lib/fibonacci-duration-definitions";
 import type { categoricalStats } from "@/lib/fibonacci-categorical-stats";
 import { levelLabel } from "@/components/fibonacci-categorical-inputs";
 import {
@@ -195,6 +196,9 @@ export function CategoricalResults({
             Dauerverteilung · getrennte Vergleichsgruppen
           </summary>
           <FieldNote>
+            {durationDefinitions.reversal.label}: {durationDefinitions.reversal.description} {durationDefinitions.residence.label}: {durationDefinitions.residence.description} {CALENDAR_TIME_NOTE} Altangaben behalten ihre bisherige Zeitbasis und Messweise.
+          </FieldNote>
+          <FieldNote>
             Jede Gruppe hat dieselbe Welle, denselben Wellengrad und Timeframe,
             dieselbe Messart, Zone, Zeitbasis und Messweise. Keine Mittelwerte
             aus Klassenmitten. Ein Handelstag wird nicht in Stunden umgerechnet.
@@ -210,7 +214,7 @@ export function CategoricalResults({
                 {g.type === "wave"
                   ? "Wellendauer"
                   : g.type === "reversal"
-                    ? "Umkehrdauer"
+                    ? g.convention === ZONE_TO_PIVOT ? "Zielzonenkontakt bis Wellenwendepunkt" : "Umkehrdauer · Altangabe, Messgrenzen offen"
                     : "Zonenaufenthalt"}{" "}
                 · Welle {g.wave} · {formatWaveDegree(g.degree)} · {g.timeframe} ·{" "}
                 {g.zone ? `${g.zone.join("–")} %` : "gesamte Welle"} · n={g.n}
@@ -230,6 +234,7 @@ export function CategoricalResults({
                       total_visits: "Gesamter Aufenthalt",
                       whole_wave: "Gesamte Welle",
                       reversal: "Umkehr",
+                      first_entry_to_pivot: "Erster Zielzonenkontakt bis Wellenwendepunkt",
                       unknown: "Messweise unbekannt",
                     } as Record<string, string>
                   )[g.convention]

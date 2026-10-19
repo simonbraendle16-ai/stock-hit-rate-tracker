@@ -1,4 +1,5 @@
-import { residenceConflict } from "./fibonacci-duration-compatibility";
+import { residenceConflict, reversalConflict } from "./fibonacci-duration-compatibility";
+import { ZONE_TO_PIVOT } from "./fibonacci-duration-definitions";
 import type { FibObservation } from "./fibonacci";
 
 export type TargetZoneResidence = {
@@ -16,7 +17,19 @@ export type TargetZoneResidence = {
   originalText: string | null;
 };
 
-export function residenceError(value: unknown): string | null {
+export type TargetZoneReversal = Omit<TargetZoneResidence, "touchAndGo" | "measurementConvention"> & {
+  measurementConvention: typeof ZONE_TO_PIVOT;
+};
+
+export function reversalError(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "Ungültige Dauer bis zum Wellenwendepunkt.";
+  const r = value as Record<string,unknown>;
+  if ("touchAndGo" in r || r.measurementConvention !== ZONE_TO_PIVOT) return "Messweise der Umkehrdauer muss erster Zielzonenkontakt bis Wellenwendepunkt sein.";
+  if (r.timeBasis !== "calendar") return "Die Dauer bis zum Wellenwendepunkt wird in Kalenderzeit erfasst.";
+  return residenceError({...r,touchAndGo:null}, true)?.replace("Zielzonen-Verweildauer", "Dauer bis zum Wellenwendepunkt") ?? null;
+}
+
+export function residenceError(value: unknown, allowZero = false): string | null {
   const error = "Ungültige Zielzonen-Verweildauer: Art, Werte, Einheit und Zonenbezug prüfen.";
   if (!value || typeof value !== "object" || Array.isArray(value)) return error;
   const r = value as Record<string, unknown>;
@@ -37,13 +50,16 @@ export function residenceError(value: unknown): string | null {
     r.kind === "upper_bound" ? ["upper", "upperInclusive"] :
     r.kind === "unknown" ? [] : ["value"];
   if (["value", "lower", "upper", "lowerInclusive", "upperInclusive"].some(k => k in r && !allowed.includes(k))) return error;
-  if ((r.kind === "exact" || r.kind === "approximate") && !positive(r.value)) return error;
+  if ((r.kind === "exact" || r.kind === "approximate") && !(allowZero ? nonnegative(r.value) : positive(r.value))) return error;
   if ((r.kind === "upper_bound" || r.kind === "range") && (!positive(r.upper) || typeof r.upperInclusive !== "boolean")) return error;
   if (r.kind === "range" && (!nonnegative(r.lower) || typeof r.lowerInclusive !== "boolean" || r.lower >= (r.upper as number))) return error;
   return null;
 }
 
 export const residenceKindLabels = { unknown: "Dauer unbekannt", exact: "Exakt berichtet", approximate: "Ungefähr", range: "Bereich", upper_bound: "Obergrenze" };
+export function reversalLabel(r?: TargetZoneReversal | null): string {
+  return r ? residenceLabel({...r,touchAndGo:null}).replace("Verhalten unbekannt · ", "Zielzonenkontakt bis Wellenwendepunkt · ") : "Nicht erhoben";
+}
 export function residenceLabel(r?: TargetZoneResidence | null): string {
   if (!r) return "Nicht erhoben";
   const unit = (n?: number) => n === 1 ? {minute:"Minute",hour:"Stunde",day:"Tag"}[r.unit] : {minute:"Minuten",hour:"Stunden",day:"Tage"}[r.unit];
@@ -55,18 +71,25 @@ export function residenceLabel(r?: TargetZoneResidence | null): string {
 
 /** Exact averages are grouped by explicit time basis and convention; never fill gaps. */
 export function residenceComparisons(rows: readonly FibObservation[]) {
+  return zoneDurationComparisons(rows,"residence");
+}
+export function reversalComparisons(rows: readonly FibObservation[]) {
+  return zoneDurationComparisons(rows,"reversal");
+}
+function zoneDurationComparisons(rows: readonly FibObservation[], type: "residence" | "reversal") {
   const excluded: {id: string; reason: string}[] = [];
   const groups = new Map<string, {wave:string;degree:string;timeframe:string;measurementKind:string;zone:[number,number];timeBasis: string; convention: string; unit: TargetZoneResidence["unit"]; included: {id: string; value: number}[]}>();
   for (const row of rows) {
-    const r = row.evidence?.targetZoneResidence;
-    const reason = residenceConflict(row.evidence) ?? (row.evidence?.targetContact === "not_reached" ? "Zielzone nicht erreicht" : row.status !== "abgeschlossen" ? `Status ${row.status}` : !r ? "Nicht erhoben" :
+    const r = type === "residence" ? row.evidence?.targetZoneResidence : row.evidence?.targetZoneReversal;
+    const reason = (type === "residence" ? residenceConflict(row.evidence) : reversalConflict(row.evidence)) ?? (row.evidence?.targetContact === "not_reached" ? "Zielzone nicht erreicht" : row.status !== "abgeschlossen" ? `Status ${row.status}` : !r ? "Nicht erhoben" :
+      type === "reversal" && row.evidence?.measurementConfidence === "unklar" ? "Messart ungeklärt" :
       r.kind !== "exact" ? `Keine exakte Dauer: ${residenceKindLabels[r.kind]}` :
       r.timeBasis === "unknown" || !r.measurementConvention ? "Zeitbasis oder Messkonvention offen" : null);
     if (reason || !r) { excluded.push({id: row.id, reason: reason!}); continue; }
     // A trading day has no assumed hour count. Keep trading units separate.
     const unit = r.timeBasis === "calendar" ? "hour" : r.unit;
     const value = r.value! * (r.timeBasis === "calendar" ? {minute: 1 / 60, hour: 1, day: 24}[r.unit] : 1);
-    if (!Number.isFinite(value) || value <= 0) { excluded.push({id:row.id,reason:"Dauer nicht verlustfrei normalisierbar"}); continue; }
+    if (!Number.isFinite(value) || value < 0 || (type === "residence" && value === 0)) { excluded.push({id:row.id,reason:"Dauer nicht verlustfrei normalisierbar"}); continue; }
     const dimensions = {wave:row.wave,degree:row.degree,timeframe:row.timeframe,measurementKind:row.measurementKind ?? "retracement",zone:r.zone};
     const key = JSON.stringify([dimensions, r.timeBasis, r.measurementConvention, unit]);
     const group = groups.get(key) ?? {...dimensions,timeBasis: r.timeBasis, convention: r.measurementConvention!, unit, included: []};

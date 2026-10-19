@@ -1,5 +1,6 @@
 "use client";
 import { useId } from "react";
+import { ZONE_TO_PIVOT, durationDefinitions, CALENDAR_TIME_NOTE } from "@/lib/fibonacci-duration-definitions";
 import {
   Field,
   FieldGroup,
@@ -178,17 +179,21 @@ export function DurationChoice({
 }) {
   const base = value ?? {
     bucket: "unknown",
-    timeBasis: "unknown",
+    timeBasis: "calendar",
     convention:
       type === "wave"
         ? "whole_wave"
         : type === "reversal"
-          ? "reversal"
+          ? ZONE_TO_PIVOT
           : "unknown",
   };
   return (
     <FieldSet>
       <FieldLegend>{label}</FieldLegend>
+      <FieldDescription>
+        {type === "reversal" ? durationDefinitions.reversal.description : type === "residence" ? durationDefinitions.residence.description : "Zeit vom Beginn bis zum Ende der untersuchten Welle."} {CALENDAR_TIME_NOTE}
+      </FieldDescription>
+      {value && (value.timeBasis !== "calendar" || (type === "reversal" && value.convention !== ZONE_TO_PIVOT)) && <FieldDescription>Altangabe mit bisheriger Messweise ({value.timeBasis} / {value.convention}). Sie bleibt unverändert, bis du diese Dauer gezielt neu eingibst.</FieldDescription>}
       <FieldGroup className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <CatalogueChoice
           label="Dauerklasse"
@@ -204,8 +209,10 @@ export function DurationChoice({
                 ? null
                 : {
                     ...base,
+                    timeBasis: "calendar",
+                    ...(type === "reversal" ? {convention:ZONE_TO_PIVOT} : {}),
                     bucket: v as ClassifiedDuration["bucket"],
-                    ...(type === "residence"
+                    ...(type === "residence" || type === "reversal"
                       ? { zone: value?.zone ?? zone ?? undefined }
                       : {}),
                   },
@@ -214,21 +221,6 @@ export function DurationChoice({
         />
         {value && (
           <>
-            <CatalogueChoice
-              label="Zeitbasis"
-              value={value.timeBasis}
-              options={[
-                ["unknown", "Unbekannt"],
-                ["calendar", "Kalenderzeit"],
-                ["trading", "Handelszeit"],
-              ]}
-              onChange={(v) =>
-                onChange({
-                  ...value,
-                  timeBasis: v as ClassifiedDuration["timeBasis"],
-                })
-              }
-            />
             {type === "residence" && (
               <CatalogueChoice
                 label="Messweise des Aufenthalts"
@@ -241,6 +233,7 @@ export function DurationChoice({
                 onChange={(v) =>
                   onChange({
                     ...value,
+                    timeBasis: "calendar",
                     convention: v as ClassifiedDuration["convention"],
                   })
                 }
@@ -249,7 +242,7 @@ export function DurationChoice({
           </>
         )}
       </FieldGroup>
-      {type === "residence" && value?.zone && (
+      {(type === "residence" || type === "reversal") && value?.zone && (
         <FieldDescription>
           Bezug dieser Dauer: {value.zone.join("–")} %. Der Bezug bleibt bei
           einer Änderung der erwarteten Zone erhalten.

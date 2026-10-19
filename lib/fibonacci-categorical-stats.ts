@@ -1,4 +1,5 @@
-import { residenceConflict } from "./fibonacci-duration-compatibility";
+import { residenceConflict, reversalConflict } from "./fibonacci-duration-compatibility";
+import { ZONE_TO_PIVOT } from "./fibonacci-duration-definitions";
 import type { FibObservation } from "./fibonacci";
 import { latestObservations } from "./fibonacci";
 import {
@@ -42,15 +43,16 @@ function durationOf(
   if (type === "residence" && e?.targetContact === "not_reached")
     return { duration: null, reason: "Zielzone nicht erreicht" };
   if (type === "residence" && residenceConflict(e)) return {duration:null,reason:residenceConflict(e)!};
+  if (type === "reversal" && reversalConflict(e)) return {duration:null,reason:reversalConflict(e)!};
   const d = e?.durations?.[type];
   if (d)
     return d.bucket === "unknown"
       ? { duration: null, reason: "Dauer unbekannt" }
       : { duration: d };
   // Existing exact calendar values can be classified without inventing precision.
-  const old = type === "residence" ? e?.targetZoneResidence : null;
+  const old = type === "residence" ? e?.targetZoneResidence : type === "reversal" ? e?.targetZoneReversal : null;
   if (
-    type !== "residence" ||
+    (type !== "residence" && type !== "reversal") ||
     !old ||
     old.kind !== "exact" ||
     old.timeBasis !== "calendar" ||
@@ -70,7 +72,7 @@ function durationOf(
     old.measurementConvention === "first_visit" ||
     old.measurementConvention === "total_visits"
       ? old.measurementConvention
-      : "unknown";
+      : old.measurementConvention === ZONE_TO_PIVOT ? ZONE_TO_PIVOT : "unknown";
   return bucket
     ? { duration: { bucket, timeBasis: "calendar", convention } }
     : { duration: null, reason: "Dauer nicht klassifizierbar" };
@@ -186,7 +188,7 @@ export function categoricalStats(rows: readonly FibObservation[]) {
             r.evidence?.targetZone ??
             null)
           : type === "reversal"
-            ? (r.evidence?.reversalZone ?? null)
+            ? (d?.zone ?? r.evidence?.targetZoneReversal?.zone ?? r.evidence?.reversalZone ?? null)
             : null;
       if (!d || (type === "residence" && !zone)) {
         excluded.push({ id: r.id, type, reason: reason ?? "Zonenbezug fehlt" });
@@ -201,7 +203,7 @@ export function categoricalStats(rows: readonly FibObservation[]) {
           : d.timeBasis === "calendar"
             ? "calendar_hours"
             : "unknown";
-      const legacyConvention = !r.evidence?.durations?.[type]
+      const legacyConvention = !r.evidence?.durations?.[type] && type !== "reversal"
         ? (r.evidence?.targetZoneResidence?.measurementConvention ?? null)
         : null;
       const dimensions = {

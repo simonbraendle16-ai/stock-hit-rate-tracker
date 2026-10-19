@@ -9,7 +9,8 @@ import { Button } from "@/components/ui/button";
 import type { FibObservation } from "@/lib/fibonacci";
 import { formatResearchPercent } from "@/lib/fibonacci-workspace";
 import { DURATION_CLASSES } from "@/lib/fibonacci-catalogue";
-import { residenceLabel } from "@/lib/fibonacci-residence";
+import { residenceLabel, reversalLabel } from "@/lib/fibonacci-residence";
+import { ZONE_TO_PIVOT } from "@/lib/fibonacci-duration-definitions";
 
 const statusName = {
   laufend: "Laufend",
@@ -40,6 +41,9 @@ export function FibonacciObservationDetails({ row, expanded = false }: { row: Fi
             ["Mögliche Einstiegszone", row.evidence?.entryZone?.join(" bis ")],
             ["Zielzone erreicht", row.evidence?.targetContact === "reached" ? "Ja" : row.evidence?.targetContact === "not_reached" ? "Nein" : "Unbekannt"],
             ...(["wave","reversal","residence"] as const).map(k=>[({wave:"Wellendauerklasse",reversal:"Umkehrdauerklasse",residence:"Aufenthaltsdauerklasse"})[k], DURATION_CLASSES.find(([id])=>id===row.evidence?.durations?.[k]?.bucket)?.[1]]),
+            ["Messweise der Umkehrdauerklasse", row.evidence?.durations?.reversal ? row.evidence.durations.reversal.convention === ZONE_TO_PIVOT ? "Erster Zielzonenkontakt bis Wellenwendepunkt" : "Altangabe · Messgrenzen offen" : null],
+            ["Zielzonenkontakt bis Wellenwendepunkt", reversalLabel(row.evidence?.targetZoneReversal)],
+            ["Ursprüngliche Wendepunktdauerangabe", row.evidence?.targetZoneReversal?.originalText],
             ["Verweildauer in der Zielzone", residenceLabel(row.evidence?.targetZoneResidence)],
             ["Ursprüngliche Dauerangabe", row.evidence?.targetZoneResidence?.originalText],
             ["Zeitbasis der Verweildauer", row.evidence?.targetZoneResidence ? ({unknown:"Noch offen",calendar:"Kalenderzeit",trading:"Handelszeit"}[row.evidence.targetZoneResidence.timeBasis]) : null],
