@@ -1,3 +1,4 @@
+import { residenceConflict } from "./fibonacci-duration-compatibility";
 import type { FibObservation } from "./fibonacci";
 
 export type TargetZoneResidence = {
@@ -58,9 +59,9 @@ export function residenceComparisons(rows: readonly FibObservation[]) {
   const groups = new Map<string, {wave:string;degree:string;timeframe:string;measurementKind:string;zone:[number,number];timeBasis: string; convention: string; unit: TargetZoneResidence["unit"]; included: {id: string; value: number}[]}>();
   for (const row of rows) {
     const r = row.evidence?.targetZoneResidence;
-    const reason = row.evidence?.targetContact === "not_reached" ? "Zielzone nicht erreicht" : row.status !== "abgeschlossen" ? `Status ${row.status}` : !r ? "Nicht erhoben" :
+    const reason = residenceConflict(row.evidence) ?? (row.evidence?.targetContact === "not_reached" ? "Zielzone nicht erreicht" : row.status !== "abgeschlossen" ? `Status ${row.status}` : !r ? "Nicht erhoben" :
       r.kind !== "exact" ? `Keine exakte Dauer: ${residenceKindLabels[r.kind]}` :
-      r.timeBasis === "unknown" || !r.measurementConvention ? "Zeitbasis oder Messkonvention offen" : null;
+      r.timeBasis === "unknown" || !r.measurementConvention ? "Zeitbasis oder Messkonvention offen" : null);
     if (reason || !r) { excluded.push({id: row.id, reason: reason!}); continue; }
     // A trading day has no assumed hour count. Keep trading units separate.
     const unit = r.timeBasis === "calendar" ? "hour" : r.unit;

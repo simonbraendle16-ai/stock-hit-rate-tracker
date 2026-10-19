@@ -1,3 +1,4 @@
+import { residenceConflict } from "./fibonacci-duration-compatibility";
 import type { FibObservation } from "./fibonacci";
 import { latestObservations } from "./fibonacci";
 import {
@@ -40,6 +41,7 @@ function durationOf(
     return { duration: null, reason: `Status ${r.status}` };
   if (type === "residence" && e?.targetContact === "not_reached")
     return { duration: null, reason: "Zielzone nicht erreicht" };
+  if (type === "residence" && residenceConflict(e)) return {duration:null,reason:residenceConflict(e)!};
   const d = e?.durations?.[type];
   if (d)
     return d.bucket === "unknown"

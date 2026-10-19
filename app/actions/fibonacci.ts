@@ -1,4 +1,6 @@
 "use server";
+import { researchResult } from "@/lib/fibonacci-research";
+import { fibQuery } from "@/lib/fibonacci-query";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
@@ -16,7 +18,7 @@ async function owner() {
   if (!session?.user) throw new Error("Unauthorized");
   return session.user.id;
 }
-export async function getFibonacciData(stockId?: number) {
+export async function getFibonacciData(stockId?: number, queryString?: string) {
   const userId = await owner();
   const [observations, instruments] = await Promise.all([
     listFib(userId, stockId),
@@ -36,7 +38,16 @@ export async function getFibonacciData(stockId?: number) {
     listHistory(userId, stockId),
     loadTradeCoverage(userId),
   ]);
-  return { observations, instruments, samples, histories, tradeCoverage, ...fibonacciReadModel(observations,tradeCoverage,samples,stockId) };
+  const request = queryString === undefined ? null : fibQuery(new URLSearchParams(queryString));
+  if (request && stockId) {
+    if (request.filters.stockId && request.filters.stockId !== stockId) throw new ApiError(400,"Instrumentfilter widerspricht der Instrumentseite.");
+    request.filters.stockId = stockId;
+  }
+  const research = request ? researchResult(observations,instruments,request) : null;
+  return { observations, instruments, samples, histories, tradeCoverage,
+    ...(!request || research?.ready ? fibonacciReadModel(research?.selected ?? observations,tradeCoverage,samples,stockId) : {}),
+    ...(request ? {research} : {}),
+  };
 }
 export async function saveFibonacci(
   id: string,

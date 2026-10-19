@@ -1,3 +1,4 @@
+import { residenceConflict } from "./fibonacci-duration-compatibility";
 import { hierarchyError } from "./fibonacci-hierarchy";
 import { isDeepStrictEqual } from "node:util";
 import { db } from "@/lib/db";
@@ -69,8 +70,10 @@ export async function saveFib(
   version?: number,
 ) {
   let merged = raw;
+  let previousDurationPair: unknown;
   if (version !== undefined) {
     const previous = await getFib(userId, id);
+    previousDurationPair = [previous.evidence?.durations?.residence, previous.evidence?.targetZoneResidence];
     // Legacy full-replacement clients keep new metadata they do not know about.
     const extended = [
       "evidence",
@@ -114,6 +117,8 @@ export async function saveFib(
       );
   }
   const validated = fibValues(merged);
+  const durationConflict = residenceConflict(validated.evidence);
+  if (durationConflict && !isDeepStrictEqual(previousDurationPair,[validated.evidence?.durations?.residence,validated.evidence?.targetZoneResidence])) throw new ApiError(422,durationConflict);
   if (version === undefined && (validated.timeframe === "unbekannt" || !["long","short"].includes(validated.evidence?.waveDirection ?? ""))) {
     const existing = await db.select({id:observation.id}).from(observation).where(and(eq(observation.id,id),eq(observation.userId,userId)));
     if (!existing.length) throw new ApiError(422,"Für neue Beobachtungen Richtung und Timeframe auswählen.");

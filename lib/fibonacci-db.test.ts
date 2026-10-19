@@ -54,6 +54,74 @@ const tokens = {
   read: "sat_" + "c".repeat(43),
 };
 
+it('T6 unifies API query, full statistics, sorted pages and complete CSV while preserving owner boundaries',async()=>{
+  const ids:string[]=[];
+  for(let i=0;i<25;i++) {
+    const id=crypto.randomUUID();ids.push(id);
+    await saveFib('owner',id,{...input,percent:null,anchorStart:null,anchorEnd:null,extreme:null,evidence:{...input.evidence,catalogueVersion:1,reversalLocation:'at_level',reversalZone:[61.8,61.8]}});
+  }
+  const base='?levelFrom=61.8&levelMeaning=end&wave=B&waveLabelScope=self&limit=10';
+  const first=await (await GET(request(base))).json();
+  const next=await (await GET(request(base+'&offset=10&order=oldest'))).json();
+  expect(first).toMatchObject({ready:true,total:25,nextOffset:10});
+  expect(first.items).toHaveLength(10);expect(next.items).toHaveLength(10);
+  expect(first.stats).toEqual(next.stats);expect(first.levelSelection).toEqual(next.levelSelection);
+  expect(first.levelSelection.ids.sort()).toEqual(ids.sort());
+  const exported=await GET(request(base+'&offset=10&format=csv'));
+  expect(exported.headers.get('Content-Type')).toContain('text/csv');
+  const csv=await exported.text();for(const id of ids)expect(csv).toContain(id);
+  expect((await (await GET(request(base,tokens.other))).json()).total).toBe(0);
+  const q='?query='+encodeURIComponent('TEST Welle B Endlevel 61,8')+'&resolutions='+encodeURIComponent(JSON.stringify({waveLabelScope:'self'}));
+  expect((await (await GET(request(q))).json()).total).toBe(25);
+  const pending=await (await GET(request('?query=Welle+4+61.8'))).json();
+  expect(pending).toMatchObject({ready:false,total:null,stats:null,items:[]});
+  expect(pending.statsByKind).toBeUndefined();
+  expect((await GET(request('?query=Welle+4+61.8&format=csv'))).status).toBe(422);
+  for(const invalid of ['?levelFrom=61.8','?order=bad','?wave=B&wave=C'])expect((await GET(request(invalid))).status).toBe(400);
+});
+
+it('T7 protects both duration representations through retry, correction, legacy edits and revision reads',async()=>{
+  const id=crypto.randomUUID(),ctx={params:Promise.resolve({id})};
+  const residence={kind:'exact',value:8,unit:'hour',timeBasis:'calendar',measurementConvention:'first_visit',touchAndGo:false,zone:[50,61.8],originalText:'Synthetic eight hours'};
+  const classes={residence:{bucket:'h4_12',timeBasis:'calendar',convention:'first_visit',zone:[50,61.8]}};
+  const body={...input,evidence:{...input.evidence,targetZoneResidence:residence,durations:classes}};
+  for(let i=0;i<2;i++)expect((await POST(request('',tokens.owner,'POST',body,{'Idempotency-Key':id}))).status).toBe(201);
+  expect((await getFib('owner',id)).version).toBe(1);
+  const bad={...body,evidence:{...body.evidence,targetZoneResidence:{...residence,value:24}}};
+  expect((await PATCH(request('/'+id,tokens.owner,'PATCH',bad,{'X-Expected-Version':'1'}),ctx)).status).toBe(422);
+  expect((await getFib('owner',id)).version).toBe(1);
+  const oldClient={...input,evidence:input.evidence};
+  expect((await PATCH(request('/'+id,tokens.owner,'PATCH',oldClient,{'X-Expected-Version':'1'}),ctx)).status).toBe(200);
+  expect((await getFib('owner',id)).evidence).toMatchObject({targetZoneResidence:residence,durations:classes});
+  expect((await PATCH(request('/'+id,tokens.owner,'PATCH',body,{'X-Expected-Version':'1'}),ctx)).status).toBe(409);
+  expect((await PATCH(request('/'+id,tokens.owner,'PATCH',{...body,evidence:null},{'X-Expected-Version':'2'}),ctx)).status).toBe(422);
+  const corrected={...body,evidence:{...body.evidence,targetZoneResidence:{...residence,value:9}}};
+  expect((await PATCH(request('/'+id,tokens.owner,'PATCH',corrected,{'X-Expected-Version':'2'}),ctx)).status).toBe(200);
+  expect((await (await detailGET(request('/'+id),ctx)).json()).evidence.targetZoneResidence.value).toBe(9);
+  const revisions=await (await revisionGET(request('/'+id+'/revisions'),ctx)).json();
+  expect(revisions.items.map((r:any)=>r.snapshot.evidence.targetZoneResidence.value)).toEqual(expect.arrayContaining([8,9]));
+  expect((await detailGET(request('/'+id,tokens.other),ctx)).status).toBe(404);
+});
+
+it('T7 keeps a pre-existing contradictory pair readable and allows unrelated correction before explicit repair',async()=>{
+  const id=crypto.randomUUID();
+  const old={kind:'exact',value:8,unit:'hour',timeBasis:'calendar',measurementConvention:'first_visit',touchAndGo:false,zone:[50,61.8],originalText:'Synthetic legacy value'};
+  const durations={residence:{bucket:'h4_12',timeBasis:'calendar',convention:'first_visit',zone:[50,61.8]}};
+  const body={...input,evidence:{...input.evidence,targetZoneResidence:old,durations}};
+  await saveFib('owner',id,body);
+  // Represent a historical database row created before this cross-contract validation existed.
+  await pg.query('UPDATE fibonacci_observation SET version=version+1,evidence=$2 WHERE id=$1',[id,JSON.stringify({...body.evidence,targetZoneResidence:{...old,value:24}})]);
+  const stored=await getFib('owner',id);
+  expect(stored.evidence.targetZoneResidence?.value).toBe(24);
+  await saveFib('owner',id,{...body,note:'Synthetic unrelated correction',evidence:stored.evidence},2);
+  const stats=(await (await GET(request('?wave=B'))).json()).stats;
+  expect(stats.coverage.residenceComparisons.groups).toEqual([]);
+  expect(stats.coverage.residenceComparisons.excluded[0].reason).toContain('widersprechen');
+  expect(stats.coverage.exact.n).toBe(1);
+  await saveFib('owner',id,body,3);
+  expect((await getFib('owner',id)).evidence.targetZoneResidence).toEqual(old);
+});
+
 it("roundtrips a key Fibonacci through API, retries, older edits and explicit removal", async()=>{
   const id=crypto.randomUUID(),ctx={params:Promise.resolve({id})};
   const body={...input,percent:null,anchorStart:null,anchorEnd:null,extreme:null,evidence:{catalogueVersion:1,waveDirection:"short",provenance:"Synthetic key Fibonacci QA",keyFibLevel:61.8,targetZone:[50,78.6],reversalLocation:"between_levels",reversalZone:[61.8,78.6]}};

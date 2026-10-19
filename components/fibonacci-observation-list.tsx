@@ -19,9 +19,9 @@ const statusName = {
 };
 const date = (value: string) => value.split("-").reverse().join(".");
 
-function Details({ row }: { row: FibObservation }) {
+export function FibonacciObservationDetails({ row, expanded = false }: { row: FibObservation; expanded?: boolean }) {
   return (
-    <details className="mt-2 text-xs">
+    <details open={expanded || undefined} className="mt-2 text-xs">
       <summary className="cursor-pointer text-primary underline-offset-4 hover:underline">
         Quelle & Messdetails
       </summary>
@@ -103,11 +103,17 @@ function Details({ row }: { row: FibObservation }) {
 export function FibonacciObservationList({
   rows,
   onEdit,
+  onDetails,
+  detailHref,
 }: {
   rows: FibObservation[];
   onEdit: (row: FibObservation) => void;
+  onDetails?: (id: string, trigger?: HTMLElement) => void;
+  detailHref?: (id: string) => string;
 }) {
   const edit = (row: FibObservation) => (
+    <div className="flex flex-wrap justify-end gap-2">
+    {onDetails && detailHref && <a className="inline-flex min-h-10 items-center text-primary underline" href={detailHref(row.id)} onClick={e=>{if(e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button !== 0)return;e.preventDefault();onDetails(row.id,e.currentTarget);}}>Details</a>}
     <Button
       variant="outline"
       size="sm"
@@ -118,6 +124,7 @@ export function FibonacciObservationList({
       <Pencil data-icon="inline-start" />
       Bearbeiten
     </Button>
+    </div>
   );
   return (
     <>
@@ -156,7 +163,7 @@ export function FibonacciObservationList({
                 {date(row.observedOn)}
               </span>
             </div>
-            <Details row={row} />
+            <FibonacciObservationDetails row={row} />
             <div className="mt-4 flex justify-end">{edit(row)}</div>
           </article>
         ))}
@@ -218,7 +225,7 @@ export function FibonacciObservationList({
                 <td className="max-w-sm py-4 pr-4">
                   <Badge variant="outline">{statusName[row.status]}</Badge>
                   {row.evidence?.keyFibLevel != null && <p className="mt-1 text-xs">Schlüsselfibonacci {row.evidence.keyFibLevel.toLocaleString("de-DE")} %</p>}
-                  <Details row={row} />
+                  <FibonacciObservationDetails row={row} />
                 </td>
                 <td className="py-4 text-right">{edit(row)}</td>
               </tr>

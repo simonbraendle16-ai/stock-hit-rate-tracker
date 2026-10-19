@@ -9,7 +9,11 @@ import { ResearchDataGroups } from "@/components/research-data-groups";
 import { interpretFibSearch, describeSearchCriterion, type SearchResolutions } from "@/lib/fibonacci-search";
 import { RESEARCH_LEVELS } from "@/lib/fibonacci-catalogue";
 import { levelSearchGroups, levelGroupLabels, levelMeaningLabels } from "@/lib/fibonacci-level-search";
-import { useMemo, useState, useId } from "react";
+import { useMemo, useState, useId, type SetStateAction } from "react";
+import { useFibonacciLocation } from "./use-fibonacci-location";
+import { defaultResearchView, writeResearchLocation } from "@/lib/fibonacci-location";
+import { researchResult, researchCsv } from "@/lib/fibonacci-research";
+import type { ResearchQuery } from "@/lib/fibonacci-query-values";
 import {
   Download,
   Plus,
@@ -55,7 +59,6 @@ import {
   FIB_DEGREES,
   FIB_TIMEFRAMES,
   fibStats,
-  fibCsv,
   type FibObservation,
   type FibFilters,
 } from "@/lib/fibonacci";
@@ -68,10 +71,8 @@ import {
 import { type TradeResearchRow } from "@/lib/trade-research-coverage";
 import { cn } from "@/lib/utils";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { FibonacciObservationList } from "@/components/fibonacci-observation-list";
+import { FibonacciObservationList, FibonacciObservationDetails } from "@/components/fibonacci-observation-list";
 import {
-  selectResearchRows, researchTimeGroups,
-  orderResearchRows,
   formatResearchPercent,
   type ResearchSelection,
   type ResearchOrder,
@@ -149,37 +150,36 @@ export function FibonacciPanel({
 }: Props) {
   const searchId = useId();
   const queryId = useId();
-  const [query, setQuery] = useState("");
-  const [resolutions, setResolutions] = useState<SearchResolutions>({});
+  const {view,setView,loaded,detail:openDetail,restoreDetailFocus} = useFibonacciLocation(stockId);
+  const request = view.request;
+  const update = <K extends keyof ResearchQuery>(key:K,value:SetStateAction<ResearchQuery[K]>) =>
+    setView(v=>({...v,request:{...v.request,[key]:typeof value === "function" ? (value as (old:ResearchQuery[K])=>ResearchQuery[K])(v.request[key]) : value}}));
+  const {query,resolutions,filters,search,selection,order} = request;
+  const page = Math.floor(request.offset / 20), tab = view.tab;
+  const setQuery = (v:SetStateAction<string>)=>update("query",v);
+  const setResolutions = (v:SetStateAction<SearchResolutions>)=>update("resolutions",v);
+  const setFilters = (v:SetStateAction<FibFilters>)=>update("filters",v);
+  const setSearch = (v:SetStateAction<string>)=>update("search",v);
+  const setSelection = (v:SetStateAction<ResearchSelection>)=>update("selection",v);
+  const setOrder = (v:SetStateAction<ResearchOrder>)=>update("order",v);
+  const setPage = (v:number)=>update("offset",v*20);
+  const setTab = (v:string)=>setView(old=>({...old,tab:v}));
   const [searchMessage, setSearchMessage] = useState("");
-  const [filters, setFilters] = useState<FibFilters>({
-      stockId,
-      measurementKind: "retracement",
-    }),
-    [editing, setEditing] = useState<FibObservation | null>(null),
-    [open, setOpen] = useState(false),
-    [page, setPage] = useState(0),
-    [search, setSearch] = useState(""),
-    [selection, setSelection] = useState<ResearchSelection>("all"),
-    [order, setOrder] = useState<ResearchOrder>("newest"),
-    [tab, setTab] = useState("protocol");
+  const [editing, setEditing] = useState<FibObservation | null>(null);
+  const [open,setOpen] = useState(false);
   const interpretation = useMemo(()=>interpretFibSearch(query,instruments,filters,resolutions),[query,instruments,filters,resolutions]);
-  const searchPending = !!query.trim();
-  const filtered = useMemo(
-      () => selectResearchRows(observations, filters, search, selection),
-      [observations, filters, search, selection],
-    ),
-    stats = useMemo(
-      () => fibStats(filtered, filters.measurementKind),
-      [filtered, filters.measurementKind],
-    );
+  const searchPending = !loaded || !!view.error || !!query.trim();
+  // The same full-population pipeline powers API, table, statistics and CSV.
+  const result = useMemo(()=>researchResult(observations,instruments,{...request,query:"",resolutions:{}}),[observations,instruments,request]);
+  const filtered = result.selected;
+  const stats = result.stats ?? fibStats([],filters.measurementKind);
   const waveLabels = [
     ...new Set([...FIB_WAVES, ...observations.map((r) => r.wave)]),
   ];
   const readModel = useMemo(()=>fibonacciReadModel(filtered,tradeCoverage,samples,filters.stockId),[filtered,tradeCoverage,samples,filters.stockId]);
-  const timeGroups = useMemo(()=>researchTimeGroups(observations,filters,search,selection),[observations,filters,search,selection]);
+  const timeGroups = result.timeSelection ?? {error:result.error,basis:filters.timeBasis,groups:{certain:[],possible:[],unknown:[],excluded:[]},denominator:0};
   const metrics = readModel.metrics;
-  const levelGroups = useMemo(()=>levelSearchGroups(filtered,filters),[filtered,filters]);
+  const levelGroups = result.levelSelection ?? {...levelSearchGroups([],filters),error:result.error};
   const set = (key: keyof FibFilters, value: string) => {
     setFilters((f) => ({
       ...f,
@@ -214,10 +214,7 @@ export function FibonacciPanel({
     page,
     Math.max(0, Math.ceil(filtered.length / 20) - 1),
   );
-  const sorted = useMemo(
-    () => orderResearchRows(filtered, order),
-    [filtered, order],
-  );
+  const sorted = result.ordered;
   const shown = sorted.slice(currentPage * 20, (currentPage + 1) * 20);
   const advancedCount = [
     filters.status,
@@ -231,13 +228,8 @@ export function FibonacciPanel({
     filters.observationId && filters.waveScope === "descendants",
   ].filter(Boolean).length;
   const reset = () => {
-    setFilters({ stockId, measurementKind: "retracement" });
-    setSearch("");
-    setQuery("");
-    setResolutions({});
+    setView(defaultResearchView(stockId));
     setSearchMessage("");
-    setSelection("all");
-    setPage(0);
   };
   const create = () => {
     setEditing(null);
@@ -250,7 +242,7 @@ export function FibonacciPanel({
   const percent = formatResearchPercent;
   const download = () => {
     const url = URL.createObjectURL(
-      new Blob([fibCsv(filtered)], { type: "text/csv;charset=utf-8" }),
+      new Blob([researchCsv(result)], { type: "text/csv;charset=utf-8" }),
     );
     const a = document.createElement("a");
     a.href = url;
@@ -290,6 +282,7 @@ export function FibonacciPanel({
         </div>
       </div>
 
+      {view.error && <p role="alert">Suchadresse ungültig: {view.error} <Button variant="outline" onClick={reset}>Auswahl zurücksetzen</Button></p>}
       {!searchPending && !levelGroups.error && <div
         className="grid grid-cols-2 gap-3 lg:grid-cols-4"
         aria-label="Datenbasis der aktuellen Auswahl"
@@ -603,7 +596,7 @@ export function FibonacciPanel({
                 </div>
               ) : (
                 <>
-                  <FibonacciObservationList rows={shown} onEdit={edit} />
+                  <FibonacciObservationList rows={shown} onEdit={edit} onDetails={openDetail} detailHref={id=>"?"+writeResearchLocation(new URLSearchParams(typeof window === "undefined" ? "" : window.location.search),{...view,detail:id}).toString()+"#fibonacci"} />
                   <nav
                     aria-label="Seiten im Messprotokoll"
                     className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4"
@@ -1049,6 +1042,13 @@ export function FibonacciPanel({
           </p>
         </div>
       </details>
+      <Dialog open={!!view.detail && loaded} onOpenChange={v=>{if(!v)openDetail();}}>
+        <DialogContent finalFocus={restoreDetailFocus} className="flex max-h-[90svh] flex-col overflow-y-auto sm:max-w-2xl">
+          <DialogHeader><DialogTitle>Beobachtungsdetails</DialogTitle><DialogDescription>Gespeicherter Fall. Die Suche bleibt beim Schließen erhalten.</DialogDescription></DialogHeader>
+          {observations.find(r=>r.id===view.detail) ? <FibonacciObservationDetails row={observations.find(r=>r.id===view.detail)!} expanded /> : <p role="alert">Beobachtung nicht verfügbar. Sie wurde entfernt oder ist für dieses Konto beziehungsweise Instrument nicht zugänglich.</p>}
+          <Button variant="outline" onClick={()=>openDetail()}>Zurück zur Auswahl</Button>
+        </DialogContent>
+      </Dialog>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="flex max-h-[90svh] flex-col overflow-hidden sm:max-w-2xl">
           <DialogHeader className="shrink-0">

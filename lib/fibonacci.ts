@@ -647,6 +647,7 @@ export function fibCsv(rows: readonly FibObservation[]) {
         "Ende",
         "Extrem",
         "Messnotiz",
+        "Version",
       ],
       ...rows.map((r) => [
         JSON.stringify(r.evidence ?? {}),
@@ -680,6 +681,7 @@ export function fibCsv(rows: readonly FibObservation[]) {
         r.anchorEnd,
         r.extreme,
         r.note,
+        r.version,
       ]),
     ]
       .map((row) => row.map(cell).join(";"))

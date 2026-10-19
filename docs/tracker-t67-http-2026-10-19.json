@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-19T13:03:17.857Z",
+  "environment": "local synthetic loopback only",
+  "observations": 50,
+  "matches": 47,
+  "checks": [
+    "47 full-population end-level matches across three pages",
+    "20 / 20 / 7 page sizes",
+    "Statistics independent of page and sorting",
+    "Full traceable level-group IDs independent of page",
+    "No duplicate or missing observation across pages",
+    "CSV includes every selected ID, sources, time precision and version",
+    "Unresolved query has no final statistics",
+    "Resolved structured search equals manual filter population",
+    "Unresolved export blocked",
+    "Explicit descendant scope retains independent child",
+    "Duration averages separated by wave degree and timeframe",
+    "Reported wave and residence duration types remain independent",
+    "Invalid request rejected: levelFrom=61.8",
+    "Invalid request rejected: offset=-1",
+    "Invalid request rejected: wave=4&wave=5",
+    "Invalid request rejected: order=invalid",
+    "Observation fingerprint unchanged"
+  ],
+  "passed": 17,
+  "observationFingerprint": "a23db14ef65f378a17aeda7de4a8d24438f06ad14da07bf2127370b1ceaac549"
+}

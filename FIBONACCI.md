@@ -128,3 +128,25 @@ Beobachtungen werden anhand **stabiler Beobachtungs-ID** gezählt; die höchste 
 UI: bestehende Tabellen/Karten bleiben bestehen; „Laufend & Simulation“ enthält die neuen beschreibenden Gruppen. „Tradebezug“ und die allgemeine Trade-Auswertung zeigen Demo/Echtgeld getrennt. Abschlussabdeckung ist ausdrücklich als solche bezeichnet. Verweildauervertrag und Legacy-Löschschutz bleiben erhalten.
 
 Lokale Prüfung: `node node_modules/vitest/vitest.mjs run --maxWorkers=2`, separate `tsc --noEmit`, `next build --webpack`. Synthetische Browserumgebung: `node --experimental-strip-types scripts/fibonacci-local-preview.mjs --block-a` (erfordert vorhandene lokale PGlite-/Socket-Testwerkzeuge, keine .env). Dieser Modus nutzt ausschließlich flüchtige Daten auf localhost:3018/5548. Finale konkrete Nachweise stehen in `docs/tracker-block-a-2026-10-18.md`.
+
+## T6/T7 – gemeinsamer Suchvertrag (19.10.2026, lokaler Ausbau)
+
+`researchResult` verwendet eine vollständige eigene Beobachtungspopulation für Suchinterpretation, Auswahl, Kennzahlen, getrennte Leveltreffer und Zeitgruppen. Erst danach werden Reihenfolge und Listenseite bestimmt. API, interne Ladefunktion und funktionale Oberfläche verwenden dieselben Auswahlfunktionen. Keine zusätzliche KI, Datenmigration oder neue Tokenberechtigung.
+
+Additive Parameter für `GET /fibonacci`:
+
+- `query`: strukturierte Begriffssuche (maximal 2000 Zeichen); vorhandene Filter werden als bestehende Kriterien geschnitten.
+- `resolutions`: JSON-Objekt mit Entscheidungen wie `{"instrument:0":"1","waveLabelScope":"self","levelMeaning":"end"}`. IDs werden ausschließlich gegen den eigenen Instrumentkatalog geprüft; ungültige Entscheidungen lösen keine Mehrdeutigkeit auf.
+- `waveLabelScope=self|descendants`, `levelFrom`, optional `levelTo` aus dem festen Katalog, `levelMeaning=end|reversal|target|passed`. ID-bezogener `waveScope` bleibt ein eigenständiger Hierarchiefilter.
+- `order=newest|oldest|deepest` (Standard `newest`): Datum mit stabiler ID als Gleichstandsauflösung, beziehungsweise Messwert mit fehlenden Werten zuletzt. Kennzahlen bleiben unabhängig von der Reihenfolge.
+- `format=csv`: sämtliche ausgewählten Fälle in derselben Sortierung, unabhängig von `limit`/`offset`; vollständige Evidence-JSON, Quellen, Zeitgenauigkeit, IDs und additive Versionsspalte bleiben erhalten. Ein HTTP-Leseaufruf verwendet eine Population; kein Snapshot über mehrere getrennte HTTP-Aufrufe garantiert.
+
+Antwort additiv: `ready`, `error`, `interpretation`, `levelSelection`, erweitertes `basis`. Bei ungelöster/ungültiger Begriffssuche: `ready:false`, `items:[]`, `total:null`, `stats:null`, keine endgültigen gefilterten ByKind-Kennzahlen; offene Entscheidungen, unbekannte Teile und Konflikte bleiben sichtbar. Die separat beschrifteten allgemeinen Handelsdaten sind weiterhin unabhängig vom Wellenfilter. CSV in diesem Zustand: HTTP 422. Ungültige direkte Filter, doppelte Parameter, ungültige Sortierung/Seite/JSON: HTTP 400. Bestehende gültige Leseaufrufe und Schreibwege bleiben verwendbar.
+
+`getFibonacciData(stockId?, queryString?)` akzeptiert optional denselben Suchvertrag; bestehende Aufrufe ohne zweiten Parameter bleiben erhalten. Eine feste Instrumentseite kann nicht durch einen widersprüchlichen Queryfilter verlassen werden.
+
+Die bestehende Oberfläche persistiert die Auswahl unter `fib.*`: Filter, Textsuche, noch nicht übernommene Begriffssuche und Entscheidungen, Sortierung, Tab und 20er-Listenseite. Fremde Seitenparameter und Fragment bleiben erhalten. Unvollständige manuelle Levelauswahl bleibt im URL-Zustand sichtbar, sperrt jedoch das Ergebnis. Ungültige Suchadressen zeigen einen Fehler und benötigen ausdrückliches Zurücksetzen; kein stiller Rückfall auf die Gesamtstatistik. `fib.detail=<uuid>` öffnet eigene verfügbare Falldetails im bestehenden Dialogmuster. Beim Schließen beziehungsweise Browser-Zurück bleiben Auswahl, Seite, Scrollposition und Fokus erhalten. Ein fremder/unbekannter Verweis zeigt keine Daten. Das ist eine funktionale Ergänzung, kein Designumbau.
+
+T7 erhält beide Dauerverträge: Klassen bleiben Klassen, historische exakte Werte behalten Genauigkeit und Zonen-Snapshot. Nur ausdrücklich gleiche Zeitbasis, Messweise und Zone erlauben die Konsistenzprüfung zwischen exakter Altangabe und Klasse; ein Handelstag erhält keine angenommene Stundenzahl. Neue widersprüchliche Paare werden mit 422 abgelehnt. Bereits gespeicherte Widersprüche bleiben lesbar und unverändert korrigierbar, tragen aber mit sichtbarem Ausschlussgrund zu keinem betroffenen Dauermittel/-klassenwert bei. Andere verwertbare Kennzahlen bleiben erhalten. Keine Nachpflege aus Notizen, keine Klassenmitten als Mittelwerte.
+
+Lokale Nachweise und Rücknahme: `docs/tracker-t67-2026-10-19.md`. Veröffentlichung und produktive Abnahme bleiben getrennt.
