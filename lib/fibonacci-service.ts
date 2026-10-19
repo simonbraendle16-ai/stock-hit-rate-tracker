@@ -102,7 +102,7 @@ export async function saveFib(
       throw new ApiError(422, "Gespeicherte Zielzonen-Verweildauer erhalten oder mit evidence.targetZoneResidence: null ausdrücklich entfernen; evidence: null würde sie unbeabsichtigt löschen.");
     }
     // Preserve extensions omitted by older full-replacement clients; null explicitly clears a key.
-    const newKeys = ["keyFibLevel", "parentId", "historicalTime", "targetZoneResidence", "targetZoneReversal", "catalogueVersion", "structureCode", "entryZone", "targetContact", "expectationTiming", "reversalLocation", "reversalPrecision", "durations"] as const;
+    const newKeys = ["waveVariant", "keyFibLevel", "parentId", "historicalTime", "targetZoneResidence", "targetZoneReversal", "catalogueVersion", "structureCode", "entryZone", "targetContact", "expectationTiming", "reversalLocation", "reversalPrecision", "durations"] as const;
     if (raw.evidence === null && newKeys.some(key => previous.evidence?.[key] != null)) {
       throw new ApiError(422, "Strukturierte Angaben ausdrücklich einzeln löschen; evidence:null würde gespeicherte Daten verlieren.");
     }

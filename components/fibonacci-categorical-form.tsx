@@ -1,4 +1,5 @@
 "use client";
+import { WAVE_VARIANTS, waveChoice } from "@/lib/fibonacci-wave-variants";
 import { HistoricalTimeFields } from "@/components/fibonacci-time-fields";
 import { historicalTime } from "@/lib/fibonacci-time";
 import { ResidenceEditor } from "@/components/fibonacci-residence";
@@ -90,6 +91,7 @@ export function CategoricalFibForm({
     () =>
       existing?.evidence ?? {
         catalogueVersion: 1,
+        waveVariant: defaults.waveVariant ?? null,
         provenance: "Direkte Formulareingabe des Nutzers",
       },
   );
@@ -209,9 +211,9 @@ export function CategoricalFibForm({
               />
               <Choice
                 label="Welle"
-                value={form.wave}
-                options={[["none", "Bitte auswählen"], ...choices(waves)]}
-                onChange={(v) => set("wave", v)}
+                value={evidence.waveVariant ?? form.wave}
+                options={[["none", "Bitte auswählen"], ...choices(waves), ...WAVE_VARIANTS.map(v => [v.code, v.label] as const)]}
+                onChange={(v) => { const choice = waveChoice(v); set("wave", choice.wave); setE({waveVariant: choice.waveVariant}); }}
               />
               <Choice
                 label="Wellenstruktur / Untertyp"

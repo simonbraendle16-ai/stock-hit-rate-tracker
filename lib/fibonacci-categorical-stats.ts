@@ -1,5 +1,6 @@
 import { residenceConflict, reversalConflict } from "./fibonacci-duration-compatibility";
 import { ZONE_TO_PIVOT } from "./fibonacci-duration-definitions";
+import { WAVE_VARIANTS, waveVariant, waveVariantError } from "./fibonacci-wave-variants";
 import type { FibObservation } from "./fibonacci";
 import { latestObservations } from "./fibonacci";
 import {
@@ -262,6 +263,7 @@ export function categoricalStats(rows: readonly FibObservation[]) {
     definition:
       "Beobachtete relative Häufigkeiten; unbekannte Angaben sind keine Verfehlungen. Jede Welle zählt pro Kennzahl einmal.",
     total: rows.length,
+    waveVariants: waveVariantStats(rows),
     keyFibonacci: keyFibonacciStats(rows),
     levels,
     structures,
@@ -344,6 +346,27 @@ export function categoricalStats(rows: readonly FibObservation[]) {
       })),
     },
   };
+}
+
+function waveVariantStats(rows: readonly FibObservation[]) {
+  const groups = new Map<string, {wave:string;degree:string;timeframe:string;measurementKind:string;rows:FibObservation[]}>();
+  for (const row of rows) {
+    const wave = row.wave.trim().toUpperCase();
+    if (wave !== "B" && wave !== "C") continue;
+    const dimensions = {wave, degree:row.degree, timeframe:row.timeframe, measurementKind:row.measurementKind ?? "retracement"};
+    const key = JSON.stringify(dimensions), group = groups.get(key) ?? {...dimensions, rows:[]};
+    group.rows.push(row); groups.set(key, group);
+  }
+  return [...groups.values()].map(({rows,...dimensions}) => {
+    const reason = (r:FibObservation) => r.status !== "abgeschlossen" ? `Status ${r.status}` : r.evidence?.measurementConfidence === "unklar" ? "Messart ungeklärt" : waveVariantError(r.wave,r.evidence?.waveVariant) ?? (!waveVariant(r.evidence?.waveVariant) ? "Wellenvariante nicht erhoben" : null);
+    const included = rows.filter(r => !reason(r));
+    return {...dimensions, denominator:rows.length, n:included.length,
+      excluded:rows.filter(r => reason(r)).map(r => ({id:r.id,reason:reason(r)!})),
+      distribution:WAVE_VARIANTS.filter(v => v.wave === dimensions.wave).map(v => {
+        const ids = included.filter(r => r.evidence?.waveVariant === v.code).map(r => r.id);
+        return {...v, ids, n:ids.length, share:included.length ? ids.length / included.length * 100 : null};
+      })};
+  });
 }
 
 function keyFibonacciStats(rows: readonly FibObservation[]) {

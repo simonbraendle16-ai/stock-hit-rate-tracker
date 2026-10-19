@@ -3,6 +3,7 @@ import { formatWaveDegree } from "@/lib/wave-degree-labels";
 import { CategoricalFibForm } from "@/components/fibonacci-categorical-form";
 import { CategoricalResults } from "@/components/fibonacci-categorical-results";
 import { STRUCTURES } from "@/lib/fibonacci-catalogue";
+import { WAVE_VARIANTS, waveChoice } from "@/lib/fibonacci-wave-variants";
 import { TradeAnalysis } from "@/components/trade-analysis";
 import { fibonacciReadModel } from "@/lib/fibonacci-read-model";
 import { ResearchDataGroups } from "@/components/research-data-groups";
@@ -395,9 +396,9 @@ export function FibonacciPanel({
             />
             <Choice
               label="Welle"
-              value={filters.wave || ""}
-              onChange={(v) => set("wave", v)}
-              options={choices(waveLabels)}
+              value={filters.waveVariant || filters.wave || ""}
+              onChange={(v) => { const choice = waveChoice(v); setFilters(p => ({...p, wave: choice.wave || undefined, waveVariant: choice.waveVariant ?? undefined})); setPage(0); }}
+              options={[...choices(waveLabels), ...WAVE_VARIANTS.map(v => ({value:v.code,label:v.label}))]}
             />
             <Choice
               label="Zeiteinheit"

@@ -1,4 +1,5 @@
 import { FIB_DEGREES, FIB_TIMEFRAMES, type FibFilters } from "./fibonacci";
+import { waveVariant, waveVariantError } from "./fibonacci-wave-variants";
 import {
   RESEARCH_LEVELS,
   RESEARCH_WAVES,
@@ -19,6 +20,7 @@ export type SearchResolutions = Record<string, string>;
 const filterLabels: Record<string, string> = {
   stockId: "Instrument",
   wave: "Welle",
+  waveVariant: "Wellenvariante",
   from: "Zeitraum von",
   to: "Zeitraum bis",
   timeBasis: "Zeitbasis",
@@ -37,7 +39,8 @@ export function describeSearchCriterion(
   instruments: readonly SearchInstrument[],
 ) {
   let value = c.value;
-  if (c.key === "stockId") {
+  if (c.key === "waveVariant") value = waveVariant(value)?.label ?? value;
+  else if (c.key === "stockId") {
     const i = instruments.find((i) => String(i.id) === value);
     value = i ? `${i.ticker} · ${i.name}` : value;
   } else if (c.key === "structure")
@@ -135,6 +138,15 @@ export function interpretFibSearch(
     assign("waveLabelScope", "self");
   });
   consume(/\bwelle\s+selbst\b/gi, () => assign("waveLabelScope", "self"));
+  const assignVariant = (code: "b_overshooting" | "b_undershooting" | "c_truncated") => {
+    assign("wave", waveVariant(code)!.wave);
+    assign("waveVariant", code);
+  };
+  consume(/(?<![\p{L}\p{N}_])(über|unter)schie(?:ß|ss)end(?:e|en|er|es)?\s+(?:welle\s+)?b\b/giu,
+    (_, direction) => assignVariant(direction.toLowerCase() === "über" ? "b_overshooting" : "b_undershooting"));
+  consume(/\b(?:welle\s+)?b\s+(über|unter)schie(?:ß|ss)end(?:e|en|er|es)?\b/gi,
+    (_, direction) => assignVariant(direction.toLowerCase() === "über" ? "b_overshooting" : "b_undershooting"));
+  consume(/\b(?:welle\s+)?c\s+truncated\b/gi, () => assignVariant("c_truncated"));
   consume(/\bwelle\s+(X₂|[1-5ABCDEWXYZ])(?![\p{L}\p{N}_])/giu, (_, wave) =>
     assign("wave", wave.toUpperCase()),
   );
@@ -306,6 +318,8 @@ export function interpretFibSearch(
     conflicts.push("Ungültiger Fibonacci-Bereich");
   if (filters.levelMeaning && filters.levelFrom === undefined)
     conflicts.push("Levelwert fehlt");
+  const variantError = waveVariantError(filters.wave, filters.waveVariant);
+  if (variantError) conflicts.push(variantError);
   return {
     filters,
     recognized,

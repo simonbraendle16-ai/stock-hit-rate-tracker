@@ -56,7 +56,7 @@ if (!process.argv.includes('--empty')) await database.query(
   "INSERT INTO stock(id,\"userId\",name,ticker,market) VALUES (1,$1,'Synthetische Aktie','FIBQA-S','aktien'),(2,$1,'Synthetisches Krypto','FIBQA-C','krypto')",
   [owner],
 )
-if (!process.argv.includes('--empty') && !process.argv.includes('--t3') && !process.argv.includes('--t45') && !process.argv.includes('--t67') && !process.argv.includes('--duration-definitions')) {
+if (!process.argv.includes('--empty') && !process.argv.includes('--t3') && !process.argv.includes('--t45') && !process.argv.includes('--t67') && !process.argv.includes('--duration-definitions') && !process.argv.includes('--wave-variants')) {
   const levels = [
     38.2, 50, 61.8, 61.8, 61.8, 78.6, 100, 61.8, 38.2, 61.8, 78.6, 127.2, 23.6,
     61.8, 50, 161.8, 38.2, 78.6, 61.8, 100, 50, 61.8, 61.8, 78.6,
@@ -88,6 +88,10 @@ if (process.argv.includes('--t67')) {
 if (process.argv.includes('--duration-definitions')) {
   const {seedDurationDefinitions} = await import('./seed-duration-definitions-qa.mjs');
   await seedDurationDefinitions(database,owner);
+}
+if (process.argv.includes('--wave-variants')) {
+  const {seedWaveVariants} = await import('./seed-wave-variants-qa.mjs');
+  await seedWaveVariants(database,owner);
 }
 if (process.argv.includes('--t45')) {
   await database.query(`UPDATE stock SET name='Tesla QA',ticker='TSLA-QA' WHERE id=1`);

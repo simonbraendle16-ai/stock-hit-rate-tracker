@@ -1,4 +1,5 @@
 import { dateEnvelope } from "./fibonacci-time";
+import { WAVE_VARIANTS, waveVariant, waveVariantError } from "./fibonacci-wave-variants";
 import { STRUCTURES } from "./fibonacci-catalogue";
 import { LEVEL_MEANINGS, levelSearchError } from "./fibonacci-level-search";
 import type { SearchResolutions } from "./fibonacci-search";
@@ -11,6 +12,7 @@ export function readResearchQuery(p: URLSearchParams, context = false, incomplet
     "stockId",
     "market",
     "wave",
+    "waveVariant",
     "structure",
     "degree",
     "timeframe",
@@ -44,6 +46,7 @@ export function readResearchQuery(p: URLSearchParams, context = false, incomplet
     return n;
   };
   for (const [key, options] of Object.entries({
+    waveVariant: WAVE_VARIANTS.map(v => v.code),
     structure: [...STRUCTURES.map(([c])=>c),...new Set(STRUCTURES.map(([, ,p])=>`family:${p}`))],
     timeBasis: ["historical","recorded"],
     timeMatch: ["certain","possible","unknown","all"],
@@ -95,6 +98,9 @@ export function readResearchQuery(p: URLSearchParams, context = false, incomplet
         k === "stockId" ? integer(k, 0, 1, 2147483647) : ["levelFrom","levelTo"].includes(k) ? Number(p.get(k)) : p.get(k)!,
       ]),
   ) as FibFilters;
+  const variantError = waveVariantError(filters.wave, filters.waveVariant);
+  if (variantError) throw new ResearchQueryError(variantError);
+  if (filters.waveVariant && !filters.wave) filters.wave = waveVariant(filters.waveVariant)!.wave;
   for (const key of ["levelFrom", "levelTo"]) if (p.has(key) && !/^\d+(?:\.\d+)?$/.test(p.get(key)!)) throw new ResearchQueryError("Ungültiges Fibonacci-Level.");
   if (!incomplete && !p.get("query")?.trim() && levelSearchError(filters)) throw new ResearchQueryError(levelSearchError(filters)!);
   const query = p.get("query") ?? "";

@@ -54,6 +54,31 @@ const tokens = {
   read: "sat_" + "c".repeat(43),
 };
 
+it('persists wave variants, filters and exports them, preserves old-client edits and permits explicit corrections',async()=>{
+  const id=crypto.randomUUID(),ctx={params:Promise.resolve({id})};
+  const body={...input,evidence:{...input.evidence,waveVariant:'b_overshooting'}};
+  for(let i=0;i<2;i++) expect((await POST(request('',tokens.owner,'POST',body,{'Idempotency-Key':id}))).status).toBe(201);
+  expect((await getFib('owner',id)).version).toBe(1);
+  const listed=await (await GET(request('?wave=B&waveVariant=b_overshooting&waveLabelScope=self'))).json();
+  expect(listed.total).toBe(1);expect(listed.catalogue.waveVariants).toHaveLength(3);
+  expect(listed.stats.categorical.waveVariants[0]).toMatchObject({n:1,distribution:[{n:1},{n:0}]});
+  expect((await (await GET(request('?waveVariant=b_undershooting'))).json()).total).toBe(0);
+  expect((await GET(request('?wave=C&waveVariant=b_overshooting'))).status).toBe(400);
+  expect((await PATCH(request('/'+id,tokens.owner,'PATCH',input,{'X-Expected-Version':'1'}),ctx)).status).toBe(200);
+  expect((await getFib('owner',id)).evidence?.waveVariant).toBe('b_overshooting');
+  expect((await PATCH(request('/'+id,tokens.owner,'PATCH',{...body,wave:'C'},{'X-Expected-Version':'2'}),ctx)).status).toBe(422);
+  expect((await PATCH(request('/'+id,tokens.owner,'PATCH',{...body,evidence:null},{'X-Expected-Version':'2'}),ctx)).status).toBe(422);
+  expect((await detailGET(request('/'+id,tokens.other),ctx)).status).toBe(404);
+  const csv=await (await GET(request('?format=csv&waveVariant=b_overshooting'))).text(); expect(csv).toContain('b_overshooting');
+  const corrected={...input,wave:'C',evidence:{...input.evidence,waveVariant:'c_truncated'}};
+  expect((await PATCH(request('/'+id,tokens.owner,'PATCH',corrected,{'X-Expected-Version':'2'}),ctx)).status).toBe(200);
+  expect((await getFib('owner',id)).evidence?.waveVariant).toBe('c_truncated');
+  const revisions=await (await revisionGET(request('/'+id+'/revisions'),ctx)).json();
+  expect(revisions.items.some((r:any)=>r.snapshot.evidence.waveVariant==='b_overshooting')).toBe(true);
+  expect((await PATCH(request('/'+id,tokens.owner,'PATCH',{...corrected,evidence:{...input.evidence,waveVariant:null}},{'X-Expected-Version':'3'}),ctx)).status).toBe(200);
+  expect((await getFib('owner',id)).evidence?.waveVariant).toBeNull();
+});
+
 it('separately persists defined pivot and residence duration with retry, corrections, legacy preservation, revisions and owner scope',async()=>{
   const id=crypto.randomUUID(),ctx={params:Promise.resolve({id})};
   const pivot={kind:'exact',value:6,unit:'hour',timeBasis:'calendar',measurementConvention:'first_entry_to_pivot',zone:[50,61.8],originalText:'Synthetic six hours until pivot'};

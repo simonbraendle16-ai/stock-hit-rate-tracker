@@ -1,5 +1,6 @@
 import { timeMatch, dateEnvelope, boundaryEnvelope, historicalTimeError, type HistoricalTime } from "./fibonacci-time";
 import { researchEvidenceError, RESEARCH_EVIDENCE_KEYS, STRUCTURES, structureCode, type ResearchEvidence } from "./fibonacci-catalogue";
+import { waveVariantError, type WaveVariant } from "./fibonacci-wave-variants";
 import { categoricalStats } from "./fibonacci-categorical-stats";
 import { levelMatchGroups, levelSearchError, type LevelSearch } from "./fibonacci-level-search";
 import { residenceError, residenceLabel, residenceKindLabels, residenceComparisons, reversalError, reversalLabel, reversalComparisons, type TargetZoneResidence, type TargetZoneReversal } from "./fibonacci-residence";
@@ -406,6 +407,8 @@ export function validateFibInput(raw: Record<string, unknown>): FibInput {
   )
     return fail("Messnotiz darf maximal 2000 Zeichen enthalten.");
   const evidence=validateEvidence(raw.evidence);
+  const variantError = waveVariantError(raw.wave as string, evidence.waveVariant);
+  if (variantError) return fail(variantError);
   if (percent != null && evidence.measurementConfidence !== "unklar" && ((evidence.keyFibLevel != null && evidence.keyFibLevel > Number(percent)+1e-8) || (evidence.reachedLevels ?? []).some(v=>v>Number(percent)+1e-8) || (evidence.missedLevels ?? []).some(v=>v<=Number(percent)+1e-8))) return fail("Exakte Messung widerspricht den erreichten/verfehlten Levels.");
   if (percent != null && evidence.approximatePercent != null) return fail("Exakte und ungefähre Maximalmessung nicht gleichzeitig angeben.");
   return {
@@ -567,6 +570,7 @@ export function frequencies(
   };
 }
 export type FibFilters = LevelSearch & {
+  waveVariant?: WaveVariant;
   waveLabelScope?: "self" | "descendants";
   measurementKind?: "retracement" | "expansion";
   status?: FibInput["status"];
@@ -606,6 +610,7 @@ export function filterFib(
       (!filters.wave || r.wave.trim().toUpperCase() === filters.wave.trim().toUpperCase()) &&
       (!filters.degree || r.degree === filters.degree) &&
       (!filters.timeframe || r.timeframe === filters.timeframe) &&
+      (!filters.waveVariant || r.evidence?.waveVariant === filters.waveVariant) &&
       (!filters.structure || (filters.structure.startsWith("family:") ? STRUCTURES.find(([code])=>code===(r.evidence?.structureCode ?? structureCode(r.structure)))?.[2]===filters.structure.slice(7) : (r.evidence?.structureCode ?? structureCode(r.structure) ?? "unknown")===filters.structure)) &&
       ((!filters.from && !filters.to) || (filters.timeMatch === "all" ? timeMatch(r,filters) !== "excluded" : timeMatch(r,filters) === (filters.timeMatch ?? "certain"))),
   );

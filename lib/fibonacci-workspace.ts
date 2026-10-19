@@ -17,9 +17,9 @@ export function selectResearchRows(
   if (timeFilterError(filters)) return [];
   const words = searchable(search.trim()).split(/\s+/).filter(Boolean);
   const latest = latestObservations(rows);
-  const waveIds = filters.wave && filters.waveLabelScope === "descendants" ? new Set(latest.filter(r=>r.wave.trim().toUpperCase() === filters.wave!.trim().toUpperCase()).flatMap(r=>[...hierarchyIds(latest,r.id,true)])) : null;
+  const waveIds = filters.wave && filters.waveLabelScope === "descendants" ? new Set(latest.filter(r=>r.wave.trim().toUpperCase() === filters.wave!.trim().toUpperCase() && (!filters.waveVariant || r.evidence?.waveVariant === filters.waveVariant)).flatMap(r=>[...hierarchyIds(latest,r.id,true)])) : null;
   const ids = filters.observationId ? hierarchyIds(latest,filters.observationId,filters.waveScope === "descendants") : null;
-  return filterFib(latest, waveIds ? {...filters,wave:undefined} : filters).filter((row) => {
+  return filterFib(latest, waveIds ? {...filters,wave:undefined,waveVariant:undefined} : filters).filter((row) => {
     if (waveIds && !waveIds.has(row.id)) return false;
     if (ids && !ids.has(row.id)) return false;
     if (filters.hierarchyRole && (Boolean(row.evidence?.parentId) !== (filters.hierarchyRole === "subwaves"))) return false;

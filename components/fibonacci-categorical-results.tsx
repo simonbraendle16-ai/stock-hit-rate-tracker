@@ -26,6 +26,21 @@ export function CategoricalResults({
       </CardHeader>
       <CardContent className="flex flex-col gap-5">
         <details open>
+          <summary className="cursor-pointer font-medium">Wellenvarianten B und C</summary>
+          <FieldNote>Ausdrücklich erfasste Varianten je Grundwelle, Wellengrad, Timeframe und Messart. Anteile beziehen sich nur auf abgeschlossene, eindeutig erfasste Fälle. Fehlende Einstufungen bleiben ausgeschlossen.</FieldNote>
+          {!stats.waveVariants.length && <p className="text-sm">Noch keine B- oder C-Wellen in dieser Auswahl.</p>}
+          {stats.waveVariants.map((g,i) => <div className="mt-3 text-sm" key={i}>
+            <p>Welle {g.wave} · {formatWaveDegree(g.degree)} · {g.timeframe} · {g.measurementKind} · n={g.n} von {g.denominator}</p>
+            {g.distribution.map(d => <details key={d.code}>
+              <summary>{d.label} · {d.n}/{g.n} · {d.share == null ? "—" : `${d.share.toLocaleString("de-DE",{maximumFractionDigits:1})} %`}</summary>
+              <p className="break-words text-xs">Fälle: {d.ids.join(", ") || "keine"}</p>
+            </details>)}
+            <details><summary>Ausschlüsse ({g.excluded.length})</summary>
+              {g.excluded.map(r => <p className="break-words text-xs text-muted-foreground" key={r.id}>{r.id}: {r.reason}</p>)}
+            </details>
+          </div>)}
+        </details>
+        <details open>
           <summary className="cursor-pointer font-medium">Welche Schlüsselfibonaccis wurden angelaufen?</summary>
           <FieldNote>Ausdrücklich erfasste Schlüssellevel je Welle, Wellengrad, Timeframe und Messart. Zielzone und Umkehrbereich bleiben getrennt. Fehlende Angaben werden ausgeschlossen.</FieldNote>
           {!stats.keyFibonacci.groups.length && <p className="text-sm">Noch kein bestätigtes Schlüsselfibonacci in dieser Auswahl.</p>}

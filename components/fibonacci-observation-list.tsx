@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import type { FibObservation } from "@/lib/fibonacci";
 import { formatResearchPercent } from "@/lib/fibonacci-workspace";
 import { DURATION_CLASSES } from "@/lib/fibonacci-catalogue";
+import { waveVariant } from "@/lib/fibonacci-wave-variants";
 import { residenceLabel, reversalLabel } from "@/lib/fibonacci-residence";
 import { ZONE_TO_PIVOT } from "@/lib/fibonacci-duration-definitions";
 
@@ -32,6 +33,7 @@ export function FibonacciObservationDetails({ row, expanded = false }: { row: Fi
           {[
             ["Quelle", row.sourceRef || "Keine Quelle angegeben"],
             ["Bezugsbasis", row.measurementBasis],
+            ["Wellenvariante", waveVariant(row.evidence?.waveVariant)?.label ?? "Nicht erhoben"],
             ["Schlüsselfibonacci", row.evidence?.keyFibLevel != null ? `${row.evidence.keyFibLevel.toLocaleString("de-DE")} %` : "Nicht erhoben"],
             ["Erreichte Levels", row.evidence?.reachedLevels?.join(" / ")],
             ["Verfehlte Levels", row.evidence?.missedLevels?.join(" / ")],
@@ -143,7 +145,7 @@ export function FibonacciObservationList({
               <div className="min-w-0">
                 <p className="font-mono font-semibold">{row.ticker}</p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Welle {row.wave} · {formatWaveDegree(row.degree)} · {row.timeframe}
+                  Welle {waveVariant(row.evidence?.waveVariant)?.label ?? row.wave} · {formatWaveDegree(row.degree)} · {row.timeframe}
                 </p>
               </div>
               <div className="shrink-0 text-right">
@@ -209,7 +211,7 @@ export function FibonacciObservationList({
                   </p>
                 </th>
                 <td className="py-4 pr-4">
-                  Welle {row.wave}
+                  Welle {waveVariant(row.evidence?.waveVariant)?.label ?? row.wave}
                   <p className="mt-1 text-xs text-muted-foreground">
                     {formatWaveDegree(row.degree)} · {row.timeframe}
                   </p>

@@ -3,6 +3,7 @@ import { stock } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { researchResult, researchCsv } from "@/lib/fibonacci-research";
 import { formatWaveDegree } from "@/lib/wave-degree-labels";
+import { WAVE_VARIANTS } from "@/lib/fibonacci-wave-variants";
 import { durationDefinitions } from "@/lib/fibonacci-duration-definitions";
 import { RESEARCH_LEVELS, RESEARCH_WAVES, STRUCTURES, DURATION_CLASSES } from "@/lib/fibonacci-catalogue";
 import { loadTradeCoverage, loadMetricSamples } from "@/lib/research-metrics-service";
@@ -56,7 +57,7 @@ export async function GET(req: NextRequest) {
         trades: "Eindeutig verknüpfte eigene Trades mit passendem Instrument, nach jeweiligem Trade-Status; Netto nur abgeschlossene Trades.",
         legacy: "tradeSummary und tradeResearchCoverage bleiben gemischte Gesamtansichten; getrennte Bereiche verwenden die ByKind-Gruppen. Prognosen bleiben eigener assessment-Bestand.",
       },
-      catalogue: {version:1,degrees:FIB_DEGREES.map(value=>({value,label:formatWaveDegree(value)})),levels:RESEARCH_LEVELS,waves:RESEARCH_WAVES,structures:STRUCTURES.map(([code,label,parent])=>({code,label,parent})),durationClasses:DURATION_CLASSES.map(([code,label])=>({code,label})),durationDefinitions},
+      catalogue: {version:1,degrees:FIB_DEGREES.map(value=>({value,label:formatWaveDegree(value)})),levels:RESEARCH_LEVELS,waves:RESEARCH_WAVES,waveVariants:WAVE_VARIANTS,structures:STRUCTURES.map(([code,label,parent])=>({code,label,parent})),durationClasses:DURATION_CLASSES.map(([code,label])=>({code,label})),durationDefinitions},
       stats: result.stats,
     });
   } catch (e) {

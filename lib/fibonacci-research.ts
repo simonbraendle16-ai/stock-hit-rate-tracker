@@ -2,6 +2,7 @@ import { fibCsv, fibStats, type FibObservation } from './fibonacci';
 import { interpretFibSearch, type SearchInstrument } from './fibonacci-search';
 import { levelSearchError, levelSearchGroups } from './fibonacci-level-search';
 import { timeFilterError } from './fibonacci-time';
+import { waveVariantError } from './fibonacci-wave-variants';
 import { orderResearchRows, researchTimeGroups, selectResearchRows } from './fibonacci-workspace';
 import type { ResearchQuery } from './fibonacci-query-values';
 
@@ -11,7 +12,7 @@ export function researchResult(rows: readonly FibObservation[], instruments: rea
     ? interpretFibSearch(request.query, instruments, request.filters, request.resolutions)
     : null;
   const filters = interpretation?.filters ?? request.filters;
-  const error = levelSearchError(filters) ?? timeFilterError(filters);
+  const error = levelSearchError(filters) ?? timeFilterError(filters) ?? waveVariantError(filters.wave,filters.waveVariant);
   const ready = !error && (!interpretation || interpretation.ready);
   const selected = ready ? selectResearchRows(rows, filters, request.search, request.selection) : [];
   const ordered = orderResearchRows(selected, request.order);

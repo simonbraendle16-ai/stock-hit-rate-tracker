@@ -1,3 +1,4 @@
+import { waveVariantError, type WaveVariant } from "./fibonacci-wave-variants";
 import { ZONE_TO_PIVOT } from "./fibonacci-duration-definitions";
 /** Versioned categorical research inputs. Never round a reported measurement. */
 export const RESEARCH_LEVELS = [
@@ -96,6 +97,7 @@ export type ClassifiedDuration = {
     | "unknown";
 };
 export type ResearchEvidence = {
+  waveVariant?: WaveVariant | null;
   keyFibLevel?: number | null;
   catalogueVersion?: 1;
   structureCode?: StructureCode | null;
@@ -112,6 +114,7 @@ export type ResearchEvidence = {
   } | null;
 };
 export const RESEARCH_EVIDENCE_KEYS = [
+  "waveVariant",
   "keyFibLevel",
   "catalogueVersion",
   "structureCode",
@@ -125,6 +128,8 @@ export const RESEARCH_EVIDENCE_KEYS = [
 export function researchEvidenceError(
   e: Record<string, unknown>,
 ): string | null {
+  const variantError = waveVariantError(undefined, e.waveVariant);
+  if (variantError) return variantError;
   if (e.keyFibLevel != null) {
     if (typeof e.keyFibLevel !== "number" || !RESEARCH_LEVELS.includes(e.keyFibLevel))
       return "Schlüsselfibonacci aus den Fibonacci-Levels auswählen.";
