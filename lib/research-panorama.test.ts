@@ -80,3 +80,41 @@ describe('S4 full-selection panorama contract',()=>{
     expect(g.total).toBe(1);expect(g.categorical.subdivisions[0].distribution.find(d=>d.code==='five_part')?.n).toBe(1);
   });
 });
+
+describe('S5 shared statistics studio',()=>{
+  const studio = (rows: FibObservation[], state: 'ready'|'error'|'pending'|'loading' = 'ready') =>
+    renderToStaticMarkup(createElement(ResearchPanorama,{groups:panoramaModel(rows),state,perspective:'studio'}));
+
+  it('renders the same aggregate figures and exclusions with detailed tables for both kinds',()=>{
+    const a=row(1),b=row(2,{evidence:{...a.evidence,reversalLocation:'between_levels',reversalZone:[61.8,88.7]}});
+    const rows=[a,b,row(3,{status:'laufend'}),row(4,{measurementKind:'expansion'})];
+    const groups=panoramaModel(rows), html=studio(rows), overview=render(groups);
+    const captions=(markup: string)=>[...markup.matchAll(/<figcaption[^>]*>(.*?)<\/figcaption>/g)].map(m=>m[1]);
+    expect(captions(html)).toEqual(captions(overview));
+    expect(html).toContain('data-research-studio');expect(html).not.toContain('data-research-panorama');
+    expect(html).toContain('<table');expect(overview).not.toContain('<table');
+    expect(html).toContain('Umkehr außerhalb der Zone');expect(html).toContain('Verfehlt');
+    expect(html).toContain('Punktlevel');expect(html).toContain('Bereich');
+    expect(html).toContain('1 ohne verwendbare Strukturfamilie');
+    expect(html).not.toContain(a.id);expect(html).not.toContain('Synthetic');
+  });
+
+  it('keeps a known zero, an unknown denominator and missing target results distinct',()=>{
+    const a=row(1,{evidence:{provenance:'QA',missedLevels:[61.8],targetZone:[50,61.8],expectationTiming:'prior'}});
+    const html=studio([a]);
+    expect(html).toContain('0/1 · 0 %');expect(html).toContain('1/1 · 100 %');
+    expect(html).toContain('Anteil nicht berechenbar');expect(html).toContain('1 unbekannt außerhalb n');
+    expect(html).not.toContain('NaN');expect(html).not.toContain('Infinity');
+  });
+
+  it.each(['error','pending','loading'] as const)('never renders stale tables in %s',state=>{
+    const html=studio([row(1)],state);
+    expect(html).not.toContain('<figure');expect(html).not.toContain('<table');
+    expect(html).not.toContain('data-research-studio');
+  });
+
+  it('does not fabricate tables for an empty selection',()=>{
+    expect(studio([])).toContain('Keine passenden Beobachtungen');
+    expect(studio([])).not.toContain('<table');
+  });
+});

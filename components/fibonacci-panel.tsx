@@ -488,7 +488,8 @@ export function FibonacciPanel({
           </Card>
         ))}
       </div>}
-      {view.perspective === "panorama" && <ResearchPanorama
+      {(view.perspective === "panorama" || view.perspective === "studio") && <ResearchPanorama
+        perspective={view.perspective}
         groups={panorama}
         state={!loaded ? "loading" : view.error || result.error ? "error" : searchPending || !result.ready ? "pending" : "ready"}
         error={view.error || result.error || undefined}

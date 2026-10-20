@@ -6,7 +6,7 @@ import { type ResearchPerspective } from '@/lib/fibonacci-location'
 
 const perspectives = [
   {value:'panorama',label:'Panorama',title:'Die Auswahl im Überblick',description:'Datenbasis und zusammengefasste Beobachtungen deiner Untersuchung.'},
-  {value:'studio',label:'Statistikstudio',title:'Verteilungen genauer untersuchen',description:'Level, Struktur und Dauer anhand derselben Auswahl prüfen.'},
+  {value:'studio',label:'Statistikstudio',title:'Verteilungen genauer untersuchen',description:'Level, Zielzonen, Muster und Unterteilung anhand derselben Auswahl prüfen.'},
   {value:'structure',label:'Strukturvergleich',title:'Wellen und Strukturen vergleichen',description:'Vergleichbare Wellenkontexte und ihre dokumentierten Merkmale untersuchen.'},
 ] as const
 

@@ -1,0 +1,21 @@
+{
+  "checkedAt": "2026-10-20T19:38:00.738Z",
+  "syntheticOnly": true,
+  "tool": "CUA Edge extension",
+  "checks": [
+    "Both measurement kinds separated: 40 retracements and 8 expansions",
+    "Same figure captions and denominators after actual panorama/studio tab change",
+    "22 studio tables, no panorama tables; case basis remains closed",
+    "No document overflow at 1440, 1024, 390; screenshots visually read",
+    "Confirmed three-part filter: 19 retracements, 18 completed",
+    "Reload retains studio perspective and subdivision filters",
+    "Empty instrument selection shows no stale tables",
+    "Incomplete level semantics shows error and no stale tables",
+    "Final rebuilt app: corrected legend visible twice, 22 tables"
+  ],
+  "passed": 9,
+  "notes": [
+    "1024 and 390 screenshots before text-only legend correction; final legend verified separately in final production build",
+    "Loading/error/pending render cases additionally covered by unit regressions"
+  ]
+}
