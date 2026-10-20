@@ -54,6 +54,32 @@ const tokens = {
   read: "sat_" + "c".repeat(43),
 };
 
+it('persists independent subdivision with retry, filters, full-population metrics, revisions and legacy preservation',async()=>{
+  const id=crypto.randomUUID(),ctx={params:Promise.resolve({id})};
+  const body={...input,wave:'A',evidence:{...input.evidence,subdivision:'three_part',subdivisionConfidence:'bestaetigt'}};
+  for(let i=0;i<2;i++)expect((await POST(request('',tokens.owner,'POST',body,{'Idempotency-Key':id}))).status).toBe(201);
+  expect((await getFib('owner',id))).toMatchObject({version:1,wave:'A',evidence:{subdivision:'three_part',subdivisionConfidence:'bestaetigt'}});
+  const listed=await (await GET(request('?subdivision=three_part&subdivisionConfidence=bestaetigt&limit=1'))).json();
+  expect(listed.total).toBe(1);expect(listed.catalogue.subdivisions).toHaveLength(3);
+  expect(listed.stats.categorical.subdivisions[0]).toMatchObject({n:1,distribution:[{n:1},{n:0}]});
+  const old={...input,wave:'A'};
+  expect((await PATCH(request('/'+id,tokens.owner,'PATCH',old,{'X-Expected-Version':'1'}),ctx)).status).toBe(200);
+  expect((await getFib('owner',id)).evidence).toMatchObject({subdivision:'three_part',subdivisionConfidence:'bestaetigt'});
+  expect((await PATCH(request('/'+id,tokens.owner,'PATCH',{...old,evidence:null},{'X-Expected-Version':'2'}),ctx)).status).toBe(422);
+  expect((await PATCH(request('/'+id,tokens.owner,'PATCH',body,{'X-Expected-Version':'1'}),ctx)).status).toBe(409);
+  const corrected={...body,evidence:{...body.evidence,subdivision:'five_part',subdivisionConfidence:'vermutet'}};
+  expect((await PATCH(request('/'+id,tokens.owner,'PATCH',corrected,{'X-Expected-Version':'2'}),ctx)).status).toBe(200);
+  const detail=await (await detailGET(request('/'+id),ctx)).json();
+  expect(detail.evidence.subdivision).toBe('five_part');
+  const revisions=await (await revisionGET(request('/'+id+'/revisions'),ctx)).json();
+  expect(revisions.items.some((r:any)=>r.snapshot.evidence.subdivision==='three_part')).toBe(true);
+  expect((await (await GET(request('?format=csv&subdivision=five_part'))).text())).toContain('five_part');
+  expect((await detailGET(request('/'+id,tokens.other),ctx)).status).toBe(404);
+  expect((await GET(request('?subdivision=invalid'))).status).toBe(400);
+  expect((await PATCH(request('/'+id,tokens.owner,'PATCH',{...body,evidence:{...body.evidence,subdivision:null,subdivisionConfidence:null}},{'X-Expected-Version':'3'}),ctx)).status).toBe(200);
+  expect((await getFib('owner',id)).evidence?.subdivision).toBeNull();
+});
+
 it('persists wave variants, filters and exports them, preserves old-client edits and permits explicit corrections',async()=>{
   const id=crypto.randomUUID(),ctx={params:Promise.resolve({id})};
   const body={...input,evidence:{...input.evidence,waveVariant:'b_overshooting'}};

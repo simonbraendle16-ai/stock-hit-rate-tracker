@@ -1,3 +1,4 @@
+import { subdivisionError, type Subdivision, type SubdivisionConfidence } from "./fibonacci-subdivision";
 import { waveVariantError, type WaveVariant } from "./fibonacci-wave-variants";
 import { ZONE_TO_PIVOT } from "./fibonacci-duration-definitions";
 /** Versioned categorical research inputs. Never round a reported measurement. */
@@ -97,6 +98,8 @@ export type ClassifiedDuration = {
     | "unknown";
 };
 export type ResearchEvidence = {
+  subdivision?: Subdivision | null;
+  subdivisionConfidence?: SubdivisionConfidence | null;
   waveVariant?: WaveVariant | null;
   keyFibLevel?: number | null;
   catalogueVersion?: 1;
@@ -114,6 +117,7 @@ export type ResearchEvidence = {
   } | null;
 };
 export const RESEARCH_EVIDENCE_KEYS = [
+  "subdivision", "subdivisionConfidence",
   "waveVariant",
   "keyFibLevel",
   "catalogueVersion",
@@ -128,6 +132,8 @@ export const RESEARCH_EVIDENCE_KEYS = [
 export function researchEvidenceError(
   e: Record<string, unknown>,
 ): string | null {
+  const subError = subdivisionError(e);
+  if (subError) return subError;
   const variantError = waveVariantError(undefined, e.waveVariant);
   if (variantError) return variantError;
   if (e.keyFibLevel != null) {

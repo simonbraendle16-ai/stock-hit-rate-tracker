@@ -12,6 +12,16 @@ Wellenlabels 1–5/A/B/C/X/Y und eigene nichtleere Labels bis 40 Zeichen. `degre
 
 Optionale Felder: sourceKey/sourceRef, periodFrom/periodTo, structure, target, stopDescription, tradability, hypotheticalOutcome/actualOutcome, tradeId, historyId, stopVariants. Trade und Kursdatensatz müssen demselben Besitzer und Instrument gehören. `contextId` ist stabil und kennzeichnet die konkrete Welle. Eindeutig vollständig übereinstimmende Instrument-/Label-/Grad-/Timeframe-/Zeitraumangaben können einen bestehenden Kontext zuordnen; Mehrdeutigkeit ergibt 409. Ohne eindeutigen Bezug keine Zuordnung aus alten Trades erraten. Pro Besitzer/Kontext/Messart und Besitzer/sourceKey/Messart gilt Wiederholungsschutz. Inhaltliche Korrekturen erfolgen per PATCH mit aktueller Version, nicht durch neue IDs.
 
+### Innere Unterteilung unabhängig vom Muster
+
+`evidence.subdivision` ist optional `three_part|five_part|unknown|null`, `evidence.subdivisionConfidence` ist optional `bestaetigt|vermutet|unbekannt|null`. Beide werden im bestehenden JSONB gespeichert, ohne Migration oder Rückklassifizierung. Muster/Sicherheit bleiben `structureCode`/`structureConfidence`; ein Elternmuster gehört ausschließlich zum über `parentId` verknüpften Elternfall. Keine Ableitung der Unterteilung aus Muster oder Fibonacci-Wert.
+
+Katalogeinträge `subdivisions`/`subdivisionConfidences`, Filter gleichen Namens, URL-Zustand und strukturierte Suche (z. B. `dreiteilige A` oder `B Flat dreiteilig Unterteilungssicherheit:bestätigt`) sind additiv. CSV enthält eigene Spalten und Evidence-JSON; ältere PATCH-Clients erhalten unbekannte Felder, explizites `null` entfernt das jeweilige Feld.
+
+`stats.categorical.subdivisions` gruppiert nach Welle, Muster/Mustersicherheit, Grad, Timeframe und Messart. `n` und die Anteilsverteilung zählen ausschließlich abgeschlossene bestätigte Unterteilungen; `denominator` umfasst alle Fälle dieser Gruppe. `ids`, `excluded`, `uncertain` und `provisional` machen fehlende, vermutete und laufende Angaben sichtbar. Neueste Revision je Beobachtung zählt einmal; eine unklare Prozentmessung entwertet keine unabhängig bestätigte Unterteilung. Für bestätigte Fibonacci-Vergleiche `subdivision=three_part&subdivisionConfidence=bestaetigt` verwenden; ohne Sicherheitsfilter ist die allgemeine Auswahl weiter gefasst. Keine Punktmessungen aus Zonen. Statistik/Export gelten vor Pagination.
+
+Lokale QA: `docs/subdivision-qa/`; reproduzierbar mit eigener flüchtiger Vorschau auf 3041/5561, `scripts/verify-subdivision-local.mjs` und anschließend `scripts/verify-subdivision-browser.mjs`. Letzteres nutzt nach belegten CUA-Ausfällen einen eigenen Headless-Chromium und das synthetische lokale Konto. Keine Produktivkonfiguration einlesen.
+
 ## API
 
 Alle Pfade unter `/api/assistant/v1`, bestehende Tokenrechte `trades:read`/`trades:write`:

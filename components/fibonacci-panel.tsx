@@ -1,4 +1,5 @@
 "use client";
+import { SUBDIVISIONS, SUBDIVISION_CONFIDENCES } from "@/lib/fibonacci-subdivision";
 import { formatWaveDegree } from "@/lib/wave-degree-labels";
 import { CategoricalFibForm } from "@/components/fibonacci-categorical-form";
 import { CategoricalResults } from "@/components/fibonacci-categorical-results";
@@ -416,7 +417,9 @@ export function FibonacciPanel({
             <Choice label="Levelbedeutung" value={filters.levelMeaning ?? ""} onChange={v=>set("levelMeaning",v)} options={Object.entries(levelMeaningLabels).map(([value,label])=>({value,label}))}/>
             <Choice label="Fibonacci-Level / von" value={filters.levelFrom === undefined ? "" : String(filters.levelFrom)} onChange={v=>set("levelFrom",v)} options={RESEARCH_LEVELS.map(n=>({value:String(n),label:n.toLocaleString("de-DE")}))}/>
             <Choice label="Fibonacci-Bereich bis (optional)" value={filters.levelTo === undefined ? "" : String(filters.levelTo)} onChange={v=>set("levelTo",v)} options={RESEARCH_LEVELS.map(n=>({value:String(n),label:n.toLocaleString("de-DE")}))}/>
-            <Choice label="Wellenstruktur" value={filters.structure || ""} onChange={v=>set("structure",v)} options={[...STRUCTURES.map(([value,label])=>({value,label})),...([...new Set(STRUCTURES.map(([, ,parent])=>parent))].filter(p=>p!=="unknown").map(parent=>({value:`family:${parent}`,label:`Hauptstruktur: ${parent}`})))]}/>
+            <Choice label="Innere Unterteilung" value={filters.subdivision || ""} onChange={v=>set("subdivision",v)} options={SUBDIVISIONS.map(v=>({value:v.code,label:v.label}))}/>
+            <Choice label="Sicherheit der Unterteilung" value={filters.subdivisionConfidence || ""} onChange={v=>set("subdivisionConfidence",v)} options={SUBDIVISION_CONFIDENCES.map(v=>({value:v.code,label:v.label}))}/>
+            <Choice label="Muster der untersuchten Welle" value={filters.structure || ""} onChange={v=>set("structure",v)} options={[...STRUCTURES.map(([value,label])=>({value,label})),...([...new Set(STRUCTURES.map(([, ,parent])=>parent))].filter(p=>p!=="unknown").map(parent=>({value:`family:${parent}`,label:`Hauptstruktur: ${parent}`})))]}/>
 
           </FieldGroup>
           <div className="flex flex-wrap items-start justify-between gap-3">

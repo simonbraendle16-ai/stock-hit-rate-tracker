@@ -1,0 +1,19 @@
+{
+  "checkedAt": "2026-10-20T13:53:40.505Z",
+  "syntheticOnly": true,
+  "fallbackReason": "CUA CDP focus/evaluate timeouts and lost tab association",
+  "desktop": {
+    "width": 1440
+  },
+  "mobile": {
+    "width": 390,
+    "client": 390,
+    "scroll": 390
+  },
+  "savedAndReadBack": true,
+  "version": 4,
+  "filterUrl": true,
+  "filteredFormDefault": true,
+  "resultsVisible": true,
+  "pageErrors": []
+}

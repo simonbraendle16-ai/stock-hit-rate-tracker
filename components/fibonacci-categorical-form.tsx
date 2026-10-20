@@ -1,4 +1,5 @@
 "use client";
+import { SUBDIVISIONS, SUBDIVISION_CONFIDENCES } from "@/lib/fibonacci-subdivision";
 import { WAVE_VARIANTS, waveChoice } from "@/lib/fibonacci-wave-variants";
 import { HistoricalTimeFields } from "@/components/fibonacci-time-fields";
 import { historicalTime } from "@/lib/fibonacci-time";
@@ -92,6 +93,8 @@ export function CategoricalFibForm({
       existing?.evidence ?? {
         catalogueVersion: 1,
         waveVariant: defaults.waveVariant ?? null,
+        subdivision: defaults.subdivision ?? null,
+        subdivisionConfidence: defaults.subdivisionConfidence ?? null,
         provenance: "Direkte Formulareingabe des Nutzers",
       },
   );
@@ -216,7 +219,7 @@ export function CategoricalFibForm({
                 onChange={(v) => { const choice = waveChoice(v); set("wave", choice.wave); setE({waveVariant: choice.waveVariant}); }}
               />
               <Choice
-                label="Wellenstruktur / Untertyp"
+                label="Muster der untersuchten Welle"
                 value={legacyStructure ? "legacy" : currentStructure}
                 options={[
                   ...(legacyStructure
@@ -233,8 +236,11 @@ export function CategoricalFibForm({
                   setE({ structureCode: v as FibEvidence["structureCode"] })
                 }
               />
+              <Choice label="Innere Unterteilung" value={evidence.subdivision ?? "unknown"} options={SUBDIVISIONS.map(v=>[v.code,v.label] as const)} onChange={v=>setE({subdivision:v as FibEvidence["subdivision"]})} />
+              <Choice label="Sicherheit der Unterteilung" value={evidence.subdivisionConfidence ?? "unbekannt"} options={SUBDIVISION_CONFIDENCES.map(v=>[v.code,v.label] as const)} onChange={v=>setE({subdivisionConfidence:v as FibEvidence["subdivisionConfidence"]})} />
+              <FieldDescription className="sm:col-span-2">Unterteilung und Muster beschreiben diese Welle. Das Muster der übergeordneten Korrektur gehört zur Elternwelle. Unbekannte Angaben können offenbleiben.</FieldDescription>
               <Choice
-                label="Sicherheit der Struktur"
+                label="Sicherheit des Musters"
                 value={evidence.structureConfidence ?? "unbekannt"}
                 options={[
                   ["unbekannt", "Unbekannt"],

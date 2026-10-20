@@ -1,3 +1,4 @@
+import { SUBDIVISIONS, SUBDIVISION_CONFIDENCES } from "./fibonacci-subdivision";
 import { dateEnvelope } from "./fibonacci-time";
 import { WAVE_VARIANTS, waveVariant, waveVariantError } from "./fibonacci-wave-variants";
 import { STRUCTURES } from "./fibonacci-catalogue";
@@ -14,6 +15,7 @@ export function readResearchQuery(p: URLSearchParams, context = false, incomplet
     "wave",
     "waveVariant",
     "structure",
+    "subdivision", "subdivisionConfidence",
     "degree",
     "timeframe",
     "timeBasis", "timeMatch", "observationId", "waveScope", "hierarchyRole",
@@ -46,6 +48,8 @@ export function readResearchQuery(p: URLSearchParams, context = false, incomplet
     return n;
   };
   for (const [key, options] of Object.entries({
+    subdivision: SUBDIVISIONS.map(v=>v.code),
+    subdivisionConfidence: SUBDIVISION_CONFIDENCES.map(v=>v.code),
     waveVariant: WAVE_VARIANTS.map(v => v.code),
     structure: [...STRUCTURES.map(([c])=>c),...new Set(STRUCTURES.map(([, ,p])=>`family:${p}`))],
     timeBasis: ["historical","recorded"],

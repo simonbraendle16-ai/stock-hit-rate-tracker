@@ -582,6 +582,8 @@ export type FibFilters = LevelSearch & {
   degree?: string;
   timeframe?: string;
   structure?: string;
+  subdivision?: import("./fibonacci-subdivision").Subdivision;
+  subdivisionConfidence?: import("./fibonacci-subdivision").SubdivisionConfidence;
   timeBasis?: "historical" | "recorded";
   timeMatch?: "certain" | "possible" | "unknown" | "all";
   observationId?: string;
@@ -611,6 +613,8 @@ export function filterFib(
       (!filters.degree || r.degree === filters.degree) &&
       (!filters.timeframe || r.timeframe === filters.timeframe) &&
       (!filters.waveVariant || r.evidence?.waveVariant === filters.waveVariant) &&
+      (!filters.subdivision || (r.evidence?.subdivision ?? "unknown") === filters.subdivision) &&
+      (!filters.subdivisionConfidence || (r.evidence?.subdivisionConfidence ?? "unbekannt") === filters.subdivisionConfidence) &&
       (!filters.structure || (filters.structure.startsWith("family:") ? STRUCTURES.find(([code])=>code===(r.evidence?.structureCode ?? structureCode(r.structure)))?.[2]===filters.structure.slice(7) : (r.evidence?.structureCode ?? structureCode(r.structure) ?? "unknown")===filters.structure)) &&
       ((!filters.from && !filters.to) || (filters.timeMatch === "all" ? timeMatch(r,filters) !== "excluded" : timeMatch(r,filters) === (filters.timeMatch ?? "certain"))),
   );
@@ -645,6 +649,7 @@ export function fibCsv(rows: readonly FibObservation[]) {
         "Zeitraum von",
         "Zeitraum bis",
         "Struktur",
+        "Innere Unterteilung", "Sicherheit der Unterteilung",
         "Kursziel",
         "Stopbeschreibung",
         "Handelbarkeit",
@@ -679,6 +684,7 @@ export function fibCsv(rows: readonly FibObservation[]) {
         r.periodFrom,
         r.periodTo,
         r.structure,
+        r.evidence?.subdivision, r.evidence?.subdivisionConfidence,
         r.target,
         r.stopDescription,
         r.tradability,

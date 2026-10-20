@@ -1,4 +1,5 @@
 "use client";
+import { subdivisionLabel, subdivisionConfidenceLabel } from "@/lib/fibonacci-subdivision";
 import { timeLabel } from "@/lib/fibonacci-time";
 import { formatWaveDegree } from "@/lib/wave-degree-labels";
 
@@ -8,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { FibObservation } from "@/lib/fibonacci";
 import { formatResearchPercent } from "@/lib/fibonacci-workspace";
-import { DURATION_CLASSES } from "@/lib/fibonacci-catalogue";
+import { DURATION_CLASSES, STRUCTURES } from "@/lib/fibonacci-catalogue";
 import { waveVariant } from "@/lib/fibonacci-wave-variants";
 import { residenceLabel, reversalLabel } from "@/lib/fibonacci-residence";
 import { ZONE_TO_PIVOT } from "@/lib/fibonacci-duration-definitions";
@@ -57,7 +58,10 @@ export function FibonacciObservationDetails({ row, expanded = false }: { row: Fi
             ["Elternwelle", row.evidence?.parentId],
             ["Zeitquelle", row.evidence?.historicalTime?.source],
             ["Herkunft strukturierter Angaben", row.evidence?.provenance],
-            ["Struktur", row.structure],
+            ["Muster der untersuchten Welle", STRUCTURES.find(([code])=>code===row.evidence?.structureCode)?.[1] ?? row.structure ?? "Unbekannt"],
+            ["Sicherheit des Musters", row.evidence?.structureConfidence ?? "unbekannt"],
+            ["Innere Unterteilung", subdivisionLabel(row.evidence?.subdivision)],
+            ["Sicherheit der Unterteilung", subdivisionConfidenceLabel(row.evidence?.subdivisionConfidence)],
             [
               "Referenzanker",
               row.anchorStart != null

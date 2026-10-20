@@ -1,0 +1,14 @@
+{
+  "checkedAt": "2026-10-20T13:53:27.329Z",
+  "syntheticOnly": true,
+  "httpChecks": 18,
+  "observations": 7,
+  "retryPreservedVersion": true,
+  "legacyPreservation": true,
+  "apiDatabaseMatch": true,
+  "revisionRetained": true,
+  "ownAndParentPatternsSeparate": true,
+  "noInventedPercent": true,
+  "statisticsBeforePagination": true,
+  "editableId": "6e277f65-e20a-4d16-bcb2-3e41e1bfa290"
+}

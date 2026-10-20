@@ -1,3 +1,4 @@
+import { SUBDIVISIONS, SUBDIVISION_CONFIDENCES } from "@/lib/fibonacci-subdivision";
 import { db } from "@/lib/db";
 import { stock } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
@@ -57,7 +58,7 @@ export async function GET(req: NextRequest) {
         trades: "Eindeutig verknüpfte eigene Trades mit passendem Instrument, nach jeweiligem Trade-Status; Netto nur abgeschlossene Trades.",
         legacy: "tradeSummary und tradeResearchCoverage bleiben gemischte Gesamtansichten; getrennte Bereiche verwenden die ByKind-Gruppen. Prognosen bleiben eigener assessment-Bestand.",
       },
-      catalogue: {version:1,degrees:FIB_DEGREES.map(value=>({value,label:formatWaveDegree(value)})),levels:RESEARCH_LEVELS,waves:RESEARCH_WAVES,waveVariants:WAVE_VARIANTS,structures:STRUCTURES.map(([code,label,parent])=>({code,label,parent})),durationClasses:DURATION_CLASSES.map(([code,label])=>({code,label})),durationDefinitions},
+      catalogue: {version:1,subdivisions:SUBDIVISIONS,subdivisionConfidences:SUBDIVISION_CONFIDENCES,degrees:FIB_DEGREES.map(value=>({value,label:formatWaveDegree(value)})),levels:RESEARCH_LEVELS,waves:RESEARCH_WAVES,waveVariants:WAVE_VARIANTS,structures:STRUCTURES.map(([code,label,parent])=>({code,label,parent})),durationClasses:DURATION_CLASSES.map(([code,label])=>({code,label})),durationDefinitions},
       stats: result.stats,
     });
   } catch (e) {

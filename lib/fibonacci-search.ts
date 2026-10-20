@@ -1,3 +1,4 @@
+import { subdivisionLabel, subdivisionConfidenceLabel } from "./fibonacci-subdivision";
 import { FIB_DEGREES, FIB_TIMEFRAMES, type FibFilters } from "./fibonacci";
 import { waveVariant, waveVariantError } from "./fibonacci-wave-variants";
 import {
@@ -25,7 +26,9 @@ const filterLabels: Record<string, string> = {
   to: "Zeitraum bis",
   timeBasis: "Zeitbasis",
   waveLabelScope: "Wellenumfang",
-  structure: "Struktur",
+  structure: "Muster der untersuchten Welle",
+  subdivision: "Innere Unterteilung",
+  subdivisionConfidence: "Sicherheit der Unterteilung",
   degree: "Wellengrad",
   timeframe: "Zeiteinheit",
   status: "Status",
@@ -39,7 +42,9 @@ export function describeSearchCriterion(
   instruments: readonly SearchInstrument[],
 ) {
   let value = c.value;
-  if (c.key === "waveVariant") value = waveVariant(value)?.label ?? value;
+  if (c.key === "subdivision") value = subdivisionLabel(value);
+  else if (c.key === "subdivisionConfidence") value = subdivisionConfidenceLabel(value);
+  else if (c.key === "waveVariant") value = waveVariant(value)?.label ?? value;
   else if (c.key === "stockId") {
     const i = instruments.find((i) => String(i.id) === value);
     value = i ? `${i.ticker} · ${i.name}` : value;
@@ -121,6 +126,9 @@ export function interpretFibSearch(
       return " ";
     });
   };
+  consume(/\b(?:unterteilungssicherheit|subdivisionConfidence)\s*[:=]\s*(bestaetigt|bestätigt|vermutet|unbekannt)\b/gi, (_, value) => assign("subdivisionConfidence", value.toLowerCase().replace("bestätigt","bestaetigt")));
+  consume(/\b(?:unterteilung|subdivision)\s*[:=]\s*(three_part|five_part|unknown|dreiteilig|fünfteilig|fuenfteilig|unbekannt)(?![\p{L}\p{N}_])/giu, (_, value) => assign("subdivision", ({dreiteilig:"three_part",fünfteilig:"five_part",fuenfteilig:"five_part",unbekannt:"unknown"} as Record<string,string>)[value.toLowerCase()] ?? value.toLowerCase()));
+  consume(/(?<![\p{L}\p{N}_])(dreiteilig|fünfteilig|fuenfteilig)(?:e|en|er|es)?(?![\p{L}\p{N}_])/giu, (_, value) => assign("subdivision", value.toLowerCase()==="dreiteilig" ? "three_part" : "five_part"));
   consume(/\b(\d{4})\s*-\s*(\d{4})\b/g, (_, a, b) => {
     assign("from", a);
     assign("to", b);

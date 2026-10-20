@@ -1,4 +1,5 @@
 import { formatWaveDegree } from "@/lib/wave-degree-labels";
+import { subdivisionLabel, subdivisionConfidenceLabel } from "@/lib/fibonacci-subdivision";
 import { durationDefinitions, CALENDAR_TIME_NOTE, ZONE_TO_PIVOT } from "@/lib/fibonacci-duration-definitions";
 import type { categoricalStats } from "@/lib/fibonacci-categorical-stats";
 import { levelLabel } from "@/components/fibonacci-categorical-inputs";
@@ -25,6 +26,27 @@ export function CategoricalResults({
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-5">
+        <details open>
+          <summary className="cursor-pointer font-medium">Innere Unterteilung · getrennt vom Muster</summary>
+          <FieldNote>Bestätigte dreiteilige und fünfteilige Wellen je Muster, Wellengrad, Timeframe und Messart. Unterteilung wird weder aus dem Muster noch aus Fibonacci-Werten abgeleitet. Vermutete Angaben und laufende Wellen bleiben separat. Für Fibonacci-Verteilungen und Levelprofile die Unterteilung oben filtern.</FieldNote>
+          {!stats.subdivisions.length && <p className="text-sm">Noch keine Wellen in dieser Auswahl.</p>}
+          {stats.subdivisions.map((g,i)=><div className="mt-3 text-sm" key={i}>
+            <p>{g.wave} · {g.patternLabel} (Mustersicherheit: {g.patternConfidence}) · {formatWaveDegree(g.degree)} · {g.timeframe} · {g.measurementKind} · n={g.n} von {g.denominator}</p>
+            {g.distribution.map(d=><details key={d.code}>
+              <summary>{d.label} · {d.n}/{g.n} · {d.share == null ? "—" : `${d.share.toLocaleString("de-DE",{maximumFractionDigits:1})} %`}</summary>
+              <p className="break-words text-xs">Fälle: {d.ids.join(", ") || "keine"}</p>
+            </details>)}
+            <details><summary>Vermutete / unbekannte Angaben ({g.uncertain.length})</summary>
+              {g.uncertain.map(r=><p className="break-words text-xs" key={r.id}>{r.id}: {subdivisionLabel(r.subdivision)} · {subdivisionConfidenceLabel(r.confidence)}</p>)}
+            </details>
+            <details><summary>Laufende Wellen · vorläufig ({g.provisional.length})</summary>
+              {g.provisional.map(r=><p className="break-words text-xs" key={r.id}>{r.id}: {subdivisionLabel(r.subdivision)} · {subdivisionConfidenceLabel(r.confidence)}</p>)}
+            </details>
+            <details><summary>Ausschlüsse aus bestätigten Häufigkeiten ({g.excluded.length})</summary>
+              {g.excluded.map(r=><p className="break-words text-xs text-muted-foreground" key={r.id}>{r.id}: {r.reason}</p>)}
+            </details>
+          </div>)}
+        </details>
         <details open>
           <summary className="cursor-pointer font-medium">Wellenvarianten B und C</summary>
           <FieldNote>Ausdrücklich erfasste Varianten je Grundwelle, Wellengrad, Timeframe und Messart. Anteile beziehen sich nur auf abgeschlossene, eindeutig erfasste Fälle. Fehlende Einstufungen bleiben ausgeschlossen.</FieldNote>

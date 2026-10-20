@@ -1,3 +1,4 @@
+import { subdivisionStats } from "./fibonacci-subdivision";
 import { residenceConflict, reversalConflict } from "./fibonacci-duration-compatibility";
 import { ZONE_TO_PIVOT } from "./fibonacci-duration-definitions";
 import { WAVE_VARIANTS, waveVariant, waveVariantError } from "./fibonacci-wave-variants";
@@ -263,6 +264,7 @@ export function categoricalStats(rows: readonly FibObservation[]) {
     definition:
       "Beobachtete relative Häufigkeiten; unbekannte Angaben sind keine Verfehlungen. Jede Welle zählt pro Kennzahl einmal.",
     total: rows.length,
+    subdivisions: subdivisionStats(rows),
     waveVariants: waveVariantStats(rows),
     keyFibonacci: keyFibonacciStats(rows),
     levels,
