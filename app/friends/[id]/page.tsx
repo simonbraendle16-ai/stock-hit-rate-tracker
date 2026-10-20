@@ -31,7 +31,7 @@ export default async function FriendJournalPage({
   return (
     <div className="min-h-svh">
       <CockpitHeader userLabel={session.user.name || session.user.email} />
-      <main className="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-8">
+      <main id="cockpit-content" tabIndex={-1} className="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-8">
         <Link
           href="/friends"
           className="mb-4 inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground transition-colors hover:text-foreground"

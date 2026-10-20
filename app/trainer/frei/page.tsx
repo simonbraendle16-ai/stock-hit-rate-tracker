@@ -31,7 +31,7 @@ export default async function FreiesReplayPage({
       <CockpitHeader userLabel={session.user.name || session.user.email} />
       {/* Dieselbe Begründung wie beim gemessenen Trainer: Das freie Replay ist
           eine Arbeitsfläche, keine Textseite. */}
-      <main className="mx-auto max-w-[1800px] px-4 py-6 sm:px-6 sm:py-8">
+      <main id="cockpit-content" tabIndex={-1} className="mx-auto max-w-[1800px] px-4 py-6 sm:px-6 sm:py-8">
         <Link
           href="/trainer"
           className="mb-4 inline-flex items-center gap-1 font-mono text-xs text-muted-foreground hover:text-foreground"

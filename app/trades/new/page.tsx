@@ -16,7 +16,7 @@ export default async function NewTradePage() {
   return (
     <div className="min-h-svh">
       <CockpitHeader userLabel={session.user.name || session.user.email} />
-      <main className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
+      <main id="cockpit-content" tabIndex={-1} className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
         <div className="mb-6">
           <h2 className="font-heading text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
             Trade planen

@@ -4,6 +4,92 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* S2 reference frame. Only authenticated cockpit pages opt into these tokens;
+   sign-in and independent tools keep their existing presentation. */
+body:has(.cockpit-header) {
+  --background: hsl(240 14% 3%);
+  --card: hsl(240 13% 6%);
+  --foreground: hsl(220 14% 91%);
+  --card-foreground: var(--foreground);
+  --muted-foreground: hsl(217 11% 65%);
+  --primary: hsl(236 91% 74%);
+  --primary-foreground: hsl(240 14% 3%);
+  --border: hsl(240 11% 11%);
+  --input: hsl(240 11% 20%);
+  --muted: hsl(240 13% 9%);
+  --secondary: hsl(240 13% 11%);
+  --secondary-foreground: var(--foreground);
+  --accent: hsl(236 24% 13%);
+  --accent-foreground: var(--foreground);
+  --popover: hsl(240 13% 6%);
+  --popover-foreground: var(--foreground);
+  --ring: hsl(236 91% 74%);
+  --sidebar: var(--background);
+  --sidebar-border: var(--border);
+  --sidebar-foreground: var(--foreground);
+  --chart-1: var(--primary);
+  --chart-5: var(--muted-foreground);
+  --font-plex-sans: var(--font-inter);
+  --font-plex-serif: var(--font-inter);
+  background: var(--background);
+}
+body:has(.cockpit-header) > .app-backdrop { display: none; }
+.cockpit-header { position: sticky; top: 0; z-index: 30; background: var(--background); border-bottom: 1px solid var(--border); }
+.cockpit-top { max-width: 1440px; min-height: 73px; margin: auto; padding: 12px 32px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.cockpit-brand { display: flex; align-items: center; gap: 10px; flex-shrink: 0; font-size: 16px; font-weight: 600; letter-spacing: -.4px; }
+.cockpit-logo { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 11px; background: var(--primary); color: var(--primary-foreground); box-shadow: 0 0 24px #818cf873; }
+.cockpit-logo svg { width: 25px; height: 25px; }
+.cockpit-account { display: flex; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; }
+.cockpit-user { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--muted-foreground); }
+.cockpit-sidebar { position: fixed; top: 93px; bottom: 20px; left: max(20px, calc((100vw - 1440px) / 2 + 20px)); width: 180px; border-right: 1px solid var(--border); padding-right: 16px; overflow-y: auto; }
+.cockpit-nav-label { margin: 16px 10px 24px; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted-foreground); }
+.cockpit-nav { display: flex; flex-direction: column; gap: 6px; }
+.cockpit-nav-item { display: flex; flex-shrink: 0; align-items: center; gap: 11px; padding: 12px 10px; border: 1px solid transparent; border-radius: 8px; font-size: 12px; transition: background-color 120ms, color 120ms; }
+.cockpit-nav-item[data-active=true] { border-color: color-mix(in srgb, var(--primary) 30%, transparent); background: var(--accent); }
+.cockpit-header ~ main { width: calc(100% - max(220px, calc((100vw - 1440px) / 2 + 220px))); margin-left: max(220px, calc((100vw - 1440px) / 2 + 220px)); margin-right: auto; min-width: 0; }
+.cockpit-header ~ main.max-w-6xl { max-width: 1220px; }
+.cockpit-money-issue { margin: 0; padding: 10px 24px; background: var(--card); color: var(--warning); }
+.cockpit-skip { position: fixed; left: 16px; top: -100px; padding: 12px; background: var(--card); border: 2px solid var(--primary); z-index: 50; }
+.cockpit-skip:focus { top: 8px; }
+body:has(.cockpit-header) :focus-visible { outline: 2px solid var(--primary); outline-offset: 4px; }
+.research-hero { position: relative; isolation: isolate; overflow: hidden; text-align: center; background: var(--background); min-height: 459px; border-radius: 12px; }
+.research-hero::before { content: ''; position: absolute; inset: 0; z-index: -2; background: url('/research-hero.jpg') center/cover no-repeat; opacity: .55; pointer-events: none; }
+.research-hero::after { content: ''; position: absolute; inset: 0; z-index: -1; background: linear-gradient(to bottom, transparent, var(--background)); pointer-events: none; }
+.research-hero-inner { padding: 80px 20px 40px; }
+.research-eyebrow { display: inline-flex; align-items: center; gap: 7px; padding: 6px 14px; border: 1px solid var(--border); border-radius: 30px; background: var(--card); color: var(--muted-foreground); font-size: 12px; }
+.research-eyebrow span { width: 6px; height: 6px; background: var(--primary); border-radius: 50%; }
+.research-hero h2 { margin: 20px 0 16px; font-size: clamp(36px, 4.2vw, 60px); font-weight: 700; letter-spacing: -1.5px; line-height: 1.05; text-wrap: balance; }
+.research-description { margin: 0 0 32px; font-size: 18px; line-height: 1.625; color: var(--muted-foreground); }
+.research-search { width: min(576px, 100%); margin: auto; text-align: left; }
+.research-search label { color: var(--foreground); font-size: 12px; }
+.research-search input { height: 56px; padding: 0 18px; border: 1px solid var(--border); border-radius: 16px; background: var(--card); color: var(--foreground); font-size: 16px; box-shadow: 0 0 0 1px #818cf81f, 0 12px 48px #818cf824; }
+.research-search input::placeholder { color: var(--muted-foreground); }
+.research-perspectives { min-width: 0; overflow-x: auto; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+.research-basis { min-width: 0; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
+.research-basis > summary { display: list-item; cursor: pointer; padding: 18px 20px; font-weight: 500; }
+.research-basis > summary span { display: inline-block; margin-left: 12px; color: var(--muted-foreground); font-size: 12px; font-weight: 400; }
+.research-basis[open] > summary { border-bottom: 1px solid var(--border); }
+@media (max-width: 1199px) {
+  .cockpit-user { display: none; }
+  .cockpit-sidebar { width: 160px; left: 16px; padding-right: 10px; }
+  .cockpit-header ~ main { width: calc(100% - 190px); margin-left: 190px; }
+  .research-hero h2 { font-size: 48px; }
+}
+@media (max-width: 767px) {
+  .cockpit-top { flex-wrap: wrap; padding: 14px 16px; gap: 12px; }
+  .cockpit-brand { font-size: 15px; }
+  .cockpit-account { width: 100%; justify-content: space-between; }
+  .cockpit-sidebar { position: static; width: auto; border: 0; padding: 0 12px 8px; overflow-x: auto; }
+  .cockpit-nav-label { display: none; }
+  .cockpit-nav { flex-direction: row; width: max-content; }
+  .cockpit-nav-item { padding: 10px; min-height: 44px; }
+  .cockpit-header ~ main { width: 100%; margin: 0 auto; }
+  .research-hero { min-height: 440px; }
+  .research-hero-inner { padding: 60px 16px 35px; }
+  .research-hero h2 { font-size: 36px; line-height: 1.1; letter-spacing: -.9px; overflow-wrap: break-word; }
+  .research-description { font-size: 16px; }
+}
+
 @theme inline {
   --font-heading: var(--font-plex-serif), Georgia, 'Times New Roman', serif;
   --font-sans: var(--font-plex-sans), system-ui, -apple-system, sans-serif;

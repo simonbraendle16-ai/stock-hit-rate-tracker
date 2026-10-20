@@ -44,7 +44,7 @@ export default async function TrainingSessionPage({
           brach, während der Chart auf 875 px gedrückt war und die Kerzen
           entsprechend schmal. Gelesen wird eine Struktur; dafür zählt jede
           Kerzenbreite. */}
-      <main className="mx-auto max-w-[1800px] px-4 py-6 sm:px-6 sm:py-8">
+      <main id="cockpit-content" tabIndex={-1} className="mx-auto max-w-[1800px] px-4 py-6 sm:px-6 sm:py-8">
         <Link
           href="/trainer"
           className="mb-4 inline-flex items-center gap-1 font-mono text-xs text-muted-foreground hover:text-foreground"

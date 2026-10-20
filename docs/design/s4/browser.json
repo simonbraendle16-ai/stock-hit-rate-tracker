@@ -1,0 +1,17 @@
+{
+  "checkedAt": "2026-10-20T19:07:09.855Z",
+  "syntheticOnly": true,
+  "fallbackReason": "CUA CDP dispatch deadline, lost attachment and new-tab timeout",
+  "passed": 9,
+  "checks": [
+    "Both measurement kinds split; known expected counts, ratios, zero and no visible case IDs",
+    "Readable responsive layout without global overflow at 1440px",
+    "Readable responsive layout without global overflow at 1024px",
+    "Readable responsive layout without global overflow at 390px",
+    "Confirmed subdivision filter retains independent pattern and valid denominator",
+    "Valid empty selection is distinct from zero percentage",
+    "Incomplete level meaning blocks all final panorama figures",
+    "Actual server data failure shows error and retry recovers without empty-success state",
+    "All synthetic observations and versions unchanged; no unexpected page errors after recovery"
+  ]
+}

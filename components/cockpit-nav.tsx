@@ -30,10 +30,7 @@ const items = [
 export function CockpitNav() {
   const pathname = usePathname()
   return (
-    // `justify-between` auf dem Handy: Die sieben Ziele verteilen sich über die
-    // volle Zeilenbreite, statt links zu kleben. `shrink-0` an den Einträgen,
-    // damit kein Ziel zusammengequetscht wird — lieber scrollt die Leiste.
-    <nav className="flex items-center justify-between gap-1 sm:justify-start">
+    <nav className="cockpit-nav" aria-label="Hauptnavigation">
       {items.map(({ href, label, icon: Icon }) => {
         const active = href === '/' ? pathname === '/' : pathname.startsWith(href)
         return (
@@ -41,15 +38,16 @@ export function CockpitNav() {
             key={href}
             href={href}
             data-active={active}
+            aria-current={active ? 'page' : undefined}
             className={cn(
-              'nav-item flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 font-mono text-xs tracking-wide transition-colors sm:px-3',
+              'nav-item cockpit-nav-item',
               active
                 ? 'bg-primary/10 text-primary'
                 : 'text-muted-foreground hover:text-foreground',
             )}
           >
-            <Icon className="size-3.5" />
-            <span className="hidden sm:inline">{label}</span>
+            <Icon className="size-4" aria-hidden="true" />
+            <span>{label}</span>
           </Link>
         )
       })}

@@ -5,6 +5,14 @@ import { Toaster } from '@/components/ui/sonner'
 import { AppBackdrop } from '@/components/app-backdrop'
 import './globals.css'
 
+// Reference font, served locally; no Google Fonts request at runtime.
+const inter = localFont({variable: '--font-inter', display: 'swap', src: [
+  {path: './fonts/inter-400.ttf', weight: '400'},
+  {path: './fonts/inter-500.ttf', weight: '500'},
+  {path: './fonts/inter-600.ttf', weight: '600'},
+  {path: './fonts/inter-700.ttf', weight: '700'},
+]})
+
 // Institutionelles Terminal: IBM-Plex-Superfamilie — eine Vision, drei Rollen.
 // Serif = Titel & Hero-Zahlen (Gravitas), Sans = UI/Text, Mono = Daten/Kurse.
 const plexSerif = localFont({
@@ -77,7 +85,7 @@ export default function RootLayout({
   return (
     <html
       lang="de"
-      className={`dark ${plexSerif.variable} ${plexSans.variable} ${plexMono.variable} bg-background`}
+      className={`dark ${inter.variable} ${plexSerif.variable} ${plexSans.variable} ${plexMono.variable} bg-background`}
     >
       <body className="font-sans antialiased">
         <AppBackdrop />

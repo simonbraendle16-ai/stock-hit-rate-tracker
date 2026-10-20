@@ -74,7 +74,7 @@ export default async function CockpitPage() {
   return (
     <div className="min-h-svh">
       <CockpitHeader userLabel={session.user.name || session.user.email} />
-      <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
+      <main id="cockpit-content" tabIndex={-1} className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
         <PendingTradeReviews userId={session.user.id} />
         <div className="mb-7 flex items-end justify-between gap-3">
           <div>

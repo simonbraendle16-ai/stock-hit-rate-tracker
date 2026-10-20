@@ -32,7 +32,7 @@ export function AnalysisWorkspace({
   currency,
 }: Props) {
   return (
-    <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
+    <main id="cockpit-content" tabIndex={-1} className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
       <AnalysisAutoRefresh />
       <p className="eyebrow mb-3">Analyse & Forschung</p>
       <nav

@@ -19,6 +19,7 @@ export function SignOutButton() {
       variant="ghost"
       size="sm"
       onClick={handleSignOut}
+      aria-label="Abmelden"
       className="text-muted-foreground"
     >
       <LogOut className="size-4" />

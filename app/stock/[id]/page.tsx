@@ -114,7 +114,7 @@ export default async function StockDetailPage({
       {/* Hält den Kurs im Kopf der Seite frisch, solange sie offen ist. */}
       <QuoteAutoRefresh />
 
-      <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
+      <main id="cockpit-content" tabIndex={-1} className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
         <Link
           href="/analysis"
           className="mb-4 inline-flex items-center gap-1 font-mono text-xs text-muted-foreground hover:text-foreground"

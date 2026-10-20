@@ -1,52 +1,14 @@
-import Link from 'next/link'
-import { Activity } from 'lucide-react'
-import { CockpitNav } from '@/components/cockpit-nav'
+import { CockpitFrame } from '@/components/cockpit-frame'
 import { SignOutButton } from '@/components/sign-out-button'
 import { PortfolioSwitcher } from '@/components/portfolio-switcher'
 import { getScopeContext } from '@/app/actions/portfolios'
 
-/**
- * Die Kopfzeile ist eine Server-Komponente und lädt den Depot-Kontext selbst
- * (Etappe 12) — deshalb steht der Umschalter auf JEDER Seite, die diesen Kopf
- * benutzt, ohne dass jede Seite ihn durchreichen muss.
- *
- * Er gehört hierher und nicht auf die Auswertungsseite: Er bestimmt nicht nur,
- * welche Zahlen man sieht, sondern auch, wohin ein neuer Trade gebucht wird.
- */
+/** Account and portfolio ownership stay on the existing server read path. */
 export async function CockpitHeader({ userLabel }: { userLabel?: string | null }) {
   const { portfolios, scope, moneyIssue } = await getScopeContext()
-  return (
-    // Deckendes Panel statt `backdrop-blur`: Weichzeichnen ist ein Glas-Signal,
-    // das der Designbrief („kein Glas, kein Glow") ausschließt.
-    <header className="sticky top-0 z-10 border-b border-border bg-sidebar">
-      {/* Die Navigation hat eine eigene Zeile; neun Ziele passen zusammen mit
-          Logo und Kontoauswahl auch auf dem Desktop nicht in max-w-6xl. */}
-      <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 sm:px-6 sm:py-4">
-        <Link href="/" className="flex shrink-0 items-center gap-3">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            <Activity className="size-5" />
-          </div>
-          <div className="hidden sm:block">
-            <h1 className="font-heading text-base font-semibold leading-tight tracking-tight text-foreground">
-              Trading Cockpit
-            </h1>
-            <p className="eyebrow mt-0.5">Disziplin · Elliott · Trefferquote</p>
-          </div>
-        </Link>
-        <div className="order-last w-full min-w-0 overflow-x-auto">
-          <CockpitNav />
-        </div>
-        <div className="flex min-w-0 items-center gap-2">
-          <PortfolioSwitcher portfolios={portfolios} scope={scope} />
-          {userLabel && (
-            <span className="hidden max-w-40 truncate font-mono text-xs text-muted-foreground lg:inline">
-              {userLabel}
-            </span>
-          )}
-          <SignOutButton />
-        </div>
-      </div>
-      {moneyIssue && <p className="mx-auto max-w-6xl px-4 pb-3 text-sm text-amber-600">{moneyIssue}</p>}
-    </header>
-  )
+  return <CockpitFrame moneyIssue={moneyIssue} account={<>
+    <PortfolioSwitcher portfolios={portfolios} scope={scope} />
+    {userLabel && <span className="cockpit-user" title={userLabel}>{userLabel}</span>}
+    <SignOutButton />
+  </>} />
 }

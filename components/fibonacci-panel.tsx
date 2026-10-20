@@ -1,4 +1,8 @@
 "use client";
+import { ResearchHero } from "@/components/research-hero";
+import { ResearchPerspectives } from "@/components/research-perspectives";
+import { ResearchPanorama } from "@/components/research-panorama";
+import { panoramaModel } from "@/lib/research-panorama";
 import { SUBDIVISIONS, SUBDIVISION_CONFIDENCES } from "@/lib/fibonacci-subdivision";
 import { formatWaveDegree } from "@/lib/wave-degree-labels";
 import { CategoricalFibForm } from "@/components/fibonacci-categorical-form";
@@ -13,7 +17,7 @@ import { RESEARCH_LEVELS } from "@/lib/fibonacci-catalogue";
 import { levelSearchGroups, levelGroupLabels, levelMeaningLabels } from "@/lib/fibonacci-level-search";
 import { useMemo, useState, useId, type SetStateAction } from "react";
 import { useFibonacciLocation } from "./use-fibonacci-location";
-import { defaultResearchView, writeResearchLocation } from "@/lib/fibonacci-location";
+import { resetResearchView, updateResearchRequest, writeResearchLocation } from "@/lib/fibonacci-location";
 import { researchResult, researchCsv } from "@/lib/fibonacci-research";
 import type { ResearchQuery } from "@/lib/fibonacci-query-values";
 import {
@@ -152,10 +156,10 @@ export function FibonacciPanel({
 }: Props) {
   const searchId = useId();
   const queryId = useId();
-  const {view,setView,loaded,detail:openDetail,restoreDetailFocus} = useFibonacciLocation(stockId);
+  const {view,setView,loaded,detail:openDetail,restoreDetailFocus,perspective:changePerspective} = useFibonacciLocation(stockId);
   const request = view.request;
   const update = <K extends keyof ResearchQuery>(key:K,value:SetStateAction<ResearchQuery[K]>) =>
-    setView(v=>({...v,request:{...v.request,[key]:typeof value === "function" ? (value as (old:ResearchQuery[K])=>ResearchQuery[K])(v.request[key]) : value}}));
+    setView(v=>updateResearchRequest(v,key,typeof value === "function" ? (value as (old:ResearchQuery[K])=>ResearchQuery[K])(v.request[key]) : value));
   const {query,resolutions,filters,search,selection,order} = request;
   const page = Math.floor(request.offset / 20), tab = view.tab;
   const setQuery = (v:SetStateAction<string>)=>update("query",v);
@@ -174,6 +178,7 @@ export function FibonacciPanel({
   // The same full-population pipeline powers API, table, statistics and CSV.
   const result = useMemo(()=>researchResult(observations,instruments,{...request,query:"",resolutions:{}}),[observations,instruments,request]);
   const filtered = result.selected;
+  const panorama = useMemo(() => panoramaModel(filtered, filters.measurementKind), [filtered, filters.measurementKind]);
   const stats = result.stats ?? fibStats([],filters.measurementKind);
   const waveLabels = [
     ...new Set([...FIB_WAVES, ...observations.map((r) => r.wave)]),
@@ -230,7 +235,7 @@ export function FibonacciPanel({
     filters.observationId && filters.waveScope === "descendants",
   ].filter(Boolean).length;
   const reset = () => {
-    setView(defaultResearchView(stockId));
+    setView(v=>resetResearchView(v,stockId));
     setSearchMessage("");
   };
   const create = () => {
@@ -258,17 +263,13 @@ export function FibonacciPanel({
       aria-label="Fibonacci-Auswertung"
       className="flex min-w-0 scroll-mt-36 flex-col gap-5"
     >
-      <div className="flex flex-wrap items-end justify-between gap-4 border-b border-border pb-5">
-        <div className="min-w-0">
-          <p className="eyebrow mb-2">Wellenforschung · dein Messbestand</p>
-          <h2 className="font-heading text-3xl tracking-tight">
-            Messen. Wiederfinden. Vergleichen.
-          </h2>
-          <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-            Eine konkrete Welle pro Beobachtung. Feste Fibonacci-Levels, Wellenstrukturen und getrennte Dauergruppen.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
+      <ResearchHero>
+        <Field>
+          <FieldLabel htmlFor={queryId}>Wellenbestand durchsuchen</FieldLabel>
+          <Input id={queryId} value={query} onChange={e=>{setQuery(e.target.value);setResolutions({});setSearchMessage("");setPage(0);}} placeholder="Tesla Welle 4 2020–2025 ABC 61,8" />
+        </Field>
+      </ResearchHero>
+      <div className="flex flex-wrap justify-end gap-2">
           <Button
             variant="outline"
             onClick={download}
@@ -281,41 +282,10 @@ export function FibonacciPanel({
             <Plus data-icon="inline-start" />
             Neue Beobachtung
           </Button>
-        </div>
       </div>
 
       {view.error && <p role="alert">Suchadresse ungültig: {view.error} <Button variant="outline" onClick={reset}>Auswahl zurücksetzen</Button></p>}
-      {!searchPending && !levelGroups.error && <div
-        className="grid grid-cols-2 gap-3 lg:grid-cols-4"
-        aria-label="Datenbasis der aktuellen Auswahl"
-        aria-live="polite"
-        aria-atomic="true"
-      >
-        {[
-          [
-            "Beobachtungen",
-            String(filtered.length),
-            "In der aktuellen Auswahl",
-          ],
-          ["Abgeschlossene Wellen", String(stats.coverage.completed), `${stats.running} laufend · ${stats.unclear} unklar · ${stats.invalid} ungültig`],
-          ["Mit Levelangaben", String(filtered.filter(r=>r.evidence?.keyFibLevel != null || r.evidence?.reachedLevels?.length || r.evidence?.missedLevels?.length || r.evidence?.reversalZone).length), "Schlüsselfibonacci, erreichte/verfehlte Levels oder beobachtete Umkehr"],
-          ["Dauergruppen", String(stats.categorical.durations.groups.length), "Nach Welle, Wellengrad und Timeframe getrennt"],
-        ].map(([label, value, description]) => (
-          <Card className="panel" key={label}>
-            <CardHeader className="pb-0">
-              <CardDescription>{label}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="break-words font-mono text-3xl tracking-tight">
-                {value}
-              </p>
-              <p className="mt-2 text-xs text-muted-foreground">
-                {description}
-              </p>
-            </CardContent>
-          </Card>
-        ))}
-      </div>}
+
 
       <Card className="panel">
         <CardHeader className="pb-0">
@@ -326,12 +296,13 @@ export function FibonacciPanel({
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
+          <div aria-label="Aktive Auswahl" className="flex flex-wrap gap-2">
+            {Object.entries(filters).filter(([key,value])=>value !== undefined && value !== '' && ['stockId','wave','waveVariant','waveLabelScope','measurementKind','from','to','timeBasis','structure','degree','timeframe','levelFrom','levelTo','levelMeaning'].includes(key)).map(([key,value])=><Badge key={key} variant="secondary">{describeSearchCriterion({key,value:String(value)},instruments)}</Badge>)}
+          </div>
+          {!loaded && <p role="status">Auswahl wird geladen.</p>}
           <FieldGroup>
-            <Field>
-              <FieldLabel htmlFor={queryId}>Begriffssuche in strukturierte Filter übersetzen</FieldLabel>
-              <Input id={queryId} value={query} onChange={e=>{setQuery(e.target.value);setResolutions({});setSearchMessage("");setPage(0);}} placeholder="Tesla Welle 4 2020–2025 ABC 61,8" />
-            </Field>
-            {searchPending && <>
+
+            {!!query.trim() && <>
               <p role="status" className="text-sm">Erkannt: {interpretation.recognized.map(c=>describeSearchCriterion(c,instruments)).join(" · ") || "noch keine Kriterien"}. Bis zur Übernahme keine endgültige Statistik.</p>
               {interpretation.pending.map(choice=><Choice key={choice.key} label={choice.label} value={resolutions[choice.key] || ""} onChange={v=>setResolutions(r=>({...r,[choice.key]:v}))} options={choice.options} />)}
               {!!interpretation.unknown.length && <p role="alert">Nicht verstanden: {interpretation.unknown.join(" · ")}. Bitte Suchtext korrigieren.</p>}
@@ -388,9 +359,10 @@ export function FibonacciPanel({
             <Choice
               label="Messart"
               all={false}
-              value={filters.measurementKind || "retracement"}
-              onChange={(v) => set("measurementKind", v)}
+              value={filters.measurementKind || "all"}
+              onChange={(v) => set("measurementKind", v === "all" ? "" : v)}
               options={[
+                { value: "all", label: "Beide Messarten" },
                 { value: "retracement", label: "Retracement" },
                 { value: "expansion", label: "Expansion" },
               ]}
@@ -484,8 +456,48 @@ export function FibonacciPanel({
         </CardContent>
       </Card>
 
+      <ResearchPerspectives value={view.perspective} onChange={changePerspective}>
+      {!searchPending && !levelGroups.error && <div
+        className="grid grid-cols-2 gap-3 lg:grid-cols-4"
+        aria-label="Datenbasis der aktuellen Auswahl"
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        {[
+          [
+            "Beobachtungen",
+            String(filtered.length),
+            "In der aktuellen Auswahl",
+          ],
+          ["Abgeschlossene Wellen", String(filtered.filter(r=>r.status === "abgeschlossen").length), `${filtered.filter(r=>r.status === "laufend").length} laufend · ${filtered.filter(r=>r.status === "unklar").length} unklar · ${filtered.filter(r=>r.status === "ungueltig").length} ungültig`],
+          ["Mit Levelangaben", String(filtered.filter(r=>r.evidence?.keyFibLevel != null || r.evidence?.reachedLevels?.length || r.evidence?.missedLevels?.length || r.evidence?.reversalZone).length), "Schlüsselfibonacci, erreichte/verfehlte Levels oder beobachtete Umkehr"],
+          ["Messart", filters.measurementKind === "retracement" ? "Retracement" : filters.measurementKind === "expansion" ? "Expansion" : "Beide", "Kennzahlen je Messart getrennt prüfen"],
+        ].map(([label, value, description]) => (
+          <Card className="panel" key={label}>
+            <CardHeader className="pb-0">
+              <CardDescription>{label}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="break-words font-mono text-3xl tracking-tight">
+                {value}
+              </p>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {description}
+              </p>
+            </CardContent>
+          </Card>
+        ))}
+      </div>}
+      {view.perspective === "panorama" && <ResearchPanorama
+        groups={panorama}
+        state={!loaded ? "loading" : view.error || result.error ? "error" : searchPending || !result.ready ? "pending" : "ready"}
+        error={view.error || result.error || undefined}
+      />}
       {levelGroups.error && <p role="alert">{levelGroups.error}</p>}
-      {!searchPending && !levelGroups.error && <>
+      {!searchPending && !levelGroups.error && <details className="research-basis" open={view.basisOpen}
+        onToggle={e=>{const basisOpen=e.currentTarget.open;if(basisOpen !== view.basisOpen)setView(v=>({...v,basisOpen}));}}>
+        <summary>Datengrundlage und ergänzende Auswertungen prüfen <span>{filtered.length} Beobachtungen</span></summary>
+        <div className="flex min-w-0 flex-col gap-5 p-4">
       {filters.levelFrom !== undefined && <Card><CardHeader><CardTitle>Getrennte Leveltreffer</CardTitle><CardDescription>{levelGroups.total} eindeutige Fälle. Gruppenzahlen werden nicht addiert. Endlagen erfordern einen dokumentierten Abschluss; Maximalmessung und hypothetischer Ausstieg sind kein Endlevel.</CardDescription></CardHeader><CardContent className="flex flex-col gap-2">{Object.entries(levelGroups.groups).map(([key,ids])=><details key={key}><summary>{levelGroupLabels[key]}: {ids.length}</summary><p className="break-all text-xs">{ids.join(" · ") || "Keine Fälle"}</p></details>)}</CardContent></Card>}
       <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
         <p>
@@ -1018,7 +1030,9 @@ export function FibonacciPanel({
           />
         </TabsContent>
       </Tabs>
-      </>}
+        </div>
+      </details>}
+      </ResearchPerspectives>
       <details className="rounded-lg border border-border p-4 text-xs text-muted-foreground">
         <summary className="cursor-pointer font-medium text-foreground">
           Messdefinition & Grenzen
