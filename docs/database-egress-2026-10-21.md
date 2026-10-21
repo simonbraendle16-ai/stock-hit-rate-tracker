@@ -48,3 +48,32 @@ studio. Code deployment alone does not satisfy these gates.
 Neon documents suspension until the next billing period or upgrade, and says the
 quota does not delete stored data:
 https://neon.com/docs/introduction/plans#what-happens-if-i-exceed-my-free-plan-limits
+
+
+## Prepared production diagnostic
+
+`node --env-file=.env.local scripts/audit-database-egress.mjs` uses the existing
+DATABASE_URL and a read-only repeatable-read transaction, 8-second server statement
+timeout and 1-second lock timeout. It returns at most 20 table metadata entries
+and, if pg_stat_statements is already installed and visible, two top-20 rankings
+of cumulative row/call counters for the current database role. It never enables
+an extension, resets counters or fetches personal row contents. SQL text and its
+literals remain in PostgreSQL; a coarse table-family label is derived there.
+Output contains metadata only, with explicit measurement limitations.
+
+The counters do not measure network bytes or identify application routes. Other
+roles can contribute traffic. Storage sizes and estimated live rows are metadata,
+not an integrity check or a backup. A missing statistics extension is reported as
+unavailable, never as zero traffic. Compare representative windows with actual
+Neon transfer counters before making a monthly forecast.
+
+Local PGlite checks passed 3/3: real metadata SQL, missing-extension handling,
+transaction cleanup after failure, numeric top-20 ranking, database/role filtering
+and exclusion of synthetic private SQL literals. Capability discovery for the
+extension-specific fixture is stubbed because PGlite lacks that extension; its
+actual diagnostic SELECT statements run against a synthetic relational fixture.
+Syntax/help and separate TypeScript checking accompany these checks.
+
+A single production diagnostic attempt on October 21 returned SQLSTATE 53000
+before a report could be collected. No successful measurement or restoration is
+claimed. No extension creation, reset, schema change or personal write occurred.
