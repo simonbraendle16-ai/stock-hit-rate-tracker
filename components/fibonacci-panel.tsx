@@ -3,6 +3,8 @@ import { ResearchHero } from "@/components/research-hero";
 import { ResearchPerspectives } from "@/components/research-perspectives";
 import { ResearchPanorama } from "@/components/research-panorama";
 import { panoramaModel } from "@/lib/research-panorama";
+import { structureModel } from "@/lib/research-structure";
+import { ResearchStructure } from "@/components/research-structure";
 import { SUBDIVISIONS, SUBDIVISION_CONFIDENCES } from "@/lib/fibonacci-subdivision";
 import { formatWaveDegree } from "@/lib/wave-degree-labels";
 import { CategoricalFibForm } from "@/components/fibonacci-categorical-form";
@@ -179,6 +181,7 @@ export function FibonacciPanel({
   const result = useMemo(()=>researchResult(observations,instruments,{...request,query:"",resolutions:{}}),[observations,instruments,request]);
   const filtered = result.selected;
   const panorama = useMemo(() => panoramaModel(filtered, filters.measurementKind), [filtered, filters.measurementKind]);
+  const structure = useMemo(() => view.perspective === "structure" ? structureModel(filtered) : [], [filtered, view.perspective]);
   const stats = result.stats ?? fibStats([],filters.measurementKind);
   const waveLabels = [
     ...new Set([...FIB_WAVES, ...observations.map((r) => r.wave)]),
@@ -495,6 +498,9 @@ export function FibonacciPanel({
         error={view.error || result.error || undefined}
       />}
       {levelGroups.error && <p role="alert">{levelGroups.error}</p>}
+      {view.perspective === "structure" && <ResearchStructure groups={structure}
+        state={!loaded ? "loading" : view.error || result.error ? "error" : searchPending || !result.ready ? "pending" : "ready"}
+        error={view.error || result.error || undefined}/>}
       {!searchPending && !levelGroups.error && <details className="research-basis" open={view.basisOpen}
         onToggle={e=>{const basisOpen=e.currentTarget.open;if(basisOpen !== view.basisOpen)setView(v=>({...v,basisOpen}));}}>
         <summary>Datengrundlage und ergänzende Auswertungen prüfen <span>{filtered.length} Beobachtungen</span></summary>
