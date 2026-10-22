@@ -16,6 +16,7 @@
  */
 
 import { auth } from '@/lib/auth'
+import { requireTrainerEnabled } from '@/lib/trainer-availability'
 import { db } from '@/lib/db'
 import {
   stock,
@@ -63,6 +64,7 @@ import { clampStopEvery, isStopMode } from '@/lib/training-trade'
 import type { DrawingPoint, DrawingType, Drawing } from '@/app/actions/drawings'
 
 async function getUserId() {
+  requireTrainerEnabled()
   const session = await auth.api.getSession({ headers: await headers() })
   if (!session?.user) throw new Error('Unauthorized')
   return session.user.id

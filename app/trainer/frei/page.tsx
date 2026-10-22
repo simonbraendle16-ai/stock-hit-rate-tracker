@@ -1,4 +1,5 @@
 import { auth } from '@/lib/auth'
+import { TRAINER_ENABLED } from '@/lib/trainer-availability'
 import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
@@ -18,6 +19,7 @@ export default async function FreiesReplayPage({
 }: {
   searchParams: Promise<{ symbol?: string; market?: string; timeframe?: string }>
 }) {
+  if (!TRAINER_ENABLED) redirect('/tracking')
   const session = await auth.api.getSession({ headers: await headers() })
   if (!session?.user) redirect('/sign-in')
 

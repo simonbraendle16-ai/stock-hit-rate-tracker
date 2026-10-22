@@ -1,4 +1,5 @@
 import { auth } from '@/lib/auth'
+import { TRAINER_ENABLED } from '@/lib/trainer-availability'
 import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
@@ -10,6 +11,7 @@ import { getTrainingBehaviour } from '@/app/actions/training-trades'
 import { ArrowLeft } from 'lucide-react'
 
 export default async function TrainingStatsPage() {
+  if (!TRAINER_ENABLED) redirect('/tracking')
   const session = await auth.api.getSession({ headers: await headers() })
   if (!session?.user) redirect('/sign-in')
 

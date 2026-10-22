@@ -1,4 +1,5 @@
 import { auth } from '@/lib/auth'
+import { TRAINER_ENABLED } from '@/lib/trainer-availability'
 import { headers } from 'next/headers'
 import { redirect, notFound } from 'next/navigation'
 import Link from 'next/link'
@@ -14,6 +15,7 @@ export default async function TrainingSessionPage({
 }: {
   params: Promise<{ id: string }>
 }) {
+  if (!TRAINER_ENABLED) redirect('/tracking')
   const auth_session = await auth.api.getSession({ headers: await headers() })
   if (!auth_session?.user) redirect('/sign-in')
 

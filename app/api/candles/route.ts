@@ -1,4 +1,5 @@
 import { auth } from '@/lib/auth'
+import { TRAINER_ENABLED } from '@/lib/trainer-availability'
 import { db } from '@/lib/db'
 import { trainingSession } from '@/lib/db/schema'
 import { and, eq } from 'drizzle-orm'
@@ -33,6 +34,9 @@ const VALID_MARKETS: Market[] = [
 ]
 
 export async function GET(req: NextRequest) {
+  if (!TRAINER_ENABLED && req.nextUrl.searchParams.has('trainingSessionId')) {
+    return NextResponse.json({ error: 'Der Trainer ist deaktiviert.', code: 'trainer_disabled' }, { status: 410 })
+  }
   const session = await auth.api.getSession({ headers: await headers() })
   if (!session?.user) {
     return NextResponse.json({ error: 'Nicht angemeldet.' }, { status: 401 })

@@ -2,7 +2,7 @@ import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { quoteSnapshot, stock } from '@/lib/db/schema'
 import { Market, MarketDataError } from '@/lib/market-data'
-import { getCachedCandles } from '@/lib/market-data/cached'
+import { getCachedCloses } from '@/lib/market-data/cached'
 import { refreshQuotesIfStale } from '@/lib/market-data/sync'
 import { and, eq } from 'drizzle-orm'
 import { headers } from 'next/headers'
@@ -45,8 +45,7 @@ export type SparklinesResponse = { sparks: Record<number, SparkEntry> }
  */
 async function fetchCloses(symbol: string, market: Market): Promise<number[] | null> {
   try {
-    const candles = await getCachedCandles(symbol, market, '1day')
-    const closes = candles.slice(-90).map((c) => c.close)
+    const closes = await getCachedCloses(symbol, market, '1day', 90)
     return closes.length >= 2 ? closes : null
   } catch (err) {
     // Ein fehlender Verlauf ist kein Fehler, der den Kurs verdecken darf.
@@ -108,6 +107,14 @@ export async function GET(req: Request) {
     .where(eq(stock.userId, session.user.id))
 
   const sparks: Record<number, SparkEntry> = {}
+  // Identical confirmed series can belong to multiple watchlist rows. Share
+  // only this request's work; no cross-request cache or stale-data window.
+  const series = new Map<string, Promise<number[] | null>>()
+  const closesFor = (symbol: string, market: Market) => {
+    const key = JSON.stringify([symbol, market])
+    if (!series.has(key)) series.set(key, fetchCloses(symbol, market))
+    return series.get(key)!
+  }
 
   await Promise.all(
     rows.map(async (r) => {
@@ -120,7 +127,7 @@ export async function GET(req: Request) {
         return
       }
 
-      const closes = wantCloses ? await fetchCloses(r.providerSymbol, r.market as Market) : null
+      const closes = wantCloses ? await closesFor(r.providerSymbol, r.market as Market) : null
       sparks[r.id] = {
         status: 'ok',
         // Ohne Verlauf bleibt die Sparkline leer — der Kurs steht trotzdem.

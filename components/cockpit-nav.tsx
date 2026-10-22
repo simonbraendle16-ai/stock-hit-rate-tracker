@@ -14,6 +14,7 @@ import {
   Settings,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { TRAINER_ENABLED } from '@/lib/trainer-availability'
 
 const items = [
   { href: '/', label: 'Cockpit', icon: LayoutDashboard },
@@ -31,7 +32,7 @@ export function CockpitNav() {
   const pathname = usePathname()
   return (
     <nav className="cockpit-nav" aria-label="Hauptnavigation">
-      {items.map(({ href, label, icon: Icon }) => {
+      {items.filter(item => TRAINER_ENABLED || item.href !== '/trainer').map(({ href, label, icon: Icon }) => {
         const active = href === '/' ? pathname === '/' : pathname.startsWith(href)
         return (
           <Link

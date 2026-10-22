@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { TRAINER_ENABLED } from '@/lib/trainer-availability'
 import Link from 'next/link'
 import { Clapperboard, GraduationCap } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -55,7 +56,7 @@ export function InstrumentChart({
           <Clapperboard className="size-3.5" />
           {replay ? 'Replay beenden' : 'Replay'}
         </Button>
-        {replay && (
+        {replay && TRAINER_ENABLED && (
           <Link
             href={`/trainer?symbol=${encodeURIComponent(symbol)}&market=${encodeURIComponent(
               market,

@@ -22,6 +22,7 @@
  */
 
 import { auth } from '@/lib/auth'
+import { requireTrainerEnabled } from '@/lib/trainer-availability'
 import { db } from '@/lib/db'
 import {
   trainingCheckpoint,
@@ -66,6 +67,7 @@ import {
 import { normalizeTargets } from '@/lib/trade-targets'
 
 async function getUserId() {
+  requireTrainerEnabled()
   const session = await auth.api.getSession({ headers: await headers() })
   if (!session?.user) throw new Error('Unauthorized')
   return session.user.id

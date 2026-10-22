@@ -152,10 +152,25 @@ async function readCoverage(symbol: string, interval: Interval): Promise<SeriesC
 
 async function readSeries(symbol: string, interval: Interval) {
   const [row] = await db
-    .select()
+    .select({ fetchedAt: candleSeries.fetchedAt })
     .from(candleSeries)
     .where(and(eq(candleSeries.symbol, symbol), eq(candleSeries.interval, interval)))
   return row ?? null
+}
+
+/** Sparkline callers need closes, not full OHLCV rows. Preserve the existing
+ * freshness/provider/error path when a refresh is due; narrow warm reads in SQL. */
+export async function getStoredCloses(symbol: string, market: Market, interval: Interval, requestedLimit: number): Promise<number[]> {
+  const limit = Number.isFinite(requestedLimit) && requestedLimit > 0
+    ? Math.min(MAX_DELIVERY_LIMIT, Math.floor(requestedLimit)) : MAX_DELIVERY_LIMIT
+  const series = await readSeries(symbol, interval)
+  if (isFresh(interval, series?.fetchedAt ?? null)) {
+    const rows = await db.select({ close: candleCache.close }).from(candleCache)
+      .where(and(eq(candleCache.symbol, symbol), eq(candleCache.interval, interval)))
+      .orderBy(desc(candleCache.time)).limit(limit)
+    if (rows.length) return rows.reverse().map(row => row.close)
+  }
+  return (await getStoredCandles(symbol, market, interval, { limit })).map(row => row.close)
 }
 
 /**
@@ -310,6 +325,12 @@ export async function getStoredCandles(
     return readStoredCandles(symbol, interval, { before: options.before, limit })
   }
 
+  // A stored-only read never evaluates freshness or calls a provider. Avoid
+  // fetching series metadata (including errors/session proof) it cannot use.
+  if (options.storedOnly) {
+    return readStoredCandles(symbol, interval, { limit, since: options.since, ascending: options.ascending })
+  }
+
   // Ab hier wird höchstens `limit` gelesen. Das genügt für ALLE verbleibenden
   // Wege: Was ausgeliefert wird, sind immer die jüngsten `limit` Kerzen — und
   // die können nur aus den jüngsten `limit` gespeicherten stammen oder aus dem
@@ -318,8 +339,6 @@ export async function getStoredCandles(
     readStoredCandles(symbol, interval, { limit, since: options.since, ascending: options.ascending }),
     readSeries(symbol, interval),
   ])
-
-  if (options.storedOnly) return schwanz
 
   if (!options.forceRefresh && schwanz.length > 0 && isFresh(interval, serie?.fetchedAt ?? null)) {
     return schwanz

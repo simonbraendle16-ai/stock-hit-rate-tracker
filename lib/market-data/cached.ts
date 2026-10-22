@@ -1,11 +1,17 @@
 import { Interval, Market, MarketDataError } from './index'
-import { getStoredCandles, type CandleQueryOptions } from './candle-store'
+import { getStoredCandles, getStoredCloses, type CandleQueryOptions } from './candle-store'
 import { istGueltigesAnbieterSymbol } from './symbol-syntax'
 
 // Intraday 15 min, Daily und größer 12 h. Die Staffel selbst steht seit dem
 // Kerzenspeicher in `candle-merge.ts` (`freshnessMs`) — hier bleibt sie nur als
 // Auskunft für Aufrufer, die ein Revalidierungsfenster in Sekunden brauchen.
 const INTRADAY: Interval[] = ['1min', '5min', '15min', '30min', '1h', '4h']
+
+/** Same provider-symbol boundary as full candles, with a close-only SQL path. */
+export function getCachedCloses(symbol: string, market: Market, interval: Interval, limit: number) {
+  if (!istGueltigesAnbieterSymbol(symbol)) return Promise.reject(new MarketDataError('Kein aufgelöstes Anbieter-Symbol.', 'unknown_symbol'))
+  return getStoredCloses(symbol, market, interval, limit)
+}
 
 export function revalidateFor(interval: Interval): number {
   return INTRADAY.includes(interval) ? 60 * 15 : 60 * 60 * 12

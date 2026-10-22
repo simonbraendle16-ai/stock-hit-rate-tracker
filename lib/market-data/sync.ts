@@ -98,7 +98,14 @@ async function mapLimit<T, R>(
   return results
 }
 
-type StockRow = typeof stock.$inferSelect
+// Resolution and quote refresh never need stored candidate lists, contract
+// metadata or other instrument payload. Project both recurring reads in SQL.
+const syncStockColumns = {
+  id: stock.id, ticker: stock.ticker, name: stock.name, market: stock.market,
+  resolutionPinned: stock.resolutionPinned, providerSymbol: stock.providerSymbol,
+  resolutionStatus: stock.resolutionStatus, resolvedAt: stock.resolvedAt,
+}
+type StockRow = Pick<typeof stock.$inferSelect, keyof typeof syncStockColumns>
 
 /**
  * Welche Instrumente brauchen eine Auflösung?
@@ -276,8 +283,8 @@ export async function runSymbolSync(options: {
 
   try {
     const rows = options.onlyStockIds?.length
-      ? await db.select().from(stock).where(inArray(stock.id, options.onlyStockIds))
-      : await db.select().from(stock)
+      ? await db.select(syncStockColumns).from(stock).where(inArray(stock.id, options.onlyStockIds))
+      : await db.select(syncStockColumns).from(stock)
 
     report.symbolsTotal = rows.length
 
@@ -343,8 +350,8 @@ export async function runSymbolSync(options: {
     // --- Schritt 2: Kurse ------------------------------------------------
     // Frischer Stand nach den Auflösungen von eben.
     const current = options.onlyStockIds?.length
-      ? await db.select().from(stock).where(inArray(stock.id, options.onlyStockIds))
-      : await db.select().from(stock)
+      ? await db.select(syncStockColumns).from(stock).where(inArray(stock.id, options.onlyStockIds))
+      : await db.select(syncStockColumns).from(stock)
 
     const symbols = Array.from(
       new Set(
