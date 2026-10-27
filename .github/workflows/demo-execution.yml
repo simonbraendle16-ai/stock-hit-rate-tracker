@@ -1,8 +1,8 @@
 name: Demo-Handel automatisch ausführen
 
 on:
-  schedule:
-    - cron: '*/5 * * * *'
+  # Automatischer Zeitplan auf Wunsch deaktiviert (2026-10-27).
+  # Bei Bedarf weiterhin manuell starten.
   workflow_dispatch:
 
 permissions:
