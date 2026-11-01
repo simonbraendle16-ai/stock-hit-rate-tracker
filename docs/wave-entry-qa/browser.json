@@ -1,5 +1,5 @@
 {
-  "checkedAt": "2026-11-01T16:46:22.359Z",
+  "checkedAt": "2026-11-01T17:10:40.476Z",
   "syntheticOnly": true,
   "isolatedEdge": true,
   "viewports": [
@@ -20,8 +20,8 @@
     },
     {
       "width": 390,
-      "client": 358,
-      "scroll": 358
+      "client": 390,
+      "scroll": 390
     }
   ],
   "defaults": true,
@@ -36,6 +36,7 @@
   "hiddenValuesPreserved": true,
   "draftSurvivesFocusAndInterval": true,
   "legacyDateMetadataPreserved": true,
+  "typingSameDatePreservesMetadata": true,
   "explicitDateChangeClearsBoundaryMetadata": true,
   "rangeConversionRequiresConfirmation": true,
   "pageErrors": [],
