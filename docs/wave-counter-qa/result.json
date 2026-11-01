@@ -1,0 +1,26 @@
+{
+  "checkedAt": "2026-11-01T20:32:42.289Z",
+  "syntheticOnly": true,
+  "before": {
+    "total": 24,
+    "retracement": 24,
+    "expansion": 0
+  },
+  "after": {
+    "total": 25,
+    "retracement": 24,
+    "expansion": 1
+  },
+  "pages": [
+    "collection",
+    "analysis"
+  ],
+  "widths": [
+    1440,
+    390
+  ],
+  "filterInvariant": true,
+  "saveRefresh": true,
+  "emptyState": true,
+  "pageErrors": []
+}

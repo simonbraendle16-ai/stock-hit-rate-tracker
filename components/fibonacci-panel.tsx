@@ -271,6 +271,7 @@ export function FibonacciPanel({
       aria-label="Fibonacci-Auswertung"
       className="flex min-w-0 scroll-mt-36 flex-col gap-5"
     >
+      <p className="flex flex-wrap gap-x-2 gap-y-1 text-sm" aria-label="Gespeicherter Gesamtbestand"><strong>{observations.length} Beobachtungen insgesamt</strong><span>· {observations.filter(r => r.measurementKind === "retracement").length} Retracements</span><span>· {observations.filter(r => r.measurementKind === "expansion").length} Expansionen</span></p>
       <ResearchHero>
         <Field>
           <FieldLabel htmlFor={queryId}>Wellenbestand durchsuchen</FieldLabel>
@@ -529,7 +530,7 @@ export function FibonacciPanel({
             · nur abgeschlossene gültige Werte in der Verteilung
           </span>
         </p>
-        <p>{observations.length} Beobachtungen insgesamt</p>
+        <p>{filtered.length} {filters.measurementKind === "retracement" ? "Retracements" : filters.measurementKind === "expansion" ? "Expansionen" : "Beobachtungen"} im aktuellen Filter</p>
       </div>
 
       <CategoricalResults stats={stats.categorical}/>
