@@ -9,6 +9,8 @@ export function AnalysisAutoRefresh() {
     let last = 0;
     const refresh = () => {
       if (document.visibilityState !== "visible" || Date.now() - last < 1000) return;
+      // An automatic refresh must not interrupt an open data-entry dialog.
+      if (document.querySelector('[role="dialog"], [role="alertdialog"]')) return;
       last = Date.now();
       router.refresh();
     };

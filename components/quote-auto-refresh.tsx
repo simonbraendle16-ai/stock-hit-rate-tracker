@@ -31,6 +31,7 @@ export function QuoteAutoRefresh() {
 
     const tick = async ({ force = false } = {}) => {
       if (cancelled || busy.current) return
+      if (document.querySelector('[role="dialog"], [role="alertdialog"]')) return
       // Im Hintergrundtab nicht WEITER nachfragen — niemand sieht die Zahl. Der
       // erste Lauf greift trotzdem, sonst bliebe eine im Hintergrund geöffnete
       // Seite auf ihrem alten Stand stehen, bis man sie anschaut.
@@ -38,7 +39,7 @@ export function QuoteAutoRefresh() {
       busy.current = true
       try {
         // Nur wenn wirklich geholt wurde, lohnt das Neuladen der Serverdaten.
-        if (await refreshQuotes()) router.refresh()
+        if (await refreshQuotes() && !document.querySelector('[role="dialog"], [role="alertdialog"]')) router.refresh()
       } catch {
         // Ein Anbieter- oder Netzfehler darf die Seite nicht stören: Es bleibt
         // der letzte bekannte Kurs mit seinem Zeitstempel stehen.

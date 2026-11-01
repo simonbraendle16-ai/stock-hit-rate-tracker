@@ -2,13 +2,14 @@
 import { SUBDIVISIONS, SUBDIVISION_CONFIDENCES } from "@/lib/fibonacci-subdivision";
 import { WAVE_VARIANTS, waveChoice } from "@/lib/fibonacci-wave-variants";
 import { HistoricalTimeFields } from "@/components/fibonacci-time-fields";
+import { newEntryEvidence, entryEvidence } from "@/lib/fibonacci-entry";
 import { historicalTime } from "@/lib/fibonacci-time";
 import { ResidenceEditor } from "@/components/fibonacci-residence";
 import { ReversalEditor } from "@/components/fibonacci-reversal";
 import { ZONE_TO_PIVOT } from "@/lib/fibonacci-duration-definitions";
 import { InstrumentPicker } from "@/components/instrument-picker";
 import { formatWaveDegree } from "@/lib/wave-degree-labels";
-import { useState, useTransition, useId } from "react";
+import { useState, useTransition, useId, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { saveFibonacci } from "@/app/actions/fibonacci";
@@ -48,7 +49,7 @@ import type { TradeResearchRow } from "@/lib/trade-research-coverage";
 
 const choices = (v: readonly string[]) => v.map((x) => [x, x] as const);
 type Instrument = { id: number; name: string; ticker: string; market: string };
-export function CategoricalFibForm({
+function CategoricalFibEntry({
   instruments,
   stockId,
   existing,
@@ -56,7 +57,9 @@ export function CategoricalFibForm({
   close,
   trades = [],
   observations = [],
+  next,
 }: {
+  next: (context: {stockId:number;timeframe:string;degree:string}) => void;
   instruments: Instrument[];
   stockId?: number;
   existing: FibObservation | null;
@@ -65,17 +68,20 @@ export function CategoricalFibForm({
   trades?: TradeResearchRow[];
   observations?: FibObservation[];
 }) {
+  const formRef = useRef<HTMLFormElement>(null);
+  const submitting = useRef(false);
   const router = useRouter(),
     prefix = useId(),
     [pending, startTransition] = useTransition(),
     [error, setError] = useState("");
+  useEffect(()=>{if(error)formRef.current?.querySelectorAll("details").forEach(el=>{el.open=true;});},[error]);
   const [id] = useState(() => existing?.id ?? crypto.randomUUID());
   const [form, setForm] = useState(() => ({
     stockId: String(existing?.stockId ?? stockId ?? "none"),
     wave: existing?.wave ?? defaults.wave ?? "none",
     degree: existing?.degree ?? defaults.degree ?? "unbekannt",
     timeframe: existing?.timeframe ?? defaults.timeframe ?? "unbekannt",
-    status: existing?.status ?? "laufend",
+    status: existing?.status ?? "abgeschlossen",
     measurementKind:
       existing?.measurementKind ?? defaults.measurementKind ?? "retracement",
     observedOn: existing?.observedOn ?? new Date().toISOString().slice(0, 10),
@@ -90,13 +96,7 @@ export function CategoricalFibForm({
   }));
   const [evidence, setEvidence] = useState<FibEvidence>(
     () =>
-      existing?.evidence ?? {
-        catalogueVersion: 1,
-        waveVariant: defaults.waveVariant ?? null,
-        subdivision: defaults.subdivision ?? null,
-        subdivisionConfidence: defaults.subdivisionConfidence ?? null,
-        provenance: "Direkte Formulareingabe des Nutzers",
-      },
+      existing ? (existing.evidence ?? {}) : { ...newEntryEvidence(), waveVariant: defaults.waveVariant ?? null, subdivision: defaults.subdivision ?? null },
   );
   const [time, setTime] = useState(() => existing ? historicalTime(existing) : {start:null,end:null});
   const set = (k: keyof typeof form, v: string) =>
@@ -130,6 +130,8 @@ export function CategoricalFibForm({
   const result = targetResult(draft);
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
+    if (submitting.current) return;
+    const keepGoing = (event.nativeEvent as SubmitEvent).submitter?.getAttribute("value") === "next";
     setError("");
     if (form.wave === "none" || form.stockId === "none") {
       setError("Instrument und Welle auswählen.");
@@ -149,6 +151,7 @@ export function CategoricalFibForm({
       ? (STRUCTURES.find(([code]) => code === evidence.structureCode)?.[1] ??
         null)
       : (existing?.structure ?? null);
+    submitting.current = true;
     startTransition(async () => {
       try {
         const input = {
@@ -166,7 +169,7 @@ export function CategoricalFibForm({
           hypotheticalOutcome: form.hypotheticalOutcome,
           actualOutcome: form.actualOutcome,
           structure,
-          evidence: {...evidence,historicalTime:time,provenance:evidence.provenance || "Direkte Formulareingabe des Nutzers"},
+          evidence: {...entryEvidence(evidence,!existing),historicalTime:time,provenance:evidence.provenance || "Direkte Formulareingabe des Nutzers"},
           periodFrom: time.start?.precision === "day" && !time.start.approximate ? time.start.date : null,
           periodTo: time.end?.precision === "day" && !time.end.approximate ? time.end.date : null,
           // Historical measurements and links survive category-only edits.
@@ -189,16 +192,17 @@ export function CategoricalFibForm({
         }
         toast.success("Gespeichert und zurückgelesen.");
         router.refresh();
-        close();
+        if (keepGoing) next({stockId:Number(form.stockId),timeframe:form.timeframe,degree:form.degree});
+        else close();
       } catch {
         setError(
           "Speicherung nicht bestätigt. Erneut versuchen; dieselbe Erfassungs-ID verhindert Duplikate.",
         );
-      }
+      } finally { submitting.current = false; }
     });
   };
   return (
-    <form onSubmit={submit} className="flex min-h-0 flex-col gap-4">
+    <form ref={formRef} onInvalidCapture={event=>{let parent=(event.target as HTMLElement).parentElement;while(parent){if(parent instanceof HTMLDetailsElement)parent.open=true;parent=parent.parentElement;}}} onSubmit={submit} className="flex min-h-0 flex-col gap-4">
       <div className="min-h-0 overflow-y-auto pr-2">
         <fieldset disabled={pending} className="flex min-w-0 flex-col gap-6">
           <FieldSet>
@@ -322,6 +326,7 @@ export function CategoricalFibForm({
               value={evidence.targetZone}
               onChange={(v) => setE({ targetZone: v })}
             />
+            <details><summary className="cursor-pointer text-sm font-medium">Erwartung und möglicher Einstieg{(evidence.entryZone || (evidence.expectationTiming && evidence.expectationTiming !== "unknown")) ? " · Angaben vorhanden" : ""}</summary><FieldGroup className="mt-3">
             <Choice
               label="Wann stand die Erwartung fest?"
               value={evidence.expectationTiming ?? "unknown"}
@@ -341,6 +346,7 @@ export function CategoricalFibForm({
               value={evidence.entryZone}
               onChange={(v) => setE({ entryZone: v })}
             />
+            </FieldGroup></details>
           </FieldSet>
           <FieldSet>
             <FieldLegend>3 · Tatsächliche Beobachtung</FieldLegend>
@@ -395,6 +401,7 @@ export function CategoricalFibForm({
                 label="Beobachteter Umkehrbereich"
                 value={evidence.reversalZone}
                 point={evidence.reversalLocation === "at_level"}
+                range={evidence.reversalLocation === "between_levels"}
                 onChange={(v) => setE({ reversalZone: v })}
               />
             )}
@@ -409,7 +416,7 @@ export function CategoricalFibForm({
             </p>
             <details>
               <summary className="cursor-pointer text-sm font-medium">
-                Erreichte und verfehlte Levels auswählen
+                Erreichte und verfehlte Levels auswählen{(evidence.reachedLevels?.length || evidence.missedLevels?.length) ? " · Angaben vorhanden" : ""}
               </summary>
               <div className="mt-3 flex flex-col gap-5">
                 <LevelChoices
@@ -458,7 +465,6 @@ export function CategoricalFibForm({
               ))}
             </FieldGroup>
             <HistoricalTimeFields value={time} onChange={setTime}/>
-            <Choice label="Elternwelle · optional" value={evidence.parentId ?? "none"} options={[["none","Keine Elternwelle"],...observations.filter(r=>r.id !== id && r.stockId === Number(form.stockId)).map(r=>[r.id,`${r.ticker} · ${r.wave} · ${r.id}`] as const)]} onChange={v=>setE({parentId:v === "none" ? null : v})}/>
             <DurationChoice
               label="Wellendauer"
               type="wave"
@@ -467,6 +473,8 @@ export function CategoricalFibForm({
                 setE({ durations: { ...evidence.durations, wave: v } })
               }
             />
+            <details><summary className="cursor-pointer text-sm font-medium">Genaue Dauern und Zielzonenverhalten{(evidence.durationDays != null || evidence.targetZoneReversal || evidence.targetZoneResidence || evidence.durations?.reversal || evidence.durations?.residence) ? " · Angaben vorhanden" : ""}</summary><FieldGroup className="mt-3">
+            <Field><FieldLabel htmlFor={prefix+"durationDays"}>Exakte Wellendauer · Kalendertage · optional</FieldLabel><Input id={prefix+"durationDays"} type="number" min="0" step="any" value={evidence.durationDays ?? ""} onChange={event=>setE({durationDays:event.target.value === "" ? null : Number(event.target.value)})}/><FieldDescription>Nur einen tatsächlich bekannten Wert eintragen. Für eine ungefähre Dauer genügt die Dauerklasse oben.</FieldDescription></Field>
             {evidence.targetContact === "not_reached" ? (
               <p className="text-sm text-muted-foreground">
                 Zielzone nicht erreicht: keine Aufenthaltsdauer oder Dauer ab Zielzonenkontakt. Bereits
@@ -515,12 +523,14 @@ export function CategoricalFibForm({
                 Aufenthaltsangaben ausdrücklich entfernen
               </Button>
             )}
+            </FieldGroup></details>
           </FieldSet>
           <details>
             <summary className="cursor-pointer text-sm font-medium">
-              5 · Optionale Ergänzungen
+              5 · Optionale Ergänzungen{(form.note || form.sourceRef || form.tradeId !== "none" || evidence.parentId || form.tradability !== "unbekannt" || form.hypotheticalOutcome !== "unbekannt" || form.actualOutcome !== "unbekannt") ? " · Angaben vorhanden" : ""}
             </summary>
             <FieldGroup className="mt-3">
+            <Choice label="Elternwelle · optional" value={evidence.parentId ?? "none"} options={[["none","Keine Elternwelle"],...observations.filter(r=>r.id !== id && r.stockId === Number(form.stockId)).map(r=>[r.id,`${r.ticker} · ${r.wave} · ${r.id}`] as const)]} onChange={v=>setE({parentId:v === "none" ? null : v})}/>
               <Field>
                 <FieldLabel htmlFor={prefix + "note"}>
                   Messnotiz · optional
@@ -593,7 +603,7 @@ export function CategoricalFibForm({
           {error}
         </p>
       )}
-      <div className="flex shrink-0 justify-end gap-2 border-t border-border pt-4">
+      <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-border pt-4">
         <Button
           type="button"
           variant="outline"
@@ -602,10 +612,21 @@ export function CategoricalFibForm({
         >
           Abbrechen
         </Button>
+        {!existing && <Button type="submit" value="next" variant="outline" disabled={pending}>Speichern und weitere Welle</Button>}
         <Button type="submit" disabled={pending}>
           {pending ? "Wird gespeichert …" : "Speichern"}
         </Button>
       </div>
     </form>
   );
+}
+
+type EntryProps = Omit<Parameters<typeof CategoricalFibEntry>[0], "next">;
+export function CategoricalFibForm(props: EntryProps) {
+  const [series,setSeries]=useState<{key:string;stockId:number;timeframe:string;degree:string}|null>(null);
+  return <CategoricalFibEntry {...props} key={series?.key ?? props.existing?.id ?? "new"}
+    existing={series ? null : props.existing}
+    stockId={series?.stockId ?? props.stockId}
+    defaults={series ? {timeframe:series.timeframe,degree:series.degree} as FibFilters : props.defaults}
+    next={context=>setSeries({...context,key:crypto.randomUUID()})}/>;
 }

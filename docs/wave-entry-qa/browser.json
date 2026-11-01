@@ -1,0 +1,46 @@
+{
+  "checkedAt": "2026-11-01T16:46:22.359Z",
+  "syntheticOnly": true,
+  "isolatedEdge": true,
+  "viewports": [
+    {
+      "width": 1440,
+      "client": 672,
+      "scroll": 672
+    },
+    {
+      "width": 1024,
+      "client": 672,
+      "scroll": 672
+    },
+    {
+      "width": 768,
+      "client": 672,
+      "scroll": 672
+    },
+    {
+      "width": 390,
+      "client": 358,
+      "scroll": 358
+    }
+  ],
+  "defaults": true,
+  "seriesSaveAndDatabaseReadback": true,
+  "contextOnlyCarry": true,
+  "distinctIds": true,
+  "unknownStructureNotConfirmed": true,
+  "explicitUncertainty": true,
+  "invalidDatesBlockSave": true,
+  "networkFailureRetainsDraft": true,
+  "sameIdRetryVersion": 1,
+  "hiddenValuesPreserved": true,
+  "draftSurvivesFocusAndInterval": true,
+  "legacyDateMetadataPreserved": true,
+  "explicitDateChangeClearsBoundaryMetadata": true,
+  "rangeConversionRequiresConfirmation": true,
+  "pageErrors": [],
+  "measuredSelectionClicks": 50,
+  "firstEntrySelectionClicks": 24,
+  "baselineExtraSelectionClicks": 8,
+  "seriesContextSelectionClicksSaved": 6
+}

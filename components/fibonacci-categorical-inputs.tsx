@@ -1,5 +1,5 @@
 "use client";
-import { useId } from "react";
+import { useId, useState } from "react";
 import { ZONE_TO_PIVOT, durationDefinitions, CALENDAR_TIME_NOTE } from "@/lib/fibonacci-duration-definitions";
 import {
   Field,
@@ -71,12 +71,16 @@ export function ZoneChoice({
   value,
   onChange,
   point = false,
+  range = false,
 }: {
   label: string;
   value?: [number, number] | null;
   onChange: (v: [number, number] | null) => void;
   point?: boolean;
+  range?: boolean;
 }) {
+  const [mode,setMode]=useState<"point"|"range">(()=>point || !value || value[0] === value[1] ? "point" : "range");
+  const single=!range && (point || mode === "point");
   const options = [
     ["none", "Nicht erhoben"] as const,
     ...RESEARCH_LEVELS.map((v) => [String(v), levelLabel(v)] as const),
@@ -91,22 +95,29 @@ export function ZoneChoice({
   return (
     <FieldSet>
       <FieldLegend>{label}</FieldLegend>
+      {!point && !range && <CatalogueChoice label={label+" · Eingabe"} value={mode} options={[["point","Einzellevel"],["range","Bereich"]]} onChange={v=>{
+        if(v === "point" && value && value[0] !== value[1]) {
+          if(!window.confirm("Den vorhandenen Bereich durch sein Von-Level als Einzellevel ersetzen?"))return;
+          onChange([value[0],value[0]]);
+        }
+        setMode(v as "point"|"range");
+      }}/>}
       <FieldGroup className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <CatalogueChoice
-          label={point ? "Fibonacci-Level" : "Von Level"}
+          label={single ? "Fibonacci-Level" : "Von Level"}
           value={value ? String(value[0]) : "none"}
           options={unique}
           onChange={(v) =>
             onChange(
               v === "none"
                 ? null
-                : point
+                : single
                   ? [Number(v), Number(v)]
                   : [Number(v), value?.[1] ?? Number(v)],
             )
           }
         />
-        {!point && (
+        {!single && (
           <CatalogueChoice
             label="Bis Level"
             value={value ? String(value[1]) : "none"}
