@@ -1,3 +1,4 @@
+import { WorkspaceOverview } from '@/components/workspace-overview'
 import { PendingTradeReviews } from '@/components/pending-trade-reviews'
 import { auth } from '@/lib/auth'
 import { headers } from 'next/headers'
@@ -109,6 +110,7 @@ export default async function CockpitPage() {
           </div>
         </div>
 
+        <WorkspaceOverview userId={session.user.id} tradeCount={trades.length} openCount={openPositions.length} scopeLabel={kontext.active?.name ?? "Alle Echtgeld-Depots"} />
         <SectionLabel>Stand</SectionLabel>
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           <div className="lg:col-span-2">

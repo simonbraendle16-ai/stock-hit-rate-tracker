@@ -2,6 +2,8 @@
 import { ResearchHero } from "@/components/research-hero";
 import { ResearchPerspectives } from "@/components/research-perspectives";
 import { ResearchPanorama } from "@/components/research-panorama";
+import { ResearchTime } from "@/components/research-time";
+import { researchTimeModel } from "@/lib/research-time";
 import { panoramaModel } from "@/lib/research-panorama";
 import { structureModel } from "@/lib/research-structure";
 import { ResearchStructure } from "@/components/research-structure";
@@ -87,6 +89,7 @@ import {
 } from "@/lib/fibonacci-workspace";
 type Instrument = { id: number; name: string; ticker: string; market: string };
 type Props = {
+  workspace?: "collection";
   tradeCoverage?: TradeResearchRow[];
   observations: FibObservation[];
   instruments: Instrument[];
@@ -155,6 +158,7 @@ export function FibonacciPanel({
   samples = [],
   histories = [],
   tradeCoverage = [],
+  workspace,
 }: Props) {
   const searchId = useId();
   const queryId = useId();
@@ -181,6 +185,7 @@ export function FibonacciPanel({
   const result = useMemo(()=>researchResult(observations,instruments,{...request,query:"",resolutions:{}}),[observations,instruments,request]);
   const filtered = result.selected;
   const panorama = useMemo(() => panoramaModel(filtered, filters.measurementKind), [filtered, filters.measurementKind]);
+  const durationView = useMemo(() => researchTimeModel(filtered), [filtered]);
   const structure = useMemo(() => view.perspective === "structure" ? structureModel(filtered) : [], [filtered, view.perspective]);
   const stats = result.stats ?? fibStats([],filters.measurementKind);
   const waveLabels = [
@@ -273,6 +278,7 @@ export function FibonacciPanel({
         </Field>
       </ResearchHero>
       <div className="flex flex-wrap justify-end gap-2">
+          {workspace === "collection" && loaded && <a className="inline-flex min-h-10 items-center text-sm text-primary underline underline-offset-4" href={"/analysis?"+writeResearchLocation(new URLSearchParams(),view).toString()+"#fibonacci"}>Diese Auswahl in der Wellenstatistik öffnen</a>}
           <Button
             variant="outline"
             onClick={download}
@@ -290,6 +296,7 @@ export function FibonacciPanel({
       {view.error && <p role="alert">Suchadresse ungültig: {view.error} <Button variant="outline" onClick={reset}>Auswahl zurücksetzen</Button></p>}
 
 
+      <ResearchPerspectives value={view.perspective} onChange={changePerspective}>
       <Card className="panel">
         <CardHeader className="pb-0">
           <CardTitle>Deine Untersuchung</CardTitle>
@@ -459,7 +466,7 @@ export function FibonacciPanel({
         </CardContent>
       </Card>
 
-      <ResearchPerspectives value={view.perspective} onChange={changePerspective}>
+
       {!searchPending && !levelGroups.error && <div
         className="grid grid-cols-2 gap-3 lg:grid-cols-4"
         aria-label="Datenbasis der aktuellen Auswahl"
@@ -501,6 +508,8 @@ export function FibonacciPanel({
       {view.perspective === "structure" && <ResearchStructure groups={structure}
         state={!loaded ? "loading" : view.error || result.error ? "error" : searchPending || !result.ready ? "pending" : "ready"}
         error={view.error || result.error || undefined}/>}
+      <ResearchTime groups={durationView} perspective={view.perspective}
+        state={!loaded ? "loading" : view.error || result.error ? "error" : searchPending || !result.ready ? "pending" : "ready"}/>
       {!searchPending && !levelGroups.error && <details className="research-basis" open={view.basisOpen}
         onToggle={e=>{const basisOpen=e.currentTarget.open;if(basisOpen !== view.basisOpen)setView(v=>({...v,basisOpen}));}}>
         <summary>Datengrundlage und ergänzende Auswertungen prüfen <span>{filtered.length} Beobachtungen</span></summary>

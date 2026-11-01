@@ -1,10 +1,18 @@
 "use client";
-import { useEffect, useRef, useState } from 'react';
-import { changeResearchPerspective, defaultResearchView, readResearchLocation, researchHistoryState, writeResearchLocation, type ResearchPerspective } from '@/lib/fibonacci-location';
+import { useCallback, useEffect, useRef, useState, type SetStateAction } from 'react';
+import { changeResearchPerspective, defaultResearchView, readResearchLocation, researchHistoryState, writeResearchLocation, type ResearchPerspective, type ResearchView } from '@/lib/fibonacci-location';
 
 /** Namespaced URL state leaves other page features and the fragment intact. */
 export function useFibonacciLocation(stockId?: number) {
-  const [view,setView] = useState(()=>defaultResearchView(stockId));
+  const [view,setReactView] = useState(()=>defaultResearchView(stockId));
+  // Event handlers may run before React commits a preceding focus/click update.
+  // Keep one authoritative pending selection and never persist a stale effect.
+  const latestView = useRef(view);
+  const setView = useCallback((update: SetStateAction<ResearchView>)=>{
+    const next = typeof update === 'function' ? update(latestView.current) : update;
+    latestView.current = next;
+    setReactView(next);
+  },[]);
   const [loaded,setLoaded] = useState(false);
   const returnFocus = useRef<HTMLElement | null>(null);
   const returnScroll = useRef<{x:number;y:number} | null>(null);
@@ -19,15 +27,15 @@ export function useFibonacciLocation(stockId?: number) {
     restore();
     window.addEventListener('popstate',restore);
     return ()=>window.removeEventListener('popstate',restore);
-  },[stockId]);
+  },[stockId,setView]);
   useEffect(()=>{
-    if (!loaded || view.error) return;
+    if (!loaded || view.error || latestView.current !== view) return;
     const url = new URL(window.location.href);
     url.search = writeResearchLocation(url.searchParams,view).toString();
     if (url.href !== window.location.href) window.history.replaceState(researchHistoryState(window.history.state),'',url);
   },[view,loaded]);
   const detail = (id?: string, trigger?: HTMLElement)=>{
-    if (!id && view.detail && window.history.state?.fibDetailEntry) { window.history.back(); return; }
+    if (!id && latestView.current.detail && window.history.state?.fibDetailEntry) { window.history.back(); return; }
     setView(v=>({...v,detail:id}));
     if (id) {
       returnFocus.current=trigger ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
@@ -35,18 +43,18 @@ export function useFibonacciLocation(stockId?: number) {
       const historyState=researchHistoryState(window.history.state,{fibReturnScroll:returnScroll.current});
       window.history.replaceState(historyState,'',window.location.href);
       const url = new URL(window.location.href);
-      url.search = writeResearchLocation(url.searchParams,{...view,detail:id}).toString();
+      url.search = writeResearchLocation(url.searchParams,latestView.current).toString();
       window.history.pushState({...historyState,fibDetailEntry:true},'',url);
     }
   };
   const perspective = (next: ResearchPerspective)=>{
-    if (next === view.perspective) return;
-    const nextView = changeResearchPerspective(view,next);
+    if (next === latestView.current.perspective) return;
+    const nextView = changeResearchPerspective(latestView.current,next);
+    setView(nextView);
     const url = new URL(window.location.href);
     url.search = writeResearchLocation(url.searchParams,nextView).toString();
     // Next's wrapper copies its own internals; retain custom return-state fields.
     window.history.pushState(researchHistoryState(window.history.state,{fibDetailEntry:false}),'',url);
-    setView(nextView);
   };
   const restoreDetailFocus = ()=>{
     returnFocus.current?.focus({preventScroll:true});

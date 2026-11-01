@@ -13,6 +13,7 @@ import {
   Users,
   Settings,
 } from 'lucide-react'
+import { workspaceIsActive } from '@/lib/cockpit-navigation'
 import { cn } from '@/lib/utils'
 import { TRAINER_ENABLED } from '@/lib/trainer-availability'
 
@@ -22,7 +23,9 @@ const items = [
   { href: '/trainer', label: 'Trainer', icon: Clapperboard },
   { href: '/trades', label: 'Trades', icon: ListChecks },
   { href: '/journal', label: 'Journal', icon: BookOpenText },
-  { href: '/analysis', label: 'Analyse', icon: Target },
+  { href: '/collection?fib.basis=1', label: 'Datensammlung', icon: BookOpenText },
+  { href: '/analysis#fibonacci', label: 'Wellenstatistik', icon: Target },
+  { href: '/forecasts', label: 'Prognoseprüfung', icon: LineChart },
   { href: '/tracking', label: 'Auswertung', icon: LineChart },
   { href: '/friends', label: 'Freunde', icon: Users },
   { href: '/settings', label: 'Einstellungen', icon: Settings },
@@ -33,7 +36,7 @@ export function CockpitNav() {
   return (
     <nav className="cockpit-nav" aria-label="Hauptnavigation">
       {items.filter(item => TRAINER_ENABLED || item.href !== '/trainer').map(({ href, label, icon: Icon }) => {
-        const active = href === '/' ? pathname === '/' : pathname.startsWith(href)
+        const active = workspaceIsActive(pathname,href)
         return (
           <Link
             key={href}

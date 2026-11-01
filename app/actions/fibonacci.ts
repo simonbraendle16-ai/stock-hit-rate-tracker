@@ -62,6 +62,7 @@ export async function saveFibonacci(
     const coverage = fibStats([reread],reread.measurementKind).coverage;
     revalidatePath("/watchlist");
     revalidatePath("/analysis");
+    revalidatePath("/collection");
     revalidatePath("/tracking");
     revalidatePath(`/stock/${row.stockId}`);
     return { ok: true as const, row: reread, coverage };
