@@ -323,6 +323,7 @@ function CategoricalFibEntry({
             </FieldDescription>
             <ZoneChoice
               label="Erwartete Fibonacci-Zielzone"
+              defaultMode={existing ? "point" : "range"}
               value={evidence.targetZone}
               onChange={(v) => setE({ targetZone: v })}
             />

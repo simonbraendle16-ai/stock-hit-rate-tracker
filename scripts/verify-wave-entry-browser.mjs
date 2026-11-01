@@ -33,6 +33,8 @@ try {
  assert.equal(await dialog().getByRole('combobox',{name:/Genauigkeit (Beginn|Ende)|Datumsformat/}).count(),0);
  await base();await select('Messart','Expansion',dialog());await select('Muster der untersuchten Welle','ABC · unbestimmt',dialog());await select('Innere Unterteilung','Dreiteilig',dialog());
  const target=dialog().getByRole('group',{name:'Erwartete Fibonacci-Zielzone',exact:true});
+ assert.equal(await target.getByRole('combobox',{name:'Erwartete Fibonacci-Zielzone · Eingabe',exact:true}).innerText(),'Bereich');
+ await select('Erwartete Fibonacci-Zielzone · Eingabe','Einzellevel',target);
  assert.equal(await target.getByRole('combobox',{name:'Bis Level',exact:true}).count(),0);
  await select('Fibonacci-Level',/· 61,8 %$/,target);
  await select('Beobachtete Umkehr','Am Fibonacci-Level',dialog());

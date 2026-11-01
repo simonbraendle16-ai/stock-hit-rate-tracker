@@ -72,14 +72,16 @@ export function ZoneChoice({
   onChange,
   point = false,
   range = false,
+  defaultMode = "point",
 }: {
   label: string;
   value?: [number, number] | null;
   onChange: (v: [number, number] | null) => void;
   point?: boolean;
   range?: boolean;
+  defaultMode?: "point" | "range";
 }) {
-  const [mode,setMode]=useState<"point"|"range">(()=>point || !value || value[0] === value[1] ? "point" : "range");
+  const [mode,setMode]=useState<"point"|"range">(()=>point ? "point" : value ? (value[0] === value[1] ? "point" : "range") : defaultMode);
   const single=!range && (point || mode === "point");
   const options = [
     ["none", "Nicht erhoben"] as const,
