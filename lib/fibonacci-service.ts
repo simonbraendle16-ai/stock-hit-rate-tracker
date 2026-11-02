@@ -25,6 +25,7 @@ export function fibValues(raw: Record<string, unknown>) {
 export async function listFib(
   userId: string,
   stockId?: number,
+  observationId?: string,
 ): Promise<FibObservation[]> {
   const rows = await db
     .select({
@@ -42,6 +43,7 @@ export async function listFib(
       and(
         eq(observation.userId, userId),
         stockId ? eq(observation.stockId, stockId) : undefined,
+        observationId ? eq(observation.id, observationId) : undefined,
       ),
     )
     .orderBy(
@@ -153,8 +155,15 @@ export async function saveFib(
     if (!linked.rows.length)
       throw new ApiError(404, "Passender Kursdatensatz nicht gefunden.");
   }
-  const peers = await listFib(userId);
-  const hierarchyIssue = hierarchyError(peers, {...values,id,version:version ?? 1,ticker:"",name:"",market:""});
+  // Validation needs relationships/context, never notes, variants or full evidence.
+  const peers = await db.select({
+    id: observation.id, version: observation.version, stockId: observation.stockId,
+    wave: observation.wave, degree: observation.degree, timeframe: observation.timeframe,
+    periodFrom: observation.periodFrom, periodTo: observation.periodTo,
+    contextId: observation.contextId,
+    evidence: sql<{parentId?: string}>`jsonb_strip_nulls(jsonb_build_object('parentId', ${observation.evidence}->>'parentId'))`,
+  }).from(observation).where(eq(observation.userId, userId));
+  const hierarchyIssue = hierarchyError(peers, {...values,id,version:version ?? 1});
   if (hierarchyIssue) throw new ApiError(422,hierarchyIssue);
   if (
     version === undefined &&

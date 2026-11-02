@@ -57,7 +57,7 @@ export async function saveFibonacci(
   const userId = await owner();
   try {
     const row = await saveFib(userId, uuidId(id), input, version);
-    const reread = (await listFib(userId,row.stockId)).find(r=>r.id===row.id);
+    const reread = (await listFib(userId,row.stockId,row.id))[0];
     if (!reread) throw new Error("Rücklesen der Beobachtung fehlgeschlagen.");
     const coverage = fibStats([reread],reread.measurementKind).coverage;
     revalidatePath("/watchlist");

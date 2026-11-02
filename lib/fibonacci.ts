@@ -442,8 +442,8 @@ function quantile(sorted: number[], q: number): number | null {
   return sorted[lo] + fraction * ((sorted[lo + 1] ?? sorted[lo]) - sorted[lo]);
 }
 /** Revisions replace only their stable observation ID, never a shared context. */
-export function latestObservations(rows: readonly FibObservation[]) {
-  const latest = new Map<string, FibObservation>();
+export function latestObservations<T extends Pick<FibObservation, "id" | "version">>(rows: readonly T[]) {
+  const latest = new Map<string, T>();
   for (const row of rows) {
     if (!latest.has(row.id) || latest.get(row.id)!.version < row.version)
       latest.set(row.id, row);

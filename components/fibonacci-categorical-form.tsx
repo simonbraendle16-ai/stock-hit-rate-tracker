@@ -58,7 +58,9 @@ function CategoricalFibEntry({
   trades = [],
   observations = [],
   next,
+  onSaved,
 }: {
+  onSaved?: (row: FibObservation) => void;
   next: (context: {stockId:number;timeframe:string;degree:string}) => void;
   instruments: Instrument[];
   stockId?: number;
@@ -191,7 +193,8 @@ function CategoricalFibEntry({
           return;
         }
         toast.success("Gespeichert und zurückgelesen.");
-        router.refresh();
+        if (onSaved) onSaved(response.row);
+        else router.refresh();
         if (keepGoing) next({stockId:Number(form.stockId),timeframe:form.timeframe,degree:form.degree});
         else close();
       } catch {

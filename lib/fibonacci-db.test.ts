@@ -34,6 +34,7 @@ import {
   PATCH,
 } from "@/app/api/assistant/v1/fibonacci/[id]/route";
 let pg: PGlite;
+const egressQueries: {sql:string;params:unknown[]}[] = [];
 const input = {
   stockId: 1,
   wave: "B",
@@ -285,7 +286,7 @@ it("applies the optional-note migration twice without changing any observation o
 });
 beforeAll(async () => {
   pg = new PGlite();
-  state.database = drizzle(pg, { schema });
+  state.database = drizzle(pg, { schema, logger: {logQuery(sql,params){egressQueries.push({sql,params})}} });
   await pg.exec(`CREATE TABLE "user" (id text PRIMARY KEY);INSERT INTO "user" VALUES ('owner'),('other');
  CREATE TABLE stock(id serial PRIMARY KEY,"userId" text NOT NULL,name text NOT NULL,ticker text NOT NULL,market text NOT NULL);
  INSERT INTO stock VALUES (1,'owner','Synthetic stock','TEST','aktien'),(2,'other','Foreign','FOREIGN','krypto');
@@ -857,4 +858,22 @@ it("T3 rejects invalid parents in service and database, including concurrent cyc
  const updates=await Promise.allSettled([saveFib("owner",a,{...input,wave:"X",evidence:{...input.evidence,parentId:b}},1),saveFib("owner",b,{...input,wave:"Y",evidence:{...input.evidence,parentId:a}},1)]);
  expect(updates.filter(r=>r.status==="fulfilled")).toHaveLength(1);
  expect(updates.filter(r=>r.status==="rejected")).toHaveLength(1);
+});
+
+it('reads one confirmed observation and projects only hierarchy/context during save',async()=>{
+  const first=crypto.randomUUID(),second=crypto.randomUUID();
+  await saveFib('owner',first,input);
+  await saveFib('owner',second,{...input,contextId:second,note:'different context'});
+  egressQueries.length=0;
+  const rows=await listFib('owner',1,first);
+  expect(rows.map(r=>r.id)).toEqual([first]);
+  expect(egressQueries[0].params).toContain(first);
+  egressQueries.length=0;
+  const third=crypto.randomUUID();
+  await saveFib('owner',third,{...input,contextId:third});
+  const validation=egressQueries.find(q=>q.sql.includes('jsonb_strip_nulls'));
+  expect(validation).toBeDefined();
+  expect(validation!.sql).not.toContain('inner join');
+  expect(validation!.sql).not.toContain('"note"');
+  expect(validation!.sql).not.toContain('"stopVariants"');
 });

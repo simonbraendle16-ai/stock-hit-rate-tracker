@@ -1,6 +1,7 @@
 import { fibStats, latestObservations, type FibObservation } from "./fibonacci";
 
-export function hierarchyError(rows: readonly FibObservation[], candidate: FibObservation): string | null {
+type HierarchyRow = Pick<FibObservation, "id" | "version" | "stockId" | "evidence">;
+export function hierarchyError(rows: readonly HierarchyRow[], candidate: HierarchyRow): string | null {
   const map = new Map(latestObservations(rows).map(r=>[r.id,r]));
   map.set(candidate.id,candidate);
   // Also check descendants when moving an existing parent to another instrument.
@@ -20,7 +21,7 @@ export function hierarchyError(rows: readonly FibObservation[], candidate: FibOb
   }
   return null;
 }
-export function hierarchyIds(rows: readonly FibObservation[], root: string, descendants = false) {
+export function hierarchyIds(rows: readonly Pick<FibObservation, "id" | "evidence">[], root: string, descendants = false) {
   const ids = new Set(rows.some(r=>r.id === root) ? [root] : []);
   if (descendants) {
     let changed = true;

@@ -19,7 +19,7 @@ import { ResearchDataGroups } from "@/components/research-data-groups";
 import { interpretFibSearch, describeSearchCriterion, type SearchResolutions } from "@/lib/fibonacci-search";
 import { RESEARCH_LEVELS } from "@/lib/fibonacci-catalogue";
 import { levelSearchGroups, levelGroupLabels, levelMeaningLabels } from "@/lib/fibonacci-level-search";
-import { useMemo, useState, useId, type SetStateAction } from "react";
+import { useMemo, useState, useId, useEffect, type SetStateAction } from "react";
 import { useFibonacciLocation } from "./use-fibonacci-location";
 import { resetResearchView, updateResearchRequest, writeResearchLocation } from "@/lib/fibonacci-location";
 import { researchResult, researchCsv } from "@/lib/fibonacci-research";
@@ -152,7 +152,7 @@ function Choice({
 const choices = (values: readonly string[]) =>
   values.map((v) => ({ value: v, label: v }));
 export function FibonacciPanel({
-  observations,
+  observations: initialObservations,
   instruments,
   stockId,
   samples = [],
@@ -160,6 +160,14 @@ export function FibonacciPanel({
   tradeCoverage = [],
   workspace,
 }: Props) {
+  const [observations, setObservations] = useState(initialObservations);
+  useEffect(() => setObservations(initialObservations), [initialObservations]);
+  const savedObservation = (row: FibObservation) => setObservations(current => {
+    const index = current.findIndex(item => item.id === row.id);
+    if (index < 0) return [row, ...current];
+    if (current[index].version > row.version) return current;
+    return current.map(item => item.id === row.id ? row : item);
+  });
   const searchId = useId();
   const queryId = useId();
   const {view,setView,loaded,detail:openDetail,restoreDetailFocus,perspective:changePerspective} = useFibonacciLocation(stockId);
@@ -1105,6 +1113,7 @@ export function FibonacciPanel({
           {open && (
             <CategoricalFibForm
               key={editing?.id || "new"}
+              onSaved={savedObservation}
               observations={observations}
               trades={tradeCoverage}
               instruments={instruments}
