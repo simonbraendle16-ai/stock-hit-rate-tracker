@@ -225,7 +225,7 @@ export async function saveFib(
           eq(observation.version, version),
         ),
       )
-      .returning();
+      .returning({ id: observation.id });
     if (!row) {
       await getFib(userId, id);
       throw new ApiError(
@@ -238,7 +238,7 @@ export async function saveFib(
       .insert(observation)
       .values({ ...values, id, userId })
       .onConflictDoNothing()
-      .returning();
+      .returning({ id: observation.id });
     if (!inserted) {
       const [match] = await db
         .select({ id: observation.id })
