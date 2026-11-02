@@ -1,3 +1,4 @@
+import {backgroundDue} from '@/lib/background-activity'
 import { NextRequest, NextResponse } from 'next/server'
 import { runScheduledDemoFills } from '@/lib/demo-schedule'
 
@@ -10,6 +11,7 @@ export async function GET(req: NextRequest) {
   if (req.headers.get('authorization') !== `Bearer ${secret}`) {
     return NextResponse.json({ error: 'Nicht berechtigt.' }, { status: 401 })
   }
+  if(req.nextUrl.searchParams.get('force')!=='1'&&!await backgroundDue('demo-fills'))return NextResponse.json({ok:true,ran:false,skipped:'inactive_interval'})
   try {
     const report = await runScheduledDemoFills(req.nextUrl.searchParams.get('force') === '1')
     const ok = !report.error && !report.unvollstaendig.length && !report.ohneKerzen.length && !report.ausstehend.length

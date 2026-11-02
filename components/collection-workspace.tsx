@@ -16,15 +16,15 @@ export function CollectionWorkspace({initial,instruments}:{initial:CollectionPag
  const [page,setPage]=useState(initial),[query,setQuery]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false)
  const [form,setForm]=useState<{existing:FibObservation|null}|null>(null),[detail,setDetail]=useState<FibObservation|null>(null)
  const [advanced,setAdvanced]=useState<Awaited<ReturnType<typeof getFibonacciData>>|null>(null)
- const firstSearch=useRef(true),lastRead=useRef(Date.now()),externalChange=useRef(false)
+ const firstSearch=useRef(true),lastRead=useRef(Date.now()),externalChange=useRef(false),changeChannel=useRef<BroadcastChannel|null>(null)
  const sequence=useRef(0),state=useRef({query,offset:page.offset,form});state.current={query,offset:page.offset,form}
  async function reload(q=query,offset=page.offset){const n=++sequence.current;setBusy(true);try{const next=await collectionPage(q,offset);if(n===sequence.current){setPage(next);setError('');lastRead.current=Date.now();externalChange.current=false}}catch{if(n===sequence.current)setError('Bestand konnte nicht geladen werden. Eingaben bleiben erhalten.')}finally{if(n===sequence.current)setBusy(false)}}
  useEffect(()=>{if(firstSearch.current){firstSearch.current=false;return}const timer=setTimeout(()=>{if(query!==state.current.query)return;void reload(query,0)},350);return()=>clearTimeout(timer)},[query])
- useEffect(()=>{const channel=new BroadcastChannel('tracker-waves');const update=()=>{externalChange.current=true;if(!state.current.form)void reload(state.current.query,state.current.offset)};const focus=()=>{if(!state.current.form&&(externalChange.current||Date.now()-lastRead.current>=60000))void reload(state.current.query,state.current.offset)};channel.onmessage=update;window.addEventListener('focus',focus);return()=>{channel.close();window.removeEventListener('focus',focus)}},[])
+ useEffect(()=>{const channel=new BroadcastChannel('tracker-waves');changeChannel.current=channel;const update=()=>{externalChange.current=true;if(!state.current.form)void reload(state.current.query,state.current.offset)};const focus=()=>{if(!state.current.form&&(externalChange.current||Date.now()-lastRead.current>=60000))void reload(state.current.query,state.current.offset)};channel.onmessage=update;window.addEventListener('focus',focus);return()=>{changeChannel.current=null;channel.close();window.removeEventListener('focus',focus)}},[])
  useEffect(()=>{if(!form&&externalChange.current)void reload(state.current.query,state.current.offset)},[form])
  async function open(id:string,edit:boolean){setBusy(true);try{const row=await collectionDetail(id);if(edit)setForm({existing:row});else setDetail(row);setError('')}catch{setError('Welle konnte nicht geladen werden. Bitte erneut versuchen.')}finally{setBusy(false)}}
  async function saved(row:FibObservation,counts?:{total:number;retracements:number;expansions:number},createdAt?:Date){
-  const channel=new BroadcastChannel('tracker-waves');channel.postMessage({changed:true});channel.close()
+  changeChannel.current?.postMessage({changed:true})
   if(query||page.offset!==0||!counts||!createdAt){await reload(query,0);return}
   const prior=page.items.find(item=>item.id===row.id)
   if(counts.total!==page.total+(prior?0:1)||(prior&&prior.observedOn!==row.observedOn)){await reload(query,0);return}
