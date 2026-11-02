@@ -39,7 +39,7 @@ export function AlertWatcher() {
     let cancelled = false
 
     const run = async () => {
-      if (running.current) return
+      if (running.current || document.visibilityState !== 'visible') return
       running.current = true
       try {
         const triggered = await checkAlerts()
