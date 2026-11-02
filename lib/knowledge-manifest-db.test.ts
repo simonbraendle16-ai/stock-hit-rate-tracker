@@ -4,6 +4,7 @@ import { drizzle } from 'drizzle-orm/pglite'
 import { getTableColumns, eq, and, inArray } from 'drizzle-orm'
 import { getTableConfig } from 'drizzle-orm/pg-core'
 import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import * as schema from './db/schema'
 import { fingerprint } from './knowledge-content.mjs'
 
@@ -110,6 +111,78 @@ describe('knowledge manifest SQL projection', () => {
     expect(await knowledgeManifest('owner')).toEqual(await baseline())
     expect(await knowledgeManifest('empty')).toEqual(await baseline('empty'))
     await state.db.insert(schema.trade).values(row(schema.trade, 1))
+    expect(await knowledgeManifest('owner')).toEqual(await baseline())
+  })
+})
+
+describe('transactional manifest revision', () => {
+  const migration = readFileSync(new URL('../drizzle/0059_knowledge_manifest_revision.sql', import.meta.url), 'utf8')
+  it('installs idempotently, skips payload reads on warm checks and preserves owner isolation', async () => {
+    await pg.exec(migration)
+    await pg.exec(migration)
+    process.env.KNOWLEDGE_MANIFEST_REVISION = '1'
+    const first = await knowledgeManifest('owner')
+    expect(first).toEqual(await baseline())
+    queries.length = 0
+    expect(await knowledgeManifest('owner')).toEqual(first)
+    expect(queries.filter(q => /^\s*select /i.test(q.sql))).toHaveLength(1)
+    expect(queries.find(q => /knowledge_manifest_change/.test(q.sql))?.params).toEqual(['owner'])
+    expect(queries.some(q => /from "(?:trade|journal_entry|insight)"/i.test(q.sql))).toBe(false)
+    first.items.length = 0 // Caller mutation must not poison the process cache.
+    expect(await knowledgeManifest('owner')).toEqual(await baseline())
+    expect(await knowledgeManifest('foreign')).toEqual(await baseline('foreign'))
+    expect(await knowledgeManifest('empty')).toEqual(await baseline('empty'))
+  })
+  it('invalidates all six sources without parent-version changes, including owner reassignment', async () => {
+    for (const [table, patch] of [
+      [schema.trade, { notes: 'revision note' }],
+      [schema.journalEntry, { reflection: 'revision reflection' }],
+      [schema.insight, { statement: 'revision statement' }],
+      [schema.tradeEvent, { payload: 'revision payload' }],
+      [schema.tradeTarget, { executedQty: 42 }],
+      [schema.tradeEventRevision, { after: { revision: true } }],
+    ] as const) {
+      if (!(await state.db.select().from(table).where(eq(table.userId, 'owner'))).length)
+        await state.db.insert(table).values(row(table, 1))
+      const before = await knowledgeManifest('owner')
+      await state.db.update(table).set(patch).where(eq(table.userId, 'owner'))
+      expect((await knowledgeManifest('owner')).etag).not.toBe(before.etag)
+      expect(await knowledgeManifest('owner')).toEqual(await baseline())
+    }
+    await state.db.update(schema.journalEntry).set({ userId: 'foreign' }).where(eq(schema.journalEntry.userId, 'owner'))
+    for (const owner of ['owner', 'foreign']) expect(await knowledgeManifest(owner)).toEqual(await baseline(owner))
+    const beforeForeign = await knowledgeManifest('foreign')
+    queries.length = 0
+    await state.db.update(schema.trade).set({ notes: 'owner only' }).where(eq(schema.trade.userId, 'owner'))
+    queries.length = 0
+    expect(await knowledgeManifest('foreign')).toEqual(beforeForeign)
+    expect(queries.filter(q => /^\s*select /i.test(q.sql))).toHaveLength(1)
+  })
+  it('rolls token back with data; detects deletes, truncation, reinsertion and repeat migration', async () => {
+    const token = async () => (await pg.query<{token: string}>(`SELECT md5(s.token || coalesce((SELECT string_agg(source || source_id || token, ',' ORDER BY source, source_id) FROM knowledge_manifest_change), '')) AS token FROM knowledge_manifest_state s`)).rows[0].token
+    const before = await token()
+    await pg.exec("BEGIN; UPDATE trade SET notes='rolled back';")
+    expect(await token()).not.toBe(before)
+    await pg.exec('ROLLBACK')
+    expect(await token()).toBe(before)
+    expect(await knowledgeManifest('owner')).toEqual(await baseline())
+    for (const table of [schema.tradeEventRevision, schema.tradeTarget, schema.tradeEvent, schema.insight, schema.journalEntry, schema.trade]) {
+      await state.db.delete(table).where(eq(table.userId, 'owner'))
+      expect(await knowledgeManifest('owner')).toEqual(await baseline())
+    }
+    await state.db.insert(schema.trade).values(row(schema.trade, 1))
+    expect(await knowledgeManifest('owner')).toEqual(await baseline())
+    await pg.exec('TRUNCATE trade')
+    expect(await knowledgeManifest('owner')).toEqual(await baseline())
+    const old = await token()
+    await pg.exec(migration)
+    expect(await token()).not.toBe(old)
+    expect(await knowledgeManifest('owner')).toEqual(await baseline())
+  })
+  it('fails closed on missing revision state and preserves legacy operation when disabled', async () => {
+    await pg.exec('DELETE FROM knowledge_manifest_state')
+    await expect(knowledgeManifest('owner')).rejects.toThrow('Manifest revision state is missing')
+    delete process.env.KNOWLEDGE_MANIFEST_REVISION
     expect(await knowledgeManifest('owner')).toEqual(await baseline())
   })
 })
