@@ -60,7 +60,7 @@ export async function saveFibonacci(
     const row = await saveFib(userId, uuidId(id), input, version);
     const reread = (await listFib(userId,row.stockId,row.id))[0];
     if (!reread) throw new Error("Rücklesen der Beobachtung fehlgeschlagen.");
-    const coverage = fibStats([reread],reread.measurementKind).coverage;
+    const coverage = compact ? undefined : fibStats([reread],reread.measurementKind).coverage;
     if (!compact) {
     revalidatePath("/watchlist");
     revalidatePath("/analysis");
