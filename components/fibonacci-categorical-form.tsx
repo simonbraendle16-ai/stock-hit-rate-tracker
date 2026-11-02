@@ -1,4 +1,6 @@
 "use client";
+import { collectionChoices } from '@/app/actions/collection';
+
 import { SUBDIVISIONS, SUBDIVISION_CONFIDENCES } from "@/lib/fibonacci-subdivision";
 import { WAVE_VARIANTS, waveChoice } from "@/lib/fibonacci-wave-variants";
 import { HistoricalTimeFields } from "@/components/fibonacci-time-fields";
@@ -59,16 +61,18 @@ function CategoricalFibEntry({
   observations = [],
   next,
   onSaved,
+  lazyChoices = false,
 }: {
-  onSaved?: (row: FibObservation) => void;
+  lazyChoices?: boolean;
+  onSaved?: (row: FibObservation, counts?: {total:number;retracements:number;expansions:number}, createdAt?:Date) => void;
   next: (context: {stockId:number;timeframe:string;degree:string}) => void;
   instruments: Instrument[];
   stockId?: number;
   existing: FibObservation | null;
   defaults: FibFilters;
   close: () => void;
-  trades?: TradeResearchRow[];
-  observations?: FibObservation[];
+  trades?: Pick<TradeResearchRow,"id"|"stockId">[];
+  observations?: Pick<FibObservation,"id"|"stockId"|"ticker"|"wave">[];
 }) {
   const formRef = useRef<HTMLFormElement>(null);
   const submitting = useRef(false);
@@ -117,7 +121,11 @@ function CategoricalFibEntry({
     !evidence.structureCode;
   const waves = [...RESEARCH_WAVES];
   if (existing && !waves.includes(existing.wave)) waves.push(existing.wave);
-  const tradeOptions: (readonly [string, string])[] = trades
+  const [linkedChoices, setLinkedChoices] = useState<Awaited<ReturnType<typeof collectionChoices>>|null>(null);
+  useEffect(()=>{if(!lazyChoices)return;setLinkedChoices(null);const selected=Number(form.stockId);if(!Number.isSafeInteger(selected)||selected<1)return;let current=true;collectionChoices(selected).then(value=>{if(current)setLinkedChoices(value)}).catch(()=>{if(current)setError('Verknüpfungen konnten nicht geladen werden. Bitte Instrument erneut wählen. Ausgewählte Angaben bleiben erhalten.')});return()=>{current=false}},[lazyChoices,form.stockId]);
+  const availableTrades=lazyChoices?(linkedChoices?.trades??[]):trades;
+  const availableParents=lazyChoices?(linkedChoices?.parents??[]):observations;
+  const tradeOptions: (readonly [string, string])[] = availableTrades
     .filter((t) => t.stockId === Number(form.stockId))
     .map((t) => [String(t.id), `Trade ${t.id}`] as const);
   if (
@@ -187,13 +195,13 @@ function CategoricalFibEntry({
           stopDescription: existing?.stopDescription ?? null,
           stopVariants: existing?.stopVariants ?? [],
         };
-        const response = await saveFibonacci(id, input, existing?.version);
+        const response = await saveFibonacci(id, input, existing?.version, lazyChoices);
         if (!response.ok) {
           setError(response.error);
           return;
         }
         toast.success("Gespeichert und zurückgelesen.");
-        if (onSaved) onSaved(response.row);
+        if (onSaved) onSaved(response.row,response.collectionCounts,response.createdAt);
         else router.refresh();
         if (keepGoing) next({stockId:Number(form.stockId),timeframe:form.timeframe,degree:form.degree});
         else close();
@@ -534,7 +542,7 @@ function CategoricalFibEntry({
               5 · Optionale Ergänzungen{(form.note || form.sourceRef || form.tradeId !== "none" || evidence.parentId || form.tradability !== "unbekannt" || form.hypotheticalOutcome !== "unbekannt" || form.actualOutcome !== "unbekannt") ? " · Angaben vorhanden" : ""}
             </summary>
             <FieldGroup className="mt-3">
-            <Choice label="Elternwelle · optional" value={evidence.parentId ?? "none"} options={[["none","Keine Elternwelle"],...observations.filter(r=>r.id !== id && r.stockId === Number(form.stockId)).map(r=>[r.id,`${r.ticker} · ${r.wave} · ${r.id}`] as const)]} onChange={v=>setE({parentId:v === "none" ? null : v})}/>
+            <Choice label="Elternwelle · optional" value={evidence.parentId ?? "none"} options={[["none","Keine Elternwelle"],...availableParents.filter(r=>r.id !== id && r.stockId === Number(form.stockId)).map(r=>[r.id,`${r.ticker} · ${r.wave} · ${r.id}`] as const)]} onChange={v=>setE({parentId:v === "none" ? null : v})}/>
               <Field>
                 <FieldLabel htmlFor={prefix + "note"}>
                   Messnotiz · optional

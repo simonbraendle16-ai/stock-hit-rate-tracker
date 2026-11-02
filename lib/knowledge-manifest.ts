@@ -76,7 +76,7 @@ function remember(owner: string, token: string, result: Manifest) {
   cacheBytes += bytes
 }
 
-export async function knowledgeManifest(userId: string) {
+export async function knowledgeManifest(userId: string, reportRead?: (mode: 'revision-cache' | 'full-read') => void) {
   return db.transaction(async tx => {
     // Opt in only after migration 0059 and its restore/trigger checks. Read the
     // token in the SAME snapshot as the payload: no wall-clock or sequence cursor
@@ -92,7 +92,7 @@ export async function knowledgeManifest(userId: string) {
       token = state.rows[0]?.token
       if (!token) throw new Error('Manifest revision state is missing')
       const cached = manifestCache.get(userId)
-      if (cached?.token === token) return structuredClone(cached.result)
+      if (cached?.token === token) { reportRead?.('revision-cache'); return structuredClone(cached.result) }
     }
     // One repeatable-read snapshot and six batched reads; no per-trade queries or newest-page limitation.
     const trades = await tx.select(tradeColumns).from(trade).where(eq(trade.userId, userId))
@@ -111,6 +111,7 @@ export async function knowledgeManifest(userId: string) {
     const etag = `"${createHash('sha256').update(JSON.stringify(items)).digest('hex')}"`
     const result = { items, etag, complete: true as const, schemaVersion: 1 }
     if (token) remember(userId, token, result)
+    reportRead?.('full-read')
     return result
   }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
 }

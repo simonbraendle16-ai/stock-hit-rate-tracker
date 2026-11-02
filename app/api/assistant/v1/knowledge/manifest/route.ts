@@ -8,8 +8,9 @@ export async function GET(req: NextRequest) {
     const owner = await requireApiScope(req, 'trades:read')
     const journalOwner = await requireApiScope(req, 'journal:read')
     if (owner !== journalOwner) throw new ApiError(403, 'Unvereinbarer Quellenbesitz.')
-    const result = await knowledgeManifest(owner)
-    const headers = { ETag: result.etag, 'Cache-Control': 'private, no-cache', Vary: 'Authorization' }
+    let readMode: 'revision-cache' | 'full-read' = 'full-read'
+    const result = await knowledgeManifest(owner, mode => { readMode = mode })
+    const headers = { ETag: result.etag, 'Cache-Control': 'private, no-cache', Vary: 'Authorization', 'X-Manifest-Read': readMode }
     const tags = req.headers.get('if-none-match')?.split(',').map(t => t.trim().replace(/^W\//, '')) ?? []
     if (tags.includes(result.etag) || tags.includes('*')) return new NextResponse(null, { status: 304, headers })
     return NextResponse.json({ items: result.items, complete: true, schemaVersion: result.schemaVersion }, { headers })

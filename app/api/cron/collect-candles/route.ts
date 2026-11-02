@@ -1,3 +1,4 @@
+import {backgroundDue} from '@/lib/background-activity'
 import { runCandleCollect } from '@/lib/market-data/candle-collect'
 import { NextRequest, NextResponse } from 'next/server'
 
@@ -41,6 +42,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Nicht berechtigt.' }, { status: 401 })
   }
 
+  if(req.nextUrl.searchParams.get('force')!=='1'&&!await backgroundDue('candles')) return NextResponse.json({ok:true,ran:false,skipped:'inactive_interval'})
   const force = req.nextUrl.searchParams.get('force') === '1'
   const report = await runCandleCollect({ trigger: 'cron', force })
 

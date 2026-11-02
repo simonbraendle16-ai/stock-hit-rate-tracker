@@ -5,8 +5,8 @@ import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { stock } from "@/lib/db/schema";
-import { eq, asc } from "drizzle-orm";
+import { stock, fibonacciObservation as collectionObservation } from "@/lib/db/schema";
+import { eq, asc, and, sql } from "drizzle-orm";
 import { loadTradeCoverage, loadMetricSamples } from "@/lib/research-metrics-service";
 import { listHistory } from "@/lib/fibonacci-history-service";
 import { listFib, saveFib } from "@/lib/fibonacci-service";
@@ -53,6 +53,7 @@ export async function saveFibonacci(
   id: string,
   input: Record<string, unknown>,
   version?: number,
+  compact = false,
 ) {
   const userId = await owner();
   try {
@@ -60,12 +61,15 @@ export async function saveFibonacci(
     const reread = (await listFib(userId,row.stockId,row.id))[0];
     if (!reread) throw new Error("Rücklesen der Beobachtung fehlgeschlagen.");
     const coverage = fibStats([reread],reread.measurementKind).coverage;
+    if (!compact) {
     revalidatePath("/watchlist");
     revalidatePath("/analysis");
     revalidatePath("/collection");
     revalidatePath("/tracking");
     revalidatePath(`/stock/${row.stockId}`);
-    return { ok: true as const, row: reread, coverage };
+    }
+    const collectionCounts=compact?(await db.select({total:sql<number>`count(*)::int`,retracements:sql<number>`count(*) filter(where ${collectionObservation.measurementKind}='retracement')::int`,expansions:sql<number>`count(*) filter(where ${collectionObservation.measurementKind}='expansion')::int`}).from(collectionObservation).innerJoin(stock,and(eq(stock.id,collectionObservation.stockId),eq(stock.userId,userId))).where(eq(collectionObservation.userId,userId)))[0]:undefined;
+    return { ok: true as const, row: reread, coverage, collectionCounts, createdAt:row.createdAt };
   } catch (e) {
     if (e instanceof ApiError) return { ok: false as const, error: e.message };
     throw e;

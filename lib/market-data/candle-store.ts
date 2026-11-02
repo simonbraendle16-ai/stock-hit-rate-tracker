@@ -29,7 +29,7 @@ import {
   type SammelStufe,
 } from './types'
 import type { SeriesCoverage } from './candle-merge'
-import { candlesToWrite, isFresh, mergeCandles, takeLast } from './candle-merge'
+import { isFresh, mergeCandles, takeLast } from './candle-merge'
 import { providerByName, type ProviderName } from './index'
 import { reserveAutomaticCandles, finishAutomaticCandles } from '@/lib/automatic-candles'
 import type { ExecutionSession,SessionCandles } from './execution-session'
@@ -209,6 +209,7 @@ async function writeCandles(
           close: sqlExcluded('close'),
           volume: sqlExcluded('volume'),
         },
+        setWhere: sql`(${candleCache.open},${candleCache.high},${candleCache.low},${candleCache.close},${candleCache.volume}) IS DISTINCT FROM (excluded.open,excluded.high,excluded.low,excluded.close,excluded.volume)`,
       })
   }
 }
@@ -356,25 +357,9 @@ export async function getStoredCandles(
     const geliefert = await provider.getCandles(symbol === 'XAUUSD' && options.provider === 'twelvedata' ? 'XAU/USD' : symbol, interval, options.since)
     const frisch = options.since == null ? geliefert : geliefert.filter((c) => c.time >= options.since!)
 
-    // Vergleichsfenster für den Abgleich: nur der Zeitraum, den der Anbieter
-    // überhaupt liefert. Ältere gespeicherte Kerzen können mit keiner frischen
-    // Kerze kollidieren — sie zu laden wäre genau die Verschwendung, die diese
-    // Datenbank abgeschaltet hat. Ohne frische Kerzen entfällt der Abgleich ganz.
-    //
-    // Der `since`-Zeitpunkt allein genügte dafür nicht: Er begrenzt den Zeitraum,
-    // aber nicht die Menge. Lieferte der Anbieter eine lange Reihe, zog ein
-    // einzelner Aufruf mehrere tausend Kerzen — gemessen ⌀ 3.518. Mehr Zeilen,
-    // als der Anbieter überhaupt geschickt hat, können mit nichts kollidieren;
-    // der Puffer deckt Zeitzonen- und Randfälle ab.
-    const vergleichsfenster = frisch.length
-      ? await readStoredCandles(symbol, interval, {
-          since: Math.min(...frisch.map((c) => c.time)),
-          limit: frisch.length + 50,
-        })
-      : []
-
-    const zuSchreiben = candlesToWrite(vergleichsfenster, frisch)
-    if (zuSchreiben.length > 0) await writeCandles(symbol, interval, zuSchreiben)
+    // Compare inside PostgreSQL: no historical OHLCV comparison-window transfer.
+    // The conditional upsert leaves unchanged rows untouched.
+    if (frisch.length > 0) await writeCandles(symbol, interval, frisch)
 
     // Die Abdeckung erst NACH dem Schreiben erheben, und als Aggregat aus der
     // Datenbank — sie soll die ganze Reihe beschreiben, nicht nur das Fenster,

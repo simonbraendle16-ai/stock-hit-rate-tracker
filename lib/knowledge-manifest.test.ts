@@ -20,8 +20,21 @@ describe('knowledge manifest route', () => {
   it('passes only authenticated owner and supports 304 including weak ETags', async () => {
     const response = await GET(new NextRequest('https://test/api/assistant/v1/knowledge/manifest', { headers: { 'if-none-match': 'W/"abc"' } }))
     expect(response.status).toBe(304); expect(await response.text()).toBe('')
-    expect(mocks.manifest).toHaveBeenCalledWith('owner')
+    expect(mocks.manifest).toHaveBeenCalledWith('owner', expect.any(Function))
+    const report = mocks.manifest.mock.calls[0][1]
+    expect(typeof report).toBe('function')
+    expect(response.headers.get('x-manifest-read')).toBe('full-read')
     expect(mocks.scope.mock.calls.map(c => c[1])).toEqual(['trades:read', 'journal:read'])
+  })
+  it('reports verified cache hits without exposing source data', async () => {
+    mocks.manifest.mockImplementationOnce(async (_owner, report) => {
+      report('revision-cache')
+      return { etag: '"abc"', items: [], complete: true, schemaVersion: 1 }
+    })
+    const response=await GET(new NextRequest('https://test/api/assistant/v1/knowledge/manifest',{headers:{'if-none-match':'"abc"'}}))
+    expect(response.status).toBe(304)
+    expect(response.headers.get('x-manifest-read')).toBe('revision-cache')
+    expect(await response.text()).toBe('')
   })
   it('rejects partial or foreign-user filters', async () => {
     expect((await GET(new NextRequest('https://test/api/assistant/v1/knowledge/manifest?userId=foreign'))).status).toBe(400)

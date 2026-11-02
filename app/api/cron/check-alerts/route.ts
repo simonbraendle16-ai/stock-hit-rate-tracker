@@ -1,3 +1,4 @@
+import {backgroundDue} from '@/lib/background-activity'
 import { runAlertCheck } from '@/lib/alert-run'
 import { NextRequest, NextResponse } from 'next/server'
 import { alertCronAuthorized } from '@/lib/alert-cron-auth'
@@ -41,6 +42,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const manual = req.headers.get('x-alert-check-origin') === 'manual'
+  if(!manual&&!await backgroundDue('alerts')) return NextResponse.json({ok:true,ran:false,skipped:'inactive_interval'})
     const report = await runAlertCheck({ trigger: 'cron', ...(manual ? { origin: 'manual' as const } : {}) })
     // 202 acknowledges accepted work needing another attempt (including a held
     // lease or individual data/mail problems). Repeated per-alarm failures must

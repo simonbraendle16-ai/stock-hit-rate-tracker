@@ -19,18 +19,23 @@ export function newApiToken() {
   return `sat_${randomBytes(32).toString('base64url')}`
 }
 
+type ApiIdentity = Pick<typeof assistantApiToken.$inferSelect,'id'|'userId'|'scopes'>;
+const requestIdentities = new WeakMap<NextRequest,Promise<ApiIdentity|undefined>>();
+const requestAudits = new WeakMap<NextRequest,Promise<unknown>>();
 export async function requireApiScope(req: NextRequest, scope: ApiScope) {
-  const header = req.headers.get('authorization')
-  if (!header?.startsWith('Bearer ')) throw new ApiError(401, 'API-Token fehlt.')
-  const token = header.slice(7)
-  if (!/^sat_[A-Za-z0-9_-]{43}$/.test(token)) throw new ApiError(401, 'Ungültiges API-Token.')
-  const [row] = await db.select().from(assistantApiToken)
-    .where(and(eq(assistantApiToken.tokenHash, hashToken(token)), isNull(assistantApiToken.revokedAt)))
-    .limit(1)
-  if (!row) throw new ApiError(401, 'Ungültiges API-Token.')
-  if (!row.scopes.includes(scope)) throw new ApiError(403, 'Dieses Token hat das erforderliche Recht nicht.')
-  await db.update(assistantApiToken).set({ lastUsedAt: new Date() }).where(eq(assistantApiToken.id, row.id))
-  return row.userId
+ const header=req.headers.get('authorization');
+ if(!header?.startsWith('Bearer '))throw new ApiError(401,'API-Token fehlt.');
+ const token=header.slice(7);
+ if(!/^sat_[A-Za-z0-9_-]{43}$/.test(token))throw new ApiError(401,'Ungültiges API-Token.');
+ let identity=requestIdentities.get(req);
+ if(!identity){identity=db.select({id:assistantApiToken.id,userId:assistantApiToken.userId,scopes:assistantApiToken.scopes}).from(assistantApiToken).where(and(eq(assistantApiToken.tokenHash,hashToken(token)),isNull(assistantApiToken.revokedAt))).limit(1).then(rows=>rows[0]);requestIdentities.set(req,identity)}
+ const row=await identity;
+ if(!row)throw new ApiError(401,'Ungültiges API-Token.');
+ if(!row.scopes.includes(scope))throw new ApiError(403,'Dieses Token hat das erforderliche Recht nicht.');
+ let audit=requestAudits.get(req);
+ if(!audit){audit=Promise.resolve(db.update(assistantApiToken).set({lastUsedAt:new Date()}).where(eq(assistantApiToken.id,row.id)));requestAudits.set(req,audit)}
+ await audit;
+ return row.userId;
 }
 
 export function apiResponseError(cause: unknown) {

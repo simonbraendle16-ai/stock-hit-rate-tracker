@@ -9,8 +9,12 @@ import {
 } from "vitest";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { NextRequest } from "next/server";
+vi.mock("next/headers",()=>({headers:async()=>new Headers()}));
+vi.mock("@/lib/auth", () => ({ auth: { api: { getSession: async () => ({ user: { id: "owner" } }) } } }));
+import {saveFibonacci} from "@/app/actions/fibonacci";
+import {collectionPage,collectionDetail,collectionChoices} from "@/app/actions/collection";
 const state = vi.hoisted(() => ({ database: null as any }));
 vi.mock("@/lib/db", () => ({
   get db() {
@@ -26,7 +30,7 @@ import {
   listHistory,
 } from "./fibonacci-history-service";
 import { GET as contextGET } from "@/app/api/assistant/v1/fibonacci/context/route";
-import { hashToken } from "./assistant-api";
+import { hashToken, requireApiScope } from "./assistant-api";
 import { GET, POST } from "@/app/api/assistant/v1/fibonacci/route";
 import { GET as revisionGET } from "@/app/api/assistant/v1/fibonacci/[id]/revisions/route";
 import {
@@ -876,4 +880,52 @@ it('reads one confirmed observation and projects only hierarchy/context during s
   expect(validation!.sql).not.toContain('inner join');
   expect(validation!.sql).not.toContain('"note"');
   expect(validation!.sql).not.toContain('"stopVariants"');
+});
+
+it('bounds collection reads to 50 compact rows, counts the full population and loads details separately',async()=>{
+ const ids=[] as string[];
+ for(let i=0;i<67;i++){const id=crypto.randomUUID();ids.push(id);await saveFib('owner',id,{...input,contextId:id,note:'synthetic detail '+i});}
+ egressQueries.length=0;
+ const first=await collectionPage();
+ expect(first.total).toBe(67);expect(first.items).toHaveLength(50);
+ expect(first.items.every(row=>!('note' in row)&&!('evidence' in row))).toBe(true);
+ expect(egressQueries.some(q=>/from "trade"|from "trade_event"|fibonacci_history/.test(q.sql))).toBe(false);
+ const second=await collectionPage('',50);expect(second.items).toHaveLength(17);
+ expect(new Set([...first.items,...second.items].map(r=>r.id)).size).toBe(67);
+ expect((await collectionPage('synthetic detail 66')).matched).toBe(1);
+ expect((await collectionDetail(ids[66])).note).toBe('synthetic detail 66');
+ expect((await collectionChoices(1)).parents).toHaveLength(67);
+ const full=await listFib('owner');
+ const fullBytes=Buffer.byteLength(JSON.stringify(full));
+ const compactBytes=Buffer.byteLength(JSON.stringify(first));
+ expect(compactBytes).toBeLessThan(fullBytes);
+ writeFileSync('C:/Users/sabin/Documents/Trading-Assistent/runtime/collection-benchmark.json',JSON.stringify({at:new Date().toISOString(),synthetic:true,fullPopulationRows:full.length,fullBytes,compactPageRows:first.items.length,compactBytes},null,2));
+ console.log(JSON.stringify({collectionBenchmark:{fullPopulationRows:full.length,fullBytes,compactPageRows:first.items.length,compactBytes}}));
+});
+
+it('authenticates once per request while preserving scope checks and next-request revocation',async()=>{
+ const req=request('',tokens.owner);
+ egressQueries.length=0;
+ expect(await requireApiScope(req,'trades:read')).toBe('owner');
+ expect(await requireApiScope(req,'trades:write')).toBe('owner');
+ await expect(requireApiScope(req,'journal:read')).rejects.toMatchObject({status:403});
+ expect(egressQueries.filter(q=>/^select .*assistant_api_token/.test(q.sql))).toHaveLength(1);
+ expect(egressQueries.filter(q=>/^update .*assistant_api_token/.test(q.sql))).toHaveLength(1);
+ expect(egressQueries.find(q=>/^select .*assistant_api_token/.test(q.sql))!.sql).not.toContain('tokenHash" from');
+ await pg.query('UPDATE assistant_api_token SET "revokedAt"=now() WHERE "tokenHash"=$1',[hashToken(tokens.owner)]);
+ try {await expect(requireApiScope(request('',tokens.owner),'trades:read')).rejects.toMatchObject({status:401})}
+ finally {await pg.query('UPDATE assistant_api_token SET "revokedAt"=NULL WHERE "tokenHash"=$1',[hashToken(tokens.owner)])}
+});
+
+it('compact save confirms exactly one row and authoritative counts without duplicate increments',async()=>{
+ const id=crypto.randomUUID();
+ for(let i=0;i<2;i++){
+ const result=await saveFibonacci(id,input,undefined,true);
+ expect(result.ok).toBe(true);
+ if(!result.ok)throw Error('save failed');
+ expect(result.row.id).toBe(id);expect(result.row.version).toBe(1);
+ expect(result.collectionCounts).toEqual({total:1,retracements:1,expansions:0});
+ expect(result.createdAt).toBeInstanceOf(Date);
+ }
+ expect((await collectionPage()).total).toBe(1);
 });
