@@ -121,8 +121,9 @@ function CategoricalFibEntry({
     !evidence.structureCode;
   const waves = [...RESEARCH_WAVES];
   if (existing && !waves.includes(existing.wave)) waves.push(existing.wave);
+  const [linksOpen,setLinksOpen]=useState(false);
   const [linkedChoices, setLinkedChoices] = useState<Awaited<ReturnType<typeof collectionChoices>>|null>(null);
-  useEffect(()=>{if(!lazyChoices)return;setLinkedChoices(null);const selected=Number(form.stockId);if(!Number.isSafeInteger(selected)||selected<1)return;let current=true;collectionChoices(selected).then(value=>{if(current)setLinkedChoices(value)}).catch(()=>{if(current)setError('Verknüpfungen konnten nicht geladen werden. Bitte Instrument erneut wählen. Ausgewählte Angaben bleiben erhalten.')});return()=>{current=false}},[lazyChoices,form.stockId]);
+  useEffect(()=>{if(!lazyChoices||!linksOpen)return;setLinkedChoices(null);const selected=Number(form.stockId);if(!Number.isSafeInteger(selected)||selected<1)return;let current=true;collectionChoices(selected).then(value=>{if(current)setLinkedChoices(value)}).catch(()=>{if(current)setError('Verknüpfungen konnten nicht geladen werden. Bitte Instrument erneut wählen. Ausgewählte Angaben bleiben erhalten.')});return()=>{current=false}},[lazyChoices,linksOpen,form.stockId]);
   const availableTrades=lazyChoices?(linkedChoices?.trades??[]):trades;
   const availableParents=lazyChoices?(linkedChoices?.parents??[]):observations;
   const tradeOptions: (readonly [string, string])[] = availableTrades
@@ -537,8 +538,8 @@ function CategoricalFibEntry({
             )}
             </FieldGroup></details>
           </FieldSet>
-          <details>
-            <summary className="cursor-pointer text-sm font-medium">
+          <details onToggle={event=>setLinksOpen(event.currentTarget.open)}>
+              <summary className="cursor-pointer text-sm font-medium">
               5 · Optionale Ergänzungen{(form.note || form.sourceRef || form.tradeId !== "none" || evidence.parentId || form.tradability !== "unbekannt" || form.hypotheticalOutcome !== "unbekannt" || form.actualOutcome !== "unbekannt") ? " · Angaben vorhanden" : ""}
             </summary>
             <FieldGroup className="mt-3">
