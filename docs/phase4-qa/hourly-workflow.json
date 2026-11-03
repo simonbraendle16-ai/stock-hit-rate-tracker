@@ -1,5 +1,5 @@
 {
-  "at": "2026-11-03T16:10:20.308Z",
+  "at": "2026-11-03T16:13:59.647Z",
   "complete": true,
   "path": ".github/workflows/active-trade-market-data.yml",
   "checks": {
@@ -9,6 +9,6 @@
     "noWritePermissions": true,
     "noConcurrentDoubleRun": true
   },
-  "sha256": "46883131c194018516a8926f3f9baedf0dd2d8736d2a9a80972eb18da555a812",
+  "sha256": "7d147267d99a2a463981c1e34720cb572f6150759ca295bc486cadd32aadfee3",
   "manualDispatchPerformed": false
 }

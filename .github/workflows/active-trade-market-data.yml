@@ -16,7 +16,7 @@ jobs:
     steps:
       - name: Collect market data only
         env:
-          APP_URL: ${{ secrets.APP_URL }}
+          APP_URL: https://stock-hit-rate-tracker-astra-quest.vercel.app
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           curl --fail --silent --show-error --max-time 65 \
