@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-03T16:26:28.972Z",
+  "command": "schema-audit",
+  "source": "tiny-morning-28044801",
+  "target": "snowy-voice-42406507",
+  "complete": true,
+  "equal": {
+    "columns": true,
+    "constraints": true,
+    "indexes": true
+  },
+  "targetNotNullValidated": true
+}

@@ -59,4 +59,22 @@ describe('two isolated PostgreSQL stores: resumable preparation and reverse copy
   expect((await a.query<any>('SELECT count(*)::int n FROM candle_collect_run')).rows[0].n).toBe(4)
   await expect(a.exec('INSERT INTO candle_collect_run DEFAULT VALUES')).rejects.toThrow('schreibgeschützt')
  })
+ it('preserves timestamp microseconds and NULL across timezones, resume and reverse copy',async()=>{
+  await seed(a,'PRECISION',1)
+  await a.exec(`UPDATE candle_series SET "fetchedAt"='2026-11-03 01:02:03.123456+00';UPDATE candle_collect_run SET "startedAt"='2026-11-03 01:02:03.654321+00',"finishedAt"=NULL;SET timezone='Pacific/Honolulu'`)
+  await b.exec("SET timezone='Europe/Berlin'")
+  const read=async(p:PGlite)=>(await p.query<any>(`SELECT extract(epoch from "startedAt")::text AS started,extract(epoch from "finishedAt")::text AS finished FROM candle_collect_run ORDER BY id`)).rows
+  try{
+   const before=await read(a);await setMarketWritable(a,false);await setMarketWritable(b,false)
+   await copyMarketPackages(a,b,'microseconds')
+   expect(await read(b)).toEqual(before)
+   const seriesQuery='SELECT extract(epoch from "fetchedAt")::text AS fetched FROM candle_series'
+   expect((await b.query(seriesQuery)).rows).toEqual((await a.query(seriesQuery)).rows)
+   expect((await copyMarketPackages(a,b,'microseconds')).resumed).toBe(2)
+   await setMarketWritable(b,true);await b.exec(`UPDATE candle_collect_run SET "startedAt"="startedAt"+interval '1 microsecond'`);await setMarketWritable(b,false)
+   await copyMarketPackages(b,a,'microseconds-reverse')
+   expect(await read(a)).toEqual(await read(b));expect((await read(a))[0].started.endsWith('654322')).toBe(true)
+  }finally{await a.exec("SET timezone='UTC'");await b.exec("SET timezone='UTC'")}
+ })
+
 })

@@ -40,7 +40,11 @@ async function* packages(client) {
 }
 async function* pages(client, table, symbol) {
   const { keys,columns } = tables[table]
-  const fields = columns.map(quote).join(',')
+  // pg's JavaScript Date parser truncates microseconds. Read timestamps as
+  // exact UTC text so hashing, resume and reverse copy retain all 6 digits.
+  const fields = columns.map(column => ['fetchedAt','startedAt','finishedAt'].includes(column)
+    ? `to_char(${quote(column)} AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS ${quote(column)}`
+    : quote(column)).join(',')
   let last
   while (true) {
     const values = [], conditions = []

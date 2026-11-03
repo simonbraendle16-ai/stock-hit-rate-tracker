@@ -1,0 +1,65 @@
+{
+  "at": "2026-11-03T16:52:07.873Z",
+  "command": "verify-ready",
+  "source": "tiny-morning-28044801",
+  "target": "snowy-voice-42406507",
+  "complete": true,
+  "A": {
+    "control": {
+      "writable": false,
+      "generation": 2
+    },
+    "tables": {
+      "candle_cache": {
+        "rows": 1457456,
+        "digest": "f3fc4741e305aa31ed51ee25afa99ca9"
+      },
+      "candle_series": {
+        "rows": 740,
+        "digest": "fd3d761bbf104d0802da3930bb5ab2c5"
+      },
+      "candle_collect_run": {
+        "rows": 120,
+        "digest": "f273630e1139a0d757a0656aac135281"
+      }
+    }
+  },
+  "B": {
+    "control": {
+      "writable": false,
+      "generation": 2
+    },
+    "tables": {
+      "candle_cache": {
+        "rows": 1457456,
+        "digest": "f3fc4741e305aa31ed51ee25afa99ca9"
+      },
+      "candle_series": {
+        "rows": 740,
+        "digest": "fd3d761bbf104d0802da3930bb5ab2c5"
+      },
+      "candle_collect_run": {
+        "rows": 120,
+        "digest": "f273630e1139a0d757a0656aac135281"
+      }
+    }
+  },
+  "equal": true,
+  "schemaEqual": true,
+  "targetNotNullValidated": true,
+  "constraintsEqual": true,
+  "indexesEqual": true,
+  "coverageEqual": true,
+  "seriesWithCandles": 738,
+  "sequences": {
+    "A": {
+      "last_value": "120",
+      "is_called": true
+    },
+    "B": {
+      "last_value": "120",
+      "is_called": true
+    }
+  },
+  "sequenceSafe": true
+}

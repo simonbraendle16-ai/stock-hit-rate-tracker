@@ -1,0 +1,15 @@
+{
+  "at": "2026-11-03T15:51:42.917Z",
+  "command": "copy",
+  "source": "tiny-morning-28044801",
+  "target": "snowy-voice-42406507",
+  "complete": true,
+  "copy": {
+    "copied": 104,
+    "resumed": 0,
+    "rows": 1458316,
+    "payloadBytes": 240366280,
+    "verifiedBytes": 240363209,
+    "targetVerifiedBytes": 240363209
+  }
+}

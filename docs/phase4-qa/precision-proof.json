@@ -1,0 +1,284 @@
+{
+  "at": "2026-11-03T16:54:52.818Z",
+  "precisionFailureReproduced": true,
+  "correctedTests": {
+    "files": 3,
+    "passed": 11,
+    "failed": 0
+  },
+  "typecheckExit": 0,
+  "unchangedAcceptedSources": 64,
+  "intentionalReviewedChanges": [
+    "lib/market-data/migration.integration.test.ts",
+    "scripts/market-migration.mjs"
+  ],
+  "sources": [
+    {
+      "path": "drizzle-market-core/0001_control.sql",
+      "sha256": "76e9c447214c432804521bc454f18c4e93a094dd7124e2c18b03dc2f611f0226"
+    },
+    {
+      "path": "drizzle-market/0001_market.sql",
+      "sha256": "0da40f687f8d2ff4c95ed1cb6fbb2ad7adc27cd6adf345f4d1d59ed88e7dbc66"
+    },
+    {
+      "path": "drizzle-market/0002_control.sql",
+      "sha256": "76e9c447214c432804521bc454f18c4e93a094dd7124e2c18b03dc2f611f0226"
+    },
+    {
+      "path": "lib/automatic-candles.ts",
+      "sha256": "59b90fa51e3f19d8aca500b0509afd0bc134aa6bef94c595476ea8575dd92eb1"
+    },
+    {
+      "path": "lib/db/index.ts",
+      "sha256": "817fcbb83071e2b5a8396536a730797d33f66d15b46e60c8b4a37a686813cfff"
+    },
+    {
+      "path": "lib/db/schema.ts",
+      "sha256": "a17f9f589f5f73c35a9bfd271f2e3bb02b64fe25b4a5ff6afed190134997aebc"
+    },
+    {
+      "path": "lib/demo-cycle.ts",
+      "sha256": "033b07e77e31e3eb2336adc0e156b6f74cd45c7d52998ecac8379208ae5e20b3"
+    },
+    {
+      "path": "lib/demo-run.ts",
+      "sha256": "f7304a8d1d28641c5086fec129438b7574b59d06744094a7a3e2da485b77b484"
+    },
+    {
+      "path": "lib/fibonacci-history-service.ts",
+      "sha256": "7f7a8046f66ae99b437b540a83bc90fa95b8925fb4233f355cc67e84f7cdc86d"
+    },
+    {
+      "path": "lib/market-data/active-trade-demand.ts",
+      "sha256": "7b8df0bb0a816579379d502b20412606a6685fce3cffed8ab7f019d69731f43f"
+    },
+    {
+      "path": "lib/market-data/binance.ts",
+      "sha256": "7cd799439ab01bb606e7892c9def72cae6c36c5ac75ad520f90f54719788c10c"
+    },
+    {
+      "path": "lib/market-data/browser-demand.test.ts",
+      "sha256": "67d8b3c618498dab0c50a510646d7a10b47c32e4c19ca3229f1c1205558ecd8b"
+    },
+    {
+      "path": "lib/market-data/cached.ts",
+      "sha256": "770f9167f2d6daa55c8825cf69dd2e8f664084dfadc6b29d68687aa401fb943a"
+    },
+    {
+      "path": "lib/market-data/candle-collect.test.ts",
+      "sha256": "bf7755c31e3ed7fcc5bbd61d06669b55ecabc98f9c6c3d472de6dce6972981bb"
+    },
+    {
+      "path": "lib/market-data/candle-collect.ts",
+      "sha256": "7919282dd1d0cc2530d212b5e491381b1739f3029b0c487324572d8feba41551"
+    },
+    {
+      "path": "lib/market-data/candle-loader.ts",
+      "sha256": "22a77c5b57b0ee0eae18406bb525c3f151614c820032fea021fa4222fc84e340"
+    },
+    {
+      "path": "lib/market-data/candle-merge.test.ts",
+      "sha256": "0976f2bca3b1f1a1726c8bc1681d7d1e2d37650e670fd82403c8b6365f7deae4"
+    },
+    {
+      "path": "lib/market-data/candle-merge.ts",
+      "sha256": "723c3e584a90a4fc26bb9d6c3c4ce9306d3ca8c45c798bd817e26e7c04b5750e"
+    },
+    {
+      "path": "lib/market-data/candle-store.ts",
+      "sha256": "95c6f946ca344c81915b702ae74b8abfbb108e9ac0d038c492eac5e718179291"
+    },
+    {
+      "path": "lib/market-data/candle-transfer.test.ts",
+      "sha256": "af7f8dda3e84d3733b4e1e88eae846f416bdfc94e6de90f9935793c90b71351d"
+    },
+    {
+      "path": "lib/market-data/collect-route.test.ts",
+      "sha256": "065f2077c1246e3da8a1105bdaff41a99a478062b53460c519f9a61c9796fb6b"
+    },
+    {
+      "path": "lib/market-data/database.ts",
+      "sha256": "d83d1a60a6828d11849147c66ed696f5ae6c80ac0ccbd440622ea645ca7c24cd"
+    },
+    {
+      "path": "lib/market-data/execution-session.ts",
+      "sha256": "e56a2ca4b1937c993ef00132caefffebc65fa827239cc843f19dedabb51605b2"
+    },
+    {
+      "path": "lib/market-data/history.test.ts",
+      "sha256": "44233940f05e07b1261f198846c8a6db5bd4b4502538942fe06447fa550bb3d8"
+    },
+    {
+      "path": "lib/market-data/index.ts",
+      "sha256": "f85a1120e665fb65a510ed4fcebc82790d7d5824aeb34ca7f83f19b51fe42296"
+    },
+    {
+      "path": "lib/market-data/location.mjs",
+      "sha256": "52e1e4e2b5941eae54f751e6244ab194a995354da69dc088e730e660b658bb04"
+    },
+    {
+      "path": "lib/market-data/lookup.ts",
+      "sha256": "93f87f38991f9fd9663845b6dc359bd0049216b3cbf382648f61305dec5ec082"
+    },
+    {
+      "path": "lib/market-data/migration.integration.test.ts",
+      "sha256": "40ddc2b0ff4aad629f8434bcbdece4b8e40b5b3913826c8a3b5313351e1d0d82"
+    },
+    {
+      "path": "lib/market-data/phase3-collect.test.ts",
+      "sha256": "f8a30dbd64b0916556f624d7a790820eb8a3c8c5c5c58dd6e6704f6e4e781e41"
+    },
+    {
+      "path": "lib/market-data/phase3-postgres.test.ts",
+      "sha256": "630542d2bd0b3a41b39865f10d7711098c7c514db6f36d6f6db2fd128c3a2cf1"
+    },
+    {
+      "path": "lib/market-data/quote-age.test.ts",
+      "sha256": "8dd3debfbb3ae1039201eb60a342024addba49f51df3310ed16e14280ae4f4e8"
+    },
+    {
+      "path": "lib/market-data/quote-age.ts",
+      "sha256": "44997723c7aa8b763261367a4c3064e5dc5c0be2cff66d958181efa3f1fe393b"
+    },
+    {
+      "path": "lib/market-data/quote-type-market.test.ts",
+      "sha256": "2bd375a5f17c2ed3d8c05602acdbb8c1e8c78dcae82ad34a18fc5db0d3e4c24f"
+    },
+    {
+      "path": "lib/market-data/quote.ts",
+      "sha256": "1b5d287325e1d9cbca51854c15650bcfc812921ade2da448bf63fa72894c9843"
+    },
+    {
+      "path": "lib/market-data/resolve-path.test.ts",
+      "sha256": "07ce0bc20da8bfdef50e3b67b38901cd6967c12ded3028fcc0a8d4a435776c7e"
+    },
+    {
+      "path": "lib/market-data/resolve.test.ts",
+      "sha256": "6c0c3b1daae3d2edd5cb89704189bc3ebd7f585a2611cb453a6af2acf5507af9"
+    },
+    {
+      "path": "lib/market-data/resolve.ts",
+      "sha256": "0543cb0daf89979b50147538f5f1a52e255ef73209be29f4a08f9bfa26a2adcd"
+    },
+    {
+      "path": "lib/market-data/search-save.test.ts",
+      "sha256": "b849448924b67ea3d36df7b335505d548c05f3c999d5847eec1979dfd927915f"
+    },
+    {
+      "path": "lib/market-data/sparklines-transfer.test.ts",
+      "sha256": "af67cda56f93e34ce4fb5fd8fe947944e202d2da347789089e45063b396fb1bf"
+    },
+    {
+      "path": "lib/market-data/spot-gold.test.ts",
+      "sha256": "222df2928f6310f45b234c0e479a7681498897aab9ec08fdde866715c680a3f5"
+    },
+    {
+      "path": "lib/market-data/spot-gold.ts",
+      "sha256": "04678722271a9deed82a1672d1ce434a70fe51fbca2d611d9fddb7bb3943f5ca"
+    },
+    {
+      "path": "lib/market-data/symbol-aliases.ts",
+      "sha256": "4d7ffa96efe0b4cc3730040ff97b0e9081f41c8ec26540196c30f5c8d52010f2"
+    },
+    {
+      "path": "lib/market-data/symbol-syntax.test.ts",
+      "sha256": "cc84485083cdfa6e446c5e15916b2ae5cc52c6ad96752c94a19454953b138426"
+    },
+    {
+      "path": "lib/market-data/symbol-syntax.ts",
+      "sha256": "9db115e91733aeed2f81552721c6477a20e07dc7182f3534e04a4d58375dfb21"
+    },
+    {
+      "path": "lib/market-data/sync-demand.test.ts",
+      "sha256": "2eea0ef4fa4c5e4ccc462b862e271dd5d0fb9b2c83b70a3a59aca4181ad0596f"
+    },
+    {
+      "path": "lib/market-data/sync-transfer.test.ts",
+      "sha256": "3cb2f4b6e470080527b0253fc469d9f69c9a6a549036f48862a14a3e295660b1"
+    },
+    {
+      "path": "lib/market-data/sync.ts",
+      "sha256": "6248ffc8da2625a34490d0d2097b086048876462f7362db151a4006bd928e47d"
+    },
+    {
+      "path": "lib/market-data/tradingview-symbol.test.ts",
+      "sha256": "7c11e7bbcf05f7a986d66e0fbb367dbff277d03e891e0392eeb5c07c082d9505"
+    },
+    {
+      "path": "lib/market-data/tradingview-symbol.ts",
+      "sha256": "383acafb57f505f7870365bbeab34fed08f068e7bb0a0751b038b18db0794dd1"
+    },
+    {
+      "path": "lib/market-data/twelvedata.ts",
+      "sha256": "155155b2fe0f3412de1ce96227757906194abf6a035be61f48f207d2818ac410"
+    },
+    {
+      "path": "lib/market-data/types.ts",
+      "sha256": "32ef32e5e1e29718830a7e9ad3d92cdcb543370ab0c19bdcd0b67ca9fd9c4806"
+    },
+    {
+      "path": "lib/market-data/yahoo-quote.test.ts",
+      "sha256": "9da8dbe20732bb737bbe01b7b3ee2265757e13c8fcf891c5507e49d45045b5b2"
+    },
+    {
+      "path": "lib/market-data/yahoo.test.ts",
+      "sha256": "4902a4e87104028f72b34f0c59eb2e5ecb84ec0cd726477f130a8d888d8390bd"
+    },
+    {
+      "path": "lib/market-data/yahoo.ts",
+      "sha256": "9f48deb61fa96fe2d94ed8492d5ff6924eff855a1c06c22d3124a5dce93ed6a1"
+    },
+    {
+      "path": "lib/phase3-wave-db.test.ts",
+      "sha256": "1420a25976a3d47d578066dcb14301eb22e58eac374d6cf00a5152f5af87fa30"
+    },
+    {
+      "path": "scripts/apply-retention.mjs",
+      "sha256": "6783a2891bb31a1e27c793e5b7685bdf33c5ef533d15efde3caae832fac047c1"
+    },
+    {
+      "path": "scripts/audit-market-data.mjs",
+      "sha256": "c21219c4d1291af5aeaeede89b95890f1347e4b394bc5ea91f354a5ca1c3953d"
+    },
+    {
+      "path": "scripts/clean-candle-cache.mjs",
+      "sha256": "af2d25f3ff6a369cc4d390ed90cd3dd4f029e0257926575609d906c23d093a86"
+    },
+    {
+      "path": "scripts/clean-candle-granularity.mjs",
+      "sha256": "3a2c0b508ebcdc8f9d50353da0b1d00a6d1469ffc034d447e90eada948446e29"
+    },
+    {
+      "path": "scripts/market-client.mjs",
+      "sha256": "80b798cb79a34fd7bfbb37b0f0bfd44a7647e7e82d8763975b0a94c6bb8a25f7"
+    },
+    {
+      "path": "scripts/market-migration.mjs",
+      "sha256": "0b9e7341456d07fddbeb3facd9a1de156bdbe277e2f5b2831a1684e76627eb94"
+    },
+    {
+      "path": "scripts/prepare-market-migration.mjs",
+      "sha256": "206e111f1fbfb403fe3c08f7cacac5fb4e46997ad80744de7b62b2a58a27a8f4"
+    },
+    {
+      "path": "scripts/repair-demo-history.ts",
+      "sha256": "22453083207e92b7fcd8d8a9c5d24f6c262054b2944b4bc259e64fee41d3cd49"
+    },
+    {
+      "path": "components/app-activity.tsx",
+      "sha256": "0e1cb8be3813c756d9dfa4868c542cc85bd5b45097beffb3632952d38ebb18bb"
+    },
+    {
+      "path": "docs/phase3-qa/browser/verify-browser.mjs",
+      "sha256": "3785b517660c0bc7495249822fb0bfc0d51bd1fc291f50a0c07eb4d8acb1cda1"
+    },
+    {
+      "path": "docs/phase3-qa/browser/verify-visual.mjs",
+      "sha256": "5d49394250c645a62cea353ccd2caa134e783f6c5be7c7deae88586d8835fbee"
+    }
+  ],
+  "productionCopyStartedAt": "2026-11-03T15:51:42.917Z",
+  "productionCopyFinishedAt": "2026-11-03T16:45:28.190Z",
+  "realSourceTargetContentsExactlyEqual": true
+}

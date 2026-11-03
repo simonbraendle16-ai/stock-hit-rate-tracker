@@ -1,0 +1,11 @@
+{
+  "at": "2026-11-03T16:46:05.820Z",
+  "command": "fence-test",
+  "source": "tiny-morning-28044801",
+  "target": "snowy-voice-42406507",
+  "complete": true,
+  "fences": {
+    "legacyA": true,
+    "newAppB": true
+  }
+}
