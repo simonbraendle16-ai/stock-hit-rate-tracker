@@ -1,0 +1,27 @@
+{
+  "at": "2026-11-03T15:52:54.081Z",
+  "phase3ImplementationUnchanged": true,
+  "newTests": {
+    "command": "node node_modules/vitest/vitest.mjs run lib/market-data/status-route.test.ts lib/market-data/collect-route.test.ts --maxWorkers=1",
+    "files": 2,
+    "passed": 5,
+    "exit": 0
+  },
+  "typecheckExit": 0,
+  "buildExit": 0,
+  "buildId": "MUCPvMTRWr1EubPoMqozF",
+  "credentialScan": {
+    "pendingFiles": 98,
+    "actualCredentialsDetected": 0
+  },
+  "sources": [
+    {
+      "path": "app/api/assistant/v1/market-data/status/route.ts",
+      "sha256": "2ace6c4e255ea01ebabf69c3a9af31dde44eadc19f6756f14e02a08d73a6fab5"
+    },
+    {
+      "path": "lib/market-data/status-route.test.ts",
+      "sha256": "b52bb2048a7dd429efeaa4bb2afa948e4e709e6af23cc1820567bd65064aa382"
+    }
+  ]
+}

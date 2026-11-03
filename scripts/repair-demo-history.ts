@@ -1,7 +1,9 @@
+import { marketDb } from '../lib/market-data/database'
 // Explicitly scoped legacy repair. Default previews; --apply writes with row locks.
 // npx tsx --env-file=.env.local scripts/repair-demo-history.ts --ids=... --discard=... --archive=... [--apply]
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { and, eq, inArray, sql } from 'drizzle-orm'
+import { closeMarketDatabase } from '../lib/market-data/database'
 import { db, pool } from '../lib/db'
 import { brokerOrder, candleCache, stock, trade, tradeEvent, tradeTarget } from '../lib/db/schema'
 import { withTradeLock } from '../lib/trade-lock'
@@ -40,7 +42,7 @@ async function refillGap(symbol: string, from: number, until: number) {
   }))
   if (!candles.length || candles.some((c) => c.time % 300 !== 0 || ![c.time,c.open,c.high,c.low,c.close].every(Number.isFinite) || c.high < c.low)) throw new Error('Ungültige Archivkerzen.')
   writeFileSync(`${directory}/${label}-${symbol.replace(/[^A-Z0-9]/g, '')}-${from}-gap-source.json`, JSON.stringify({ source: 'twelvedata', meta: data.meta, candles }))
-  await db.insert(candleCache).values(candles.map((c) => ({ ...c, symbol, interval: '5min' }))).onConflictDoNothing()
+  await marketDb.insert(candleCache).values(candles.map((c) => ({ ...c, symbol, interval: '5min' }))).onConflictDoNothing()
   return candles.length
 }
 
@@ -119,7 +121,7 @@ try {
               'Historische Identität und Handelsplatz über Twelve Data bestätigt.') RETURNING id`)).rows[0] as { id: number }
           await db.update(trade).set({ stockId: instrument.id }).where(and(eq(trade.id, t.id), eq(trade.userId, t.userId)))
         }
-        for (let i = 0; i < candles.length; i += 1000) await db.insert(candleCache)
+        for (let i = 0; i < candles.length; i += 1000) await marketDb.insert(candleCache)
           .values(candles.slice(i, i + 1000).map((c) => ({ ...c, symbol, interval: '5min' })))
           .onConflictDoNothing()
       })
@@ -141,7 +143,7 @@ try {
             const archive = (await yahooProvider.getCandles(symbol, '15min')).filter((c) => c.time >= from - 900 && c.time < until)
             if (!archive.length) throw new Error('Echtes Gold-Archiv fehlt.')
             writeFileSync(`${directory}/${label}-gold-${from}-archive.json`, JSON.stringify({ source: 'yahoo', symbol, interval: '15min', candles: archive }))
-            await db.insert(candleCache).values(archive.map((c) => ({ ...c, symbol, interval: '15min' }))).onConflictDoNothing()
+            await marketDb.insert(candleCache).values(archive.map((c) => ({ ...c, symbol, interval: '15min' }))).onConflictDoNothing()
             reports.push({ tradeId: t.id, archive: await repairDemoArchive(t.userId, t.id, until, false) })
             continue
           }
@@ -160,7 +162,7 @@ try {
   const finalEvents = await db.select().from(tradeEvent).where(inArray(tradeEvent.tradeId, ids))
   writeFileSync(`${directory}/${label}-after.json`, JSON.stringify({ trades: finalTrades, events: finalEvents, reports }, null, 2))
   console.log(JSON.stringify({ apply, reports, trades: finalTrades.map((t) => ({ id: t.id, ticker: t.ticker, status: t.status, issue: t.demoIssue })) }))
-} finally { await pool.end() }
+} finally { await closeMarketDatabase(); await pool.end() }
 
 }
 main().catch((error) => { console.error(error.message); process.exitCode = 1 })

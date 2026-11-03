@@ -1,0 +1,504 @@
+- banner:
+  - link "Zum Inhalt":
+    - /url: "#cockpit-content"
+  - link "Trading Cockpit":
+    - /url: /
+  - button "Alle Echtgeld-Depots"
+  - text: Phase 3 Synthetic
+  - button "Abmelden"
+  - complementary:
+    - paragraph: Arbeitsbereiche
+    - navigation "Hauptnavigation":
+      - link "Cockpit":
+        - /url: /
+      - link "Watchlist":
+        - /url: /watchlist
+      - link "Trades":
+        - /url: /trades
+      - link "Journal":
+        - /url: /journal
+      - link "Datensammlung":
+        - /url: /collection?fib.basis=1
+      - link "Wellenstatistik":
+        - /url: /analysis#fibonacci
+      - link "Prognoseprüfung":
+        - /url: /forecasts
+      - link "Auswertung":
+        - /url: /tracking
+      - link "Freunde":
+        - /url: /friends
+      - link "Einstellungen":
+        - /url: /settings
+- main:
+  - paragraph: Analyse & Forschung
+  - navigation "Analysebereiche":
+    - link "01 · Wellenforschung":
+      - /url: "#fibonacci"
+    - link "02 · Trades":
+      - /url: "#trades"
+    - link "03 · Prognosen":
+      - /url: "#prognosen"
+    - link "04 · Instrumente":
+      - /url: "#instrumente"
+  - region "Fibonacci-Auswertung":
+    - paragraph:
+      - strong: 73 Beobachtungen insgesamt
+      - text: · 72 Retracements · 1 Expansionen
+    - paragraph: Elliott-Wellen-Theorie
+    - heading "Wellenforschung nach Elliott" [level=2]
+    - paragraph: Wellen, Zeiträume und Fibonacci-Levels. Deine Beobachtungen systematisch untersuchen.
+    - group:
+      - text: Wellenbestand durchsuchen
+      - textbox "Wellenbestand durchsuchen":
+        - /placeholder: Tesla Welle 4 2020–2025 ABC 61,8
+    - button "CSV der Auswahl" [disabled]
+    - button "Neue Beobachtung"
+    - tablist "Forschungsperspektiven":
+      - tab "Panorama" [selected]
+      - tab "Statistikstudio"
+      - tab "Strukturvergleich"
+    - tabpanel "Panorama":
+      - heading "Die Auswahl im Überblick" [level=3]
+      - paragraph: Datenbasis und zusammengefasste Beobachtungen deiner Untersuchung.
+      - text: "Deine Untersuchung Suche und Filter gelten für Protokoll, Kennzahlen, Vergleiche und CSV. Messart: retracement"
+      - group:
+        - text: Ergänzende Textsuche (Quelle / Notiz)
+        - searchbox "Ergänzende Textsuche (Quelle / Notiz)"
+      - group:
+        - text: Arbeitsauswahl
+        - combobox "Arbeitsauswahl": Alle Beobachtungen
+      - group:
+        - text: Instrument
+        - combobox "Instrument": Alle
+      - group:
+        - text: Messart
+        - combobox "Messart": Retracement
+      - group:
+        - text: Welle
+        - combobox "Welle": Alle
+      - group:
+        - text: Zeiteinheit
+        - combobox "Zeiteinheit": Alle
+      - group:
+        - text: Wellengrad
+        - combobox "Wellengrad": Alle
+      - group:
+        - text: Wellenlabel-Umfang
+        - combobox "Wellenlabel-Umfang": Welle selbst
+      - group:
+        - text: Levelbedeutung
+        - combobox "Levelbedeutung": Alle
+      - group:
+        - text: Fibonacci-Level / von
+        - combobox "Fibonacci-Level / von": Alle
+      - group:
+        - text: Fibonacci-Bereich bis (optional)
+        - combobox "Fibonacci-Bereich bis (optional)": Alle
+      - group:
+        - text: Innere Unterteilung
+        - combobox "Innere Unterteilung": Alle
+      - group:
+        - text: Sicherheit der Unterteilung
+        - combobox "Sicherheit der Unterteilung": Alle
+      - group:
+        - text: Muster der untersuchten Welle
+        - combobox "Muster der untersuchten Welle": Alle
+      - group:
+        - text: Weitere Filter · 1 aktiv
+        - group:
+          - text: Status
+          - combobox "Status": Alle
+        - group:
+          - text: Anlageklasse
+          - combobox "Anlageklasse": Alle
+        - group:
+          - text: Zeitbasis
+          - combobox "Zeitbasis": Historische Wellenzeit
+        - group:
+          - text: Zeittreffer
+          - combobox "Zeittreffer": Sichere Treffer
+        - group:
+          - text: Hierarchiegruppe
+          - combobox "Hierarchiegruppe": Alle
+        - group:
+          - text: Ausgangswelle
+          - combobox "Ausgangswelle": FIBQA-S · 4 · 030f1607-2235-4a56-8f23-2749c7e916d7
+        - group:
+          - text: Wellenumfang
+          - combobox "Wellenumfang": Welle selbst
+        - group:
+          - text: Zeitraum von (JJJJ, JJJJ-MM oder Datum)
+          - textbox "Zeitraum von (JJJJ, JJJJ-MM oder Datum)":
+            - /placeholder: 2008 oder 2008-03 oder 2008-03-12
+        - group:
+          - text: Zeitraum bis (JJJJ, JJJJ-MM oder Datum)
+          - textbox "Zeitraum bis (JJJJ, JJJJ-MM oder Datum)":
+            - /placeholder: 2008 oder 2008-03 oder 2008-03-12
+      - button "Auswahl zurücksetzen"
+      - paragraph: "Getrennte Hierarchiegruppen: Hauptwellen / ohne Elternbezug: 0 · Unterwellen: 0"
+      - text: Beobachtungen
+      - paragraph: "0"
+      - paragraph: In der aktuellen Auswahl
+      - text: Abgeschlossene Wellen
+      - paragraph: "0"
+      - paragraph: 0 laufend · 0 unklar · 0 ungültig
+      - text: Mit Levelangaben
+      - paragraph: "0"
+      - paragraph: Schlüsselfibonacci, erreichte/verfehlte Levels oder beobachtete Umkehr
+      - text: Messart
+      - paragraph: Retracement
+      - paragraph: Kennzahlen je Messart getrennt prüfen
+      - status: Keine passenden Beobachtungen Diese Auswahl ist leer. Filter oder Suche anpassen; fehlende Daten sind keine 0-%-Quote.
+      - group:
+        - text: Datengrundlage und ergänzende Auswertungen prüfen 0 Beobachtungen
+        - paragraph: Explorative Auswahl Retracement · nur abgeschlossene gültige Werte in der Verteilung
+        - paragraph: 0 Retracements im aktuellen Filter
+        - text: Fibonacci-Levels, Zieltreffer und Dauerklassen Beobachtete relative Häufigkeiten; unbekannte Angaben sind keine Verfehlungen. Jede Welle zählt pro Kennzahl einmal. Alle Angaben verwenden die aktuellen Filter. Kleine Fallzahlen bleiben sichtbar.
+        - group:
+          - text: Innere Unterteilung · getrennt vom Muster
+          - paragraph: Bestätigte dreiteilige und fünfteilige Wellen je Muster, Wellengrad, Timeframe und Messart. Unterteilung wird weder aus dem Muster noch aus Fibonacci-Werten abgeleitet. Vermutete Angaben und laufende Wellen bleiben separat. Für Fibonacci-Verteilungen und Levelprofile die Unterteilung oben filtern.
+          - paragraph: Noch keine Wellen in dieser Auswahl.
+        - group:
+          - text: Wellenvarianten B und C
+          - paragraph: Ausdrücklich erfasste Varianten je Grundwelle, Wellengrad, Timeframe und Messart. Anteile beziehen sich nur auf abgeschlossene, eindeutig erfasste Fälle. Fehlende Einstufungen bleiben ausgeschlossen.
+          - paragraph: Noch keine B- oder C-Wellen in dieser Auswahl.
+        - group:
+          - text: Welche Schlüsselfibonaccis wurden angelaufen?
+          - paragraph: Ausdrücklich erfasste Schlüssellevel je Welle, Wellengrad, Timeframe und Messart. Zielzone und Umkehrbereich bleiben getrennt. Fehlende Angaben werden ausgeschlossen.
+          - paragraph: Noch kein bestätigtes Schlüsselfibonacci in dieser Auswahl.
+          - group: Ausschlüsse (0)
+        - group:
+          - text: Wie häufig wurden die Fibonacci-Levels erreicht?
+          - table "Levelhäufigkeiten mit bekannten erreichten und verfehlten Fällen":
+            - caption: Levelhäufigkeiten mit bekannten erreichten und verfehlten Fällen
+            - rowgroup:
+              - row "Level Erreicht Verfehlt Fallzahl Anteil erreicht":
+                - columnheader "Level"
+                - columnheader "Erreicht"
+                - columnheader "Verfehlt"
+                - columnheader "Fallzahl"
+                - columnheader "Anteil erreicht"
+            - rowgroup:
+              - row "0 · 0 % 0 0 0 —":
+                - cell "0 · 0 %"
+                - cell "0"
+                - cell "0"
+                - cell "0"
+                - cell "—"
+              - row "0,236 · 23,6 % 0 0 0 —":
+                - cell "0,236 · 23,6 %"
+                - cell "0"
+                - cell "0"
+                - cell "0"
+                - cell "—"
+              - row "0,382 · 38,2 % 0 0 0 —":
+                - cell "0,382 · 38,2 %"
+                - cell "0"
+                - cell "0"
+                - cell "0"
+                - cell "—"
+              - row "0,5 · 50 % 0 0 0 —":
+                - cell "0,5 · 50 %"
+                - cell "0"
+                - cell "0"
+                - cell "0"
+                - cell "—"
+              - row "0,618 · 61,8 % 0 0 0 —":
+                - cell "0,618 · 61,8 %"
+                - cell "0"
+                - cell "0"
+                - cell "0"
+                - cell "—"
+              - row "0,786 · 78,6 % 0 0 0 —":
+                - cell "0,786 · 78,6 %"
+                - cell "0"
+                - cell "0"
+                - cell "0"
+                - cell "—"
+              - row "0,887 · 88,7 % 0 0 0 —":
+                - cell "0,887 · 88,7 %"
+                - cell "0"
+                - cell "0"
+                - cell "0"
+                - cell "—"
+              - row "1 · 100 % 0 0 0 —":
+                - cell "1 · 100 %"
+                - cell "0"
+                - cell "0"
+                - cell "0"
+                - cell "—"
+              - row "1,236 · 123,6 % 0 0 0 —":
+                - cell "1,236 · 123,6 %"
+                - cell "0"
+                - cell "0"
+                - cell "0"
+                - cell "—"
+              - row "1,382 · 138,2 % 0 0 0 —":
+                - cell "1,382 · 138,2 %"
+                - cell "0"
+                - cell "0"
+                - cell "0"
+                - cell "—"
+              - row "1,5 · 150 % 0 0 0 —":
+                - cell "1,5 · 150 %"
+                - cell "0"
+                - cell "0"
+                - cell "0"
+                - cell "—"
+              - row "1,618 · 161,8 % 0 0 0 —":
+                - cell "1,618 · 161,8 %"
+                - cell "0"
+                - cell "0"
+                - cell "0"
+                - cell "—"
+              - row "1,786 · 178,6 % 0 0 0 —":
+                - cell "1,786 · 178,6 %"
+                - cell "0"
+                - cell "0"
+                - cell "0"
+                - cell "—"
+              - row "1,887 · 188,7 % 0 0 0 —":
+                - cell "1,887 · 188,7 %"
+                - cell "0"
+                - cell "0"
+                - cell "0"
+                - cell "—"
+              - row "2 · 200 % 0 0 0 —":
+                - cell "2 · 200 %"
+                - cell "0"
+                - cell "0"
+                - cell "0"
+                - cell "—"
+              - row "2,236 · 223,6 % 0 0 0 —":
+                - cell "2,236 · 223,6 %"
+                - cell "0"
+                - cell "0"
+                - cell "0"
+                - cell "—"
+              - row "2,382 · 238,2 % 0 0 0 —":
+                - cell "2,382 · 238,2 %"
+                - cell "0"
+                - cell "0"
+                - cell "0"
+                - cell "—"
+              - row "2,5 · 250 % 0 0 0 —":
+                - cell "2,5 · 250 %"
+                - cell "0"
+                - cell "0"
+                - cell "0"
+                - cell "—"
+              - row "2,618 · 261,8 % 0 0 0 —":
+                - cell "2,618 · 261,8 %"
+                - cell "0"
+                - cell "0"
+                - cell "0"
+                - cell "—"
+              - row "2,786 · 278,6 % 0 0 0 —":
+                - cell "2,786 · 278,6 %"
+                - cell "0"
+                - cell "0"
+                - cell "0"
+                - cell "—"
+              - row "2,887 · 288,7 % 0 0 0 —":
+                - cell "2,887 · 288,7 %"
+                - cell "0"
+                - cell "0"
+                - cell "0"
+                - cell "—"
+              - row "3 · 300 % 0 0 0 —":
+                - cell "3 · 300 %"
+                - cell "0"
+                - cell "0"
+                - cell "0"
+                - cell "—"
+              - row "3,236 · 323,6 % 0 0 0 —":
+                - cell "3,236 · 323,6 %"
+                - cell "0"
+                - cell "0"
+                - cell "0"
+                - cell "—"
+              - row "3,382 · 338,2 % 0 0 0 —":
+                - cell "3,382 · 338,2 %"
+                - cell "0"
+                - cell "0"
+                - cell "0"
+                - cell "—"
+              - row "3,5 · 350 % 0 0 0 —":
+                - cell "3,5 · 350 %"
+                - cell "0"
+                - cell "0"
+                - cell "0"
+                - cell "—"
+              - row "3,618 · 361,8 % 0 0 0 —":
+                - cell "3,618 · 361,8 %"
+                - cell "0"
+                - cell "0"
+                - cell "0"
+                - cell "—"
+              - row "3,786 · 378,6 % 0 0 0 —":
+                - cell "3,786 · 378,6 %"
+                - cell "0"
+                - cell "0"
+                - cell "0"
+                - cell "—"
+              - row "3,887 · 388,7 % 0 0 0 —":
+                - cell "3,887 · 388,7 %"
+                - cell "0"
+                - cell "0"
+                - cell "0"
+                - cell "—"
+          - paragraph: Nur ausdrücklich bekannte Levelangaben zählen. Eine fehlende Angabe ist keine Verfehlung.
+          - group: Fälle und Ausschlüsse je Level
+        - group:
+          - text: An welchen Fibonacci-Levels drehten die Wellen?
+          - paragraph: Beobachtete Umkehrhäufigkeiten je Welle, Wellengrad und Timeframe. Bereiche bleiben eigene Kategorien und werden keinem einzelnen Level zugeschlagen.
+          - paragraph: Noch keine bestätigte Umkehr in dieser Auswahl.
+          - group: Ausgeschlossene Umkehrangaben
+        - group:
+          - text: Umkehr innerhalb der erwarteten Zielzone
+          - paragraph: Treffer = Umkehr innerhalb der Zone, einschließlich ihrer Grenzen. Bloße Berührung oder Durchlaufen zählt nicht als Zieltreffer. Rückblickende Erwartungen sind keine Vorhersagen.
+          - paragraph: Noch keine erwartete Zielzone in dieser Auswahl erfasst.
+        - group:
+          - text: Dauerverteilung · getrennte Vergleichsgruppen
+          - paragraph: "Zielzonenkontakt bis Wellenwendepunkt: Vom ersten Kontakt mit der dokumentierten Zielzone bis zum rückblickend bestimmten Ende der untersuchten Welle und Beginn der Folgewelle. Nicht bis zur späteren Bestätigung der Trendwende. Zwischenzeitliche Austritte unterbrechen diese Zeitspanne nicht. Verweildauer in der Zielzone: Zeit innerhalb der dokumentierten Zielzone: erster Aufenthalt vom ersten Kontakt bis zum ersten Austritt oder Summe aller Aufenthalte. Die Austrittsrichtung ist beliebig; Zeiten außerhalb der Zone zählen nicht mit. Die Messweise wird ausdrücklich ausgewählt. Kalenderzeit einschließlich Nächten, Wochenenden und Feiertagen. Altangaben behalten ihre bisherige Zeitbasis und Messweise."
+          - paragraph: Jede Gruppe hat dieselbe Welle, denselben Wellengrad und Timeframe, dieselbe Messart, Zone, Zeitbasis und Messweise. Keine Mittelwerte aus Klassenmitten. Ein Handelstag wird nicht in Stunden umgerechnet.
+          - paragraph: Noch keine geeigneten Dauerklassen in dieser Auswahl.
+          - group: Ausschlüsse und unbekannte Dauern
+        - group: Wellenstrukturen · Hauptstruktur und Untertyp
+        - text: Zielzonenkontakt bis Wellenwendepunkt · exakte Dauern Erster Kontakt mit der dokumentierten Zielzone bis Ende der untersuchten Welle / Beginn der Folgewelle, nicht bis zur späteren Bestätigung. Kalenderzeit; getrennt von der Verweildauer in der Zone. Nur abgeschlossene Fälle mit ausdrücklich exakter Angabe zählen im jeweiligen Gruppenmittel.
+        - paragraph: Noch keine vergleichbaren exakten Wendepunktdauern in dieser Auswahl.
+        - group: Ausschlüsse der Wendepunktdauer (0)
+        - group: Bestandsdaten und ergänzende Kennzahlen
+        - tablist "Messarbeit und Auswertung":
+          - tab "Messprotokoll 0" [selected]
+          - tab "Altbestand · exakte Werte"
+          - tab "Strukturen & Stops"
+          - tab "Laufend & Simulation"
+          - tab "Tradebezug"
+          - tab "Kursdaten"
+        - tabpanel "Messprotokoll 0":
+          - text: Messprotokoll Fälle wiederfinden, Quellen prüfen und bestehende Messungen ergänzen.
+          - group:
+            - text: Sortierung
+            - combobox "Sortierung": Neueste zuerst
+          - heading "Keine passenden Beobachtungen" [level=3]
+          - paragraph: Die Kombination aus Suche und Filtern ergibt keine Fälle. Setze die Auswahl zurück oder passe einzelne Filter an.
+          - button "Auswahl zurücksetzen"
+    - group: Messdefinition & Grenzen
+  - region "Trade-Auswertung":
+    - text: Echtgeld · Alle eigenen Depots · 0 eingetragene Trades Jeder gespeicherte Trade geht automatisch mit seinen vorhandenen Angaben ein. Echtgeld · Alle eigenen Depots. Alle Instrumente. Wellen-, Messart- und Erfassungsdatumsfilter gelten hier nicht. Fehlende Abrechnung begrenzt ausschließlich davon abhängige Ergebniskennzahlen.
+    - paragraph: Status · n=0
+    - paragraph: Noch keine Trades
+    - paragraph: Handelsrichtung · n=0
+    - paragraph: Noch keine Angaben
+    - paragraph: Ø aktuelles Plan-CRV · offen
+    - paragraph: n=0 von 0. Arithmetisches Mittel aller aktuell gespeicherten positiven Plan-CRV; unabhängig von Status oder Abrechnung. Kein realisiertes R.
+    - paragraph: Qualitative Trefferquote · offen
+    - paragraph: "Gewinne: 0 · Verluste: 0 · Break-even: 0"
+    - paragraph: n=0 von 0 abgeschlossenen Trades. Qualitative Trefferquote = gespeicherte Gewinne / abgeschlossene Trades mit bekanntem Gewinn, Verlust oder Break-even. Break-even zählt im Nenner. Keine Netto-Trefferquote.
+    - text: "Count/erwartete Welle: 0 · Wellengrad: 0 · Plankontext: 0 · qualitative Notiz: 0 · jeweils von 0 Trades"
+    - group: Einbezogene Trades und fehlende Angaben je Kennzahl
+    - group: Alle 0 Trades im Einzelnen
+    - paragraph: Tatsächliche Nettoergebnisse und realisiertes R
+    - text: Tatsächliche Echtgeld-Trades Netto nach erfassten Kosten · Break-even im Nenner · ursprünglicher Plan
+    - paragraph: Echtgeld · 0 abgeschlossen
+    - paragraph: Gewinnquote netto
+    - paragraph: Nicht berechenbar
+    - paragraph: n=0 · 0 ohne Grundlage
+    - paragraph: Ø geplantes CRV
+    - paragraph: Nicht berechenbar
+    - paragraph: n=0 · 0 ohne Grundlage
+    - paragraph: Ø realisiertes R
+    - paragraph: Nicht berechenbar
+    - paragraph: n=0 · 0 ohne Grundlage
+    - text: Demo · Alle eigenen Depots · 2 eingetragene Trades Jeder gespeicherte Trade geht automatisch mit seinen vorhandenen Angaben ein. Demo · Alle eigenen Depots. Alle Instrumente. Wellen-, Messart- und Erfassungsdatumsfilter gelten hier nicht. Fehlende Abrechnung begrenzt ausschließlich davon abhängige Ergebniskennzahlen.
+    - paragraph: Status · n=2
+    - paragraph: "abgeschlossen: 1 · aktiv: 1"
+    - paragraph: Handelsrichtung · n=2
+    - paragraph: "long: 2"
+    - paragraph: Ø aktuelles Plan-CRV · offen
+    - paragraph: n=0 von 2. Arithmetisches Mittel aller aktuell gespeicherten positiven Plan-CRV; unabhängig von Status oder Abrechnung. Kein realisiertes R.
+    - paragraph: Qualitative Trefferquote · 100 %
+    - paragraph: "Gewinne: 1 · Verluste: 0 · Break-even: 0"
+    - paragraph: n=1 von 1 abgeschlossenen Trades. Qualitative Trefferquote = gespeicherte Gewinne / abgeschlossene Trades mit bekanntem Gewinn, Verlust oder Break-even. Break-even zählt im Nenner. Keine Netto-Trefferquote.
+    - text: "Count/erwartete Welle: 0 · Wellengrad: 0 · Plankontext: 0 · qualitative Notiz: 0 · jeweils von 2 Trades"
+    - group: Einbezogene Trades und fehlende Angaben je Kennzahl
+    - group: Alle 2 Trades im Einzelnen
+    - paragraph: Tatsächliche Nettoergebnisse und realisiertes R
+    - text: Demo-Trades Netto nach erfassten Kosten · Break-even im Nenner · ursprünglicher Plan
+    - paragraph: Demo · 1 abgeschlossen
+    - paragraph: Gewinnquote netto
+    - paragraph: 100%
+    - paragraph: n=1 · 0 ohne Grundlage
+    - paragraph: Ø geplantes CRV
+    - paragraph: Nicht berechenbar
+    - paragraph: n=0 · 1 ohne Grundlage
+    - paragraph: Ø realisiertes R
+    - paragraph: Nicht berechenbar
+    - paragraph: n=0 · 1 ohne Grundlage
+    - paragraph: "USD: 2.000 netto · n=1 · 0 unvollständig"
+    - paragraph: "Abweichende Handelsart im Trade-Feld: 1, 900. Die Auswertung verwendet das eigene Depot; gespeicherte Angaben wurden nicht korrigiert."
+  - region "Prognoseauswertung":
+    - text: Prognosen · eigene Bewertungen
+    - paragraph: Bewertete Prognosen über deine Instrumente. Die Messfilter der Wellenforschung gelten für diesen Bereich nicht.
+    - paragraph: Trefferquote gesamt
+    - paragraph: —
+    - paragraph: Richtig
+    - paragraph: "0"
+    - paragraph: Falsch
+    - paragraph: "0"
+    - paragraph: Aktien getrackt
+    - paragraph: "1"
+    - heading "Trefferquote im Verlauf" [level=3]
+    - paragraph: Kumulierte Quote über alle Einschätzungen
+    - paragraph: Noch keine Daten
+    - paragraph: Sobald du Einschätzungen erfasst, erscheint hier der Verlauf deiner Trefferquote.
+    - heading "Richtig / Falsch" [level=3]
+    - paragraph: Gesamtverteilung
+    - paragraph: Noch keine Daten
+    - paragraph: Erfasse Einschätzungen, um die Verteilung zu sehen.
+    - heading "Richtig / Falsch" [level=3]
+    - paragraph: Anzahl im Vergleich
+    - paragraph: Noch keine Daten
+    - paragraph: Erfasse Einschätzungen, um die Verteilung zu sehen.
+    - text: Richtig 0 Falsch 0
+  - region "Instrumentübersicht":
+    - text: Instrumente · Prognose und Umsetzung
+    - button "Aktie hinzufügen"
+    - textbox "Instrumente durchsuchen":
+      - /placeholder: Instrument suchen (Name oder Ticker)…
+    - link "FIBQA-S Synthetische Aktie · Aktien 111,00USD":
+      - /url: /stock/1
+    - paragraph: Instrument-Gesamtwerte · alle Depots · Kursstand 16.11.2023, 01:00:00
+    - paragraph: Echtgeld · 0 abgeschlossen
+    - paragraph: Gewinnquote netto
+    - paragraph: Nicht berechenbar
+    - paragraph: n=0 · 0 ohne Grundlage
+    - paragraph: Ø geplantes CRV
+    - paragraph: Nicht berechenbar
+    - paragraph: n=0 · 0 ohne Grundlage
+    - paragraph: Ø realisiertes R
+    - paragraph: Nicht berechenbar
+    - paragraph: n=0 · 0 ohne Grundlage
+    - paragraph: Demo · 1 abgeschlossen
+    - paragraph: Gewinnquote netto
+    - paragraph: 100%
+    - paragraph: n=1 · 0 ohne Grundlage
+    - paragraph: Ø geplantes CRV
+    - paragraph: Nicht berechenbar
+    - paragraph: n=0 · 1 ohne Grundlage
+    - paragraph: Ø realisiertes R
+    - paragraph: Nicht berechenbar
+    - paragraph: n=0 · 1 ohne Grundlage
+    - paragraph: "USD: 2.000 netto · n=1 · 0 unvollständig"
+    - text: "Wellen: 73"
+    - link "Retracements n=70 · Expansionen n=0":
+      - /url: /stock/1#fibonacci
+    - text: Prognosen 0 —
+    - button "Chart-Link"
+    - link "Details":
+      - /url: /stock/1
+    - button "Einschätzung"
+    - button "Synthetische Aktie löschen"
+- region "Notifications alt+T"
+- alert

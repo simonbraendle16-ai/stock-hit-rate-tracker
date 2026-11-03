@@ -1,0 +1,102 @@
+﻿[
+    {
+        "path":  ".github/workflow-templates/active-trade-market-data.yml.disabled",
+        "sha256":  "c583cab7a9d8b93926735822b70cbfb27451669bd2aa8f5e221253cecc3da19d"
+    },
+    {
+        "path":  "app/actions/symbols.ts",
+        "sha256":  "7d00247328ef54a924d0bc632ffc010b0d65fe946a8524cb6decd4011a02623c"
+    },
+    {
+        "path":  "app/api/cron/collect-candles/route.ts",
+        "sha256":  "c663e63cbd456f33e6e16d2bdf69be510a5ccbbf0dc72956a6bd271bdafb9c73"
+    },
+    {
+        "path":  "app/api/cron/sync-symbols/route.ts",
+        "sha256":  "ba233e6e4a39b2aabacf80c4988e175c98102b073422841b8fa96a9639bd955f"
+    },
+    {
+        "path":  "app/api/sparklines/route.ts",
+        "sha256":  "0a00af039e906b1223513bf22f83f161539a1dc4d9b3e806c4f2035ed9606c2f"
+    },
+    {
+        "path":  "components/analysis-auto-refresh.tsx",
+        "sha256":  "7933df68166dc662f39e6d6ade81d86576a8c0eb1f476f4c285d222e971b9758"
+    },
+    {
+        "path":  "components/quote-auto-refresh.tsx",
+        "sha256":  "80caa2086ff3ae9bfe61dd736df076a69a58be640958eec56ab6093653654a36"
+    },
+    {
+        "path":  "components/watchlist/use-sparklines.ts",
+        "sha256":  "649f1658afbc9072352b5119ea678b5c255b056992b10c9a41bbd58ec55a4436"
+    },
+    {
+        "path":  "components/watchlist/watchlist-grid.tsx",
+        "sha256":  "f98793599947c2452eedb91a264cf8b4adf6309b35c2ee1325cab289125526bf"
+    },
+    {
+        "path":  "docs/phase2-qa/README.md",
+        "sha256":  "484b036d538629ce1e89b5df7f9badaf69663a0ec6734f5567d131f9cd5864a7"
+    },
+    {
+        "path":  "docs/phase2-qa/regressions.json",
+        "sha256":  "39d9dbf18a03183713e6d0738a59c10cc985378047590825d0547296b4ef204a"
+    },
+    {
+        "path":  "lib/alert-run-service.ts",
+        "sha256":  "88f493986e3883b85468e4a4d15888038d2c0c5e7e4563d4591472405be60be5"
+    },
+    {
+        "path":  "lib/analysis-auto-refresh.test.ts",
+        "sha256":  "f1c8779d9d7f4e6c8c0a52edcf73296e54e593ab292c06d4e053c24437781418"
+    },
+    {
+        "path":  "lib/fibonacci-db.test.ts",
+        "sha256":  "78af616222cee6cd6c7460aabae10d4a0aff26d74ad8c0eec62e51871841cca1"
+    },
+    {
+        "path":  "lib/market-data/active-trade-demand.ts",
+        "sha256":  "7b8df0bb0a816579379d502b20412606a6685fce3cffed8ab7f019d69731f43f"
+    },
+    {
+        "path":  "lib/market-data/browser-demand.test.ts",
+        "sha256":  "67d8b3c618498dab0c50a510646d7a10b47c32e4c19ca3229f1c1205558ecd8b"
+    },
+    {
+        "path":  "lib/market-data/candle-collect.test.ts",
+        "sha256":  "bf7755c31e3ed7fcc5bbd61d06669b55ecabc98f9c6c3d472de6dce6972981bb"
+    },
+    {
+        "path":  "lib/market-data/candle-collect.ts",
+        "sha256":  "a4604917de7c244a6fbedaa2fe2b45ad640dfc14af6a23b64392985768174539"
+    },
+    {
+        "path":  "lib/market-data/collect-route.test.ts",
+        "sha256":  "065f2077c1246e3da8a1105bdaff41a99a478062b53460c519f9a61c9796fb6b"
+    },
+    {
+        "path":  "lib/market-data/quote.ts",
+        "sha256":  "1b5d287325e1d9cbca51854c15650bcfc812921ade2da448bf63fa72894c9843"
+    },
+    {
+        "path":  "lib/market-data/sparklines-transfer.test.ts",
+        "sha256":  "af67cda56f93e34ce4fb5fd8fe947944e202d2da347789089e45063b396fb1bf"
+    },
+    {
+        "path":  "lib/market-data/sync.ts",
+        "sha256":  "6248ffc8da2625a34490d0d2097b086048876462f7362db151a4006bd928e47d"
+    },
+    {
+        "path":  "lib/market-data/sync-demand.test.ts",
+        "sha256":  "2eea0ef4fa4c5e4ccc462b862e271dd5d0fb9b2c83b70a3a59aca4181ad0596f"
+    },
+    {
+        "path":  "lib/market-data/yahoo.ts",
+        "sha256":  "9f48deb61fa96fe2d94ed8492d5ff6924eff855a1c06c22d3124a5dce93ed6a1"
+    },
+    {
+        "path":  "lib/market-data/yahoo-quote.test.ts",
+        "sha256":  "9da8dbe20732bb737bbe01b7b3ee2265757e13c8fcf891c5507e49d45045b5b2"
+    }
+]

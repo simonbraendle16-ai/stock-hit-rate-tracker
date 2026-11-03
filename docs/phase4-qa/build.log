@@ -1,0 +1,82 @@
+▲ Next.js 16.2.6 (Turbopack)
+- Environments: .env.local
+- Experiments (use with caution):
+  · serverActions
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 10.6s
+  Skipping validation of types
+  Finished TypeScript config validation in 29ms ...
+  Collecting page data using 15 workers ...
+  Generating static pages using 15 workers (0/35) ...
+  Generating static pages using 15 workers (8/35) 
+  Generating static pages using 15 workers (17/35) 
+  Generating static pages using 15 workers (26/35) 
+✓ Generating static pages using 15 workers (35/35) in 1503ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ƒ /
+├ ○ /_not-found
+├ ƒ /analysis
+├ ƒ /api/activity
+├ ƒ /api/assistant/v1/broker-exits
+├ ƒ /api/assistant/v1/broker-orders
+├ ƒ /api/assistant/v1/broker-orders/[id]/activate
+├ ƒ /api/assistant/v1/broker-orders/[id]/link
+├ ƒ /api/assistant/v1/fibonacci
+├ ƒ /api/assistant/v1/fibonacci/[id]
+├ ƒ /api/assistant/v1/fibonacci/[id]/revisions
+├ ƒ /api/assistant/v1/fibonacci/context
+├ ƒ /api/assistant/v1/fibonacci/history
+├ ƒ /api/assistant/v1/fibonacci/history/[id]
+├ ƒ /api/assistant/v1/insights
+├ ƒ /api/assistant/v1/insights/[id]
+├ ƒ /api/assistant/v1/instruments
+├ ƒ /api/assistant/v1/journal
+├ ƒ /api/assistant/v1/journal/[id]
+├ ƒ /api/assistant/v1/knowledge/manifest
+├ ƒ /api/assistant/v1/market-data/status
+├ ƒ /api/assistant/v1/portfolios
+├ ƒ /api/assistant/v1/portfolios/[id]
+├ ƒ /api/assistant/v1/trades
+├ ƒ /api/assistant/v1/trades/[id]
+├ ƒ /api/assistant/v1/trades/[id]/actions
+├ ƒ /api/assistant/v1/trades/[id]/events/[eventId]/revisions
+├ ƒ /api/assistant/v1/trades/[id]/review
+├ ƒ /api/assistant/v1/trades/[id]/settlements
+├ ƒ /api/auth/[...all]
+├ ƒ /api/candles
+├ ƒ /api/cron/check-alerts
+├ ƒ /api/cron/collect-candles
+├ ƒ /api/cron/demo-cycle
+├ ƒ /api/cron/demo-fills
+├ ƒ /api/cron/sync-symbols
+├ ƒ /api/quote
+├ ƒ /api/sparklines
+├ ƒ /broker-orders
+├ ƒ /collection
+├ ƒ /forecasts
+├ ƒ /friends
+├ ƒ /friends/[id]
+├ ƒ /journal
+├ ƒ /settings
+├ ƒ /settings/assistant-api
+├ ƒ /sign-in
+├ ƒ /sign-up
+├ ƒ /stock/[id]
+├ ƒ /tracking
+├ ƒ /trades
+├ ƒ /trades/[id]
+├ ƒ /trades/[id]/einstieg
+├ ƒ /trades/new
+├ ○ /trainer
+├ ƒ /trainer/[id]
+├ ○ /trainer/frei
+├ ○ /trainer/statistik
+└ ƒ /watchlist
+
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+

@@ -1,0 +1,300 @@
+- banner:
+  - link "Zum Inhalt":
+    - /url: "#cockpit-content"
+  - link "Trading Cockpit":
+    - /url: /
+  - button "Alle Echtgeld-Depots"
+  - text: Phase 3 Synthetic
+  - button "Abmelden"
+  - complementary:
+    - paragraph: Arbeitsbereiche
+    - navigation "Hauptnavigation":
+      - link "Cockpit":
+        - /url: /
+      - link "Watchlist":
+        - /url: /watchlist
+      - link "Trades":
+        - /url: /trades
+      - link "Journal":
+        - /url: /journal
+      - link "Datensammlung":
+        - /url: /collection?fib.basis=1
+      - link "Wellenstatistik":
+        - /url: /analysis#fibonacci
+      - link "Prognoseprüfung":
+        - /url: /forecasts
+      - link "Auswertung":
+        - /url: /tracking
+      - link "Freunde":
+        - /url: /friends
+      - link "Einstellungen":
+        - /url: /settings
+- main:
+  - paragraph: Analyse & Forschung
+  - navigation "Analysebereiche":
+    - link "01 · Wellenforschung":
+      - /url: "#fibonacci"
+    - link "02 · Trades":
+      - /url: "#trades"
+    - link "03 · Prognosen":
+      - /url: "#prognosen"
+    - link "04 · Instrumente":
+      - /url: "#instrumente"
+  - region "Fibonacci-Auswertung":
+    - paragraph:
+      - strong: 70 Beobachtungen insgesamt
+      - text: · 70 Retracements · 0 Expansionen
+    - paragraph: Elliott-Wellen-Theorie
+    - heading "Wellenforschung nach Elliott" [level=2]
+    - paragraph: Wellen, Zeiträume und Fibonacci-Levels. Deine Beobachtungen systematisch untersuchen.
+    - group:
+      - text: Wellenbestand durchsuchen
+      - textbox "Wellenbestand durchsuchen":
+        - /placeholder: Tesla Welle 4 2020–2025 ABC 61,8
+    - button "CSV der Auswahl"
+    - button "Neue Beobachtung"
+    - tablist "Forschungsperspektiven":
+      - tab "Panorama" [selected]
+      - tab "Statistikstudio"
+      - tab "Strukturvergleich"
+    - tabpanel "Panorama":
+      - heading "Die Auswahl im Überblick" [level=3]
+      - paragraph: Datenbasis und zusammengefasste Beobachtungen deiner Untersuchung.
+      - text: "Deine Untersuchung Suche und Filter gelten für Protokoll, Kennzahlen, Vergleiche und CSV. Messart: retracement"
+      - group:
+        - text: Ergänzende Textsuche (Quelle / Notiz)
+        - searchbox "Ergänzende Textsuche (Quelle / Notiz)"
+      - group:
+        - text: Arbeitsauswahl
+        - combobox "Arbeitsauswahl": Alle Beobachtungen
+      - group:
+        - text: Instrument
+        - combobox "Instrument": Alle
+      - group:
+        - text: Messart
+        - combobox "Messart": Retracement
+      - group:
+        - text: Welle
+        - combobox "Welle": Alle
+      - group:
+        - text: Zeiteinheit
+        - combobox "Zeiteinheit": Alle
+      - group:
+        - text: Wellengrad
+        - combobox "Wellengrad": Alle
+      - group:
+        - text: Wellenlabel-Umfang
+        - combobox "Wellenlabel-Umfang": Welle selbst
+      - group:
+        - text: Levelbedeutung
+        - combobox "Levelbedeutung": Alle
+      - group:
+        - text: Fibonacci-Level / von
+        - combobox "Fibonacci-Level / von": Alle
+      - group:
+        - text: Fibonacci-Bereich bis (optional)
+        - combobox "Fibonacci-Bereich bis (optional)": Alle
+      - group:
+        - text: Innere Unterteilung
+        - combobox "Innere Unterteilung": Alle
+      - group:
+        - text: Sicherheit der Unterteilung
+        - combobox "Sicherheit der Unterteilung": Alle
+      - group:
+        - text: Muster der untersuchten Welle
+        - combobox "Muster der untersuchten Welle": Alle
+      - group: Weitere Filter
+      - button "Auswahl zurücksetzen"
+      - paragraph: "Getrennte Hierarchiegruppen: Hauptwellen / ohne Elternbezug: 70 · Unterwellen: 0"
+      - text: Beobachtungen
+      - paragraph: "70"
+      - paragraph: In der aktuellen Auswahl
+      - text: Abgeschlossene Wellen
+      - paragraph: "70"
+      - paragraph: 0 laufend · 0 unklar · 0 ungültig
+      - text: Mit Levelangaben
+      - paragraph: "0"
+      - paragraph: Schlüsselfibonacci, erreichte/verfehlte Levels oder beobachtete Umkehr
+      - text: Messart
+      - paragraph: Retracement
+      - paragraph: Kennzahlen je Messart getrennt prüfen
+      - paragraph: Beobachtete Häufigkeiten · abgeschlossene Fälle je Kennzahl · unbekannte Angaben außerhalb des Nenners. Kleine Stichproben bleiben explorativ.
+      - region "Retracement-Statistik":
+        - heading "Retracement" [level=3]
+        - paragraph: 70 Beobachtungen · 70 abgeschlossen · eigene Basis je Kennzahl
+        - heading "Wo Wellen umkehren" [level=4]
+        - text: Dokumentierte Endlagen abgeschlossener Wellen. Punktlevel und Bereiche bleiben getrennt.
+        - paragraph: Noch keine bestätigten Umkehrlevel oder Umkehrbereiche in dieser Auswahl.
+        - paragraph: "70 ausgeschlossen: Umkehrlevel/-bereich nicht erhoben (70)."
+        - heading "Welche Muster auftreten" [level=4]
+        - text: Bekannte Strukturfamilien. Untertypen werden innerhalb ihrer Familie gezählt.
+        - figure "Strukturfamilien":
+          - text: Strukturfamilien · n=0
+          - paragraph: Keine verwendbare Grundlage. Anteil nicht berechenbar.
+        - paragraph: 7 weitere Katalogfamilien ohne beobachteten Fall im Nenner.
+        - text: "70 ohne verwendbare Strukturfamilie: fehlend, unbekannt, ungeklärt oder nicht abgeschlossen. Keine Ableitung der inneren Unterteilung."
+        - heading "Welche Levels erreicht werden" [level=4]
+        - text: Jedes Level hat seinen eigenen Nenner. Eine Welle kann mehrere Levels erreichen; Zeilen nicht addieren.
+        - paragraph: Noch keine bestätigte Levelerreichung oder Verfehlung. Keine Quote berechenbar.
+        - paragraph: 28 Kataloglevel ohne bekannte Grundlage; keine 0-%-Werte.
+        - text: Erreicht = Akzentbalken · verfehlt und ohne bestätigte Angabe separat. Keine endgültige Umkehrverteilung.
+        - heading "Umkehr in der erwarteten Zone" [level=4]
+        - text: Nur eine belegte Endlage zählt. Berührung oder Durchlaufen allein ist kein Treffer.
+        - paragraph: Noch keine dokumentierten Zielzonen. Unbekannt ist kein verfehltes Ziel.
+        - text: 70 ohne dokumentierte Zielzone. Beobachtete Häufigkeit, keine Prognose- oder Gewinnquote.
+        - heading "Innere Wellenunterteilung" [level=4]
+        - text: Bestätigte dreiteilige und fünfteilige Unterteilungen zählen auch ohne exakten Fibonacci-Prozentwert. Muster und Mustersicherheit bleiben eigenständig.
+        - 'figure "Welle 4 · Minor · 1 · 1d · Muster: Unbekannt (unbekannt)"':
+          - text: "Welle 4 · Minor · 1 · 1d · Muster: Unbekannt (unbekannt) · n=0"
+          - paragraph: Keine verwendbare Grundlage. Anteil nicht berechenbar.
+        - paragraph: 70 vermutet / unbekannt · 0 laufend · Basis 70
+        - paragraph: "70 ausgeschlossen: Unterteilung nicht erhoben oder unbekannt (70)."
+        - text: Vermutete und unbekannte abgeschlossene Angaben, laufende Fälle und weitere Ausschlüsse zählen nicht in den bestätigten Nenner.
+        - heading "Dokumentierte Wellenvarianten" [level=4]
+        - text: B überschießend, B unterschießend und C truncated bleiben explizit erfasste Untergruppen ihrer Grundwelle.
+        - paragraph: Keine B-/C-Wellen in dieser Auswahl.
+        - text: Keine automatische Einstufung aus Fibonacci-Werten oder Mustern. Nicht klassifizierte Fälle bleiben ausgeschlossen.
+      - region "Zeit und Dauer":
+        - heading "Zeit und Dauer" [level=3]
+        - paragraph: Kalenderzeit einschließlich Nächten, Wochenenden und Feiertagen. Alte Handelszeit und offene Messgrenzen bleiben eigene Gruppen. Klassen liefern keine Mittelwerte.
+        - heading "Retracement · Welle 4 · Variante nicht erhoben · Minor · 1 · 1d · Aufwärts · Hauptwellen / ohne Elternbezug · Messbezug nicht erhoben · 70 Beobachtungen" [level=4]
+        - text: Historische Zeit Dokumentierter Wellenbeginn nach Jahr und Originalgenauigkeit. Alle Status; keine Erfassungsdaten als Ersatz. Ungefähre Angaben sind keine gesicherte Jahreszuordnung.
+        - figure "Berichtetes Startjahr":
+          - text: Berichtetes Startjahr · n=0
+          - paragraph: Keine verwendbare Grundlage. Anteil nicht berechenbar.
+        - text: 70 ohne verwendbaren Wellenbeginn außerhalb n. Ein bekanntes Ende ersetzt keinen fehlenden Beginn. Keine Dauerschätzung aus Datumsgrenzen. Wellendauer Berichtete Klassen der gesamten Welle.
+        - paragraph: Keine verwendbare Dauerklasse. Keine Quote berechenbar.
+        - paragraph: "70 ausgeschlossen: Dauerklasse nicht erhoben (70)."
+        - text: Zielzonenkontakt bis Wellenwendepunkt Vom ersten Kontakt mit der dokumentierten Zielzone bis zum rückblickend bestimmten Ende der untersuchten Welle und Beginn der Folgewelle. Nicht bis zur späteren Bestätigung der Trendwende. Zwischenzeitliche Austritte unterbrechen diese Zeitspanne nicht.
+        - paragraph: Keine verwendbare Dauerklasse. Keine Quote berechenbar.
+        - paragraph: Exakte Messungen · getrennt von Klassen
+        - paragraph: Keine vergleichbaren exakten Messungen.
+        - paragraph: "70 ausgeschlossen: Nicht erhoben (70)."
+        - paragraph: Ungefähre Werte, Bereiche, Obergrenzen und unbekannte Dauern bleiben außerhalb exakter Mittelwerte.
+        - paragraph: "70 ausgeschlossen: Dauerklasse nicht erhoben (70)."
+        - text: "Verweildauer in der Zielzone Zeit innerhalb der dokumentierten Zielzone: erster Aufenthalt vom ersten Kontakt bis zum ersten Austritt oder Summe aller Aufenthalte. Die Austrittsrichtung ist beliebig; Zeiten außerhalb der Zone zählen nicht mit. Die Messweise wird ausdrücklich ausgewählt."
+        - paragraph: Keine verwendbare Dauerklasse. Keine Quote berechenbar.
+        - paragraph: Exakte Messungen · getrennt von Klassen
+        - paragraph: Keine vergleichbaren exakten Messungen.
+        - paragraph: "70 ausgeschlossen: Nicht erhoben (70)."
+        - paragraph: Ungefähre Werte, Bereiche, Obergrenzen und unbekannte Dauern bleiben außerhalb exakter Mittelwerte.
+        - paragraph: "70 ausgeschlossen: Dauerklasse nicht erhoben (70)."
+      - group: Datengrundlage und ergänzende Auswertungen prüfen 70 Beobachtungen
+    - group: Messdefinition & Grenzen
+  - region "Trade-Auswertung":
+    - text: Echtgeld · Alle eigenen Depots · 0 eingetragene Trades Jeder gespeicherte Trade geht automatisch mit seinen vorhandenen Angaben ein. Echtgeld · Alle eigenen Depots. Alle Instrumente. Wellen-, Messart- und Erfassungsdatumsfilter gelten hier nicht. Fehlende Abrechnung begrenzt ausschließlich davon abhängige Ergebniskennzahlen.
+    - paragraph: Status · n=0
+    - paragraph: Noch keine Trades
+    - paragraph: Handelsrichtung · n=0
+    - paragraph: Noch keine Angaben
+    - paragraph: Ø aktuelles Plan-CRV · offen
+    - paragraph: n=0 von 0. Arithmetisches Mittel aller aktuell gespeicherten positiven Plan-CRV; unabhängig von Status oder Abrechnung. Kein realisiertes R.
+    - paragraph: Qualitative Trefferquote · offen
+    - paragraph: "Gewinne: 0 · Verluste: 0 · Break-even: 0"
+    - paragraph: n=0 von 0 abgeschlossenen Trades. Qualitative Trefferquote = gespeicherte Gewinne / abgeschlossene Trades mit bekanntem Gewinn, Verlust oder Break-even. Break-even zählt im Nenner. Keine Netto-Trefferquote.
+    - text: "Count/erwartete Welle: 0 · Wellengrad: 0 · Plankontext: 0 · qualitative Notiz: 0 · jeweils von 0 Trades"
+    - group: Einbezogene Trades und fehlende Angaben je Kennzahl
+    - group: Alle 0 Trades im Einzelnen
+    - paragraph: Tatsächliche Nettoergebnisse und realisiertes R
+    - text: Tatsächliche Echtgeld-Trades Netto nach erfassten Kosten · Break-even im Nenner · ursprünglicher Plan
+    - paragraph: Echtgeld · 0 abgeschlossen
+    - paragraph: Gewinnquote netto
+    - paragraph: Nicht berechenbar
+    - paragraph: n=0 · 0 ohne Grundlage
+    - paragraph: Ø geplantes CRV
+    - paragraph: Nicht berechenbar
+    - paragraph: n=0 · 0 ohne Grundlage
+    - paragraph: Ø realisiertes R
+    - paragraph: Nicht berechenbar
+    - paragraph: n=0 · 0 ohne Grundlage
+    - text: Demo · Alle eigenen Depots · 2 eingetragene Trades Jeder gespeicherte Trade geht automatisch mit seinen vorhandenen Angaben ein. Demo · Alle eigenen Depots. Alle Instrumente. Wellen-, Messart- und Erfassungsdatumsfilter gelten hier nicht. Fehlende Abrechnung begrenzt ausschließlich davon abhängige Ergebniskennzahlen.
+    - paragraph: Status · n=2
+    - paragraph: "abgeschlossen: 1 · aktiv: 1"
+    - paragraph: Handelsrichtung · n=2
+    - paragraph: "long: 2"
+    - paragraph: Ø aktuelles Plan-CRV · offen
+    - paragraph: n=0 von 2. Arithmetisches Mittel aller aktuell gespeicherten positiven Plan-CRV; unabhängig von Status oder Abrechnung. Kein realisiertes R.
+    - paragraph: Qualitative Trefferquote · 100 %
+    - paragraph: "Gewinne: 1 · Verluste: 0 · Break-even: 0"
+    - paragraph: n=1 von 1 abgeschlossenen Trades. Qualitative Trefferquote = gespeicherte Gewinne / abgeschlossene Trades mit bekanntem Gewinn, Verlust oder Break-even. Break-even zählt im Nenner. Keine Netto-Trefferquote.
+    - text: "Count/erwartete Welle: 0 · Wellengrad: 0 · Plankontext: 0 · qualitative Notiz: 0 · jeweils von 2 Trades"
+    - group: Einbezogene Trades und fehlende Angaben je Kennzahl
+    - group: Alle 2 Trades im Einzelnen
+    - paragraph: Tatsächliche Nettoergebnisse und realisiertes R
+    - text: Demo-Trades Netto nach erfassten Kosten · Break-even im Nenner · ursprünglicher Plan
+    - paragraph: Demo · 1 abgeschlossen
+    - paragraph: Gewinnquote netto
+    - paragraph: 100%
+    - paragraph: n=1 · 0 ohne Grundlage
+    - paragraph: Ø geplantes CRV
+    - paragraph: Nicht berechenbar
+    - paragraph: n=0 · 1 ohne Grundlage
+    - paragraph: Ø realisiertes R
+    - paragraph: Nicht berechenbar
+    - paragraph: n=0 · 1 ohne Grundlage
+    - paragraph: "USD: 2.000 netto · n=1 · 0 unvollständig"
+    - paragraph: "Abweichende Handelsart im Trade-Feld: 1, 900. Die Auswertung verwendet das eigene Depot; gespeicherte Angaben wurden nicht korrigiert."
+  - region "Prognoseauswertung":
+    - text: Prognosen · eigene Bewertungen
+    - paragraph: Bewertete Prognosen über deine Instrumente. Die Messfilter der Wellenforschung gelten für diesen Bereich nicht.
+    - paragraph: Trefferquote gesamt
+    - paragraph: —
+    - paragraph: Richtig
+    - paragraph: "0"
+    - paragraph: Falsch
+    - paragraph: "0"
+    - paragraph: Aktien getrackt
+    - paragraph: "1"
+    - heading "Trefferquote im Verlauf" [level=3]
+    - paragraph: Kumulierte Quote über alle Einschätzungen
+    - paragraph: Noch keine Daten
+    - paragraph: Sobald du Einschätzungen erfasst, erscheint hier der Verlauf deiner Trefferquote.
+    - heading "Richtig / Falsch" [level=3]
+    - paragraph: Gesamtverteilung
+    - paragraph: Noch keine Daten
+    - paragraph: Erfasse Einschätzungen, um die Verteilung zu sehen.
+    - heading "Richtig / Falsch" [level=3]
+    - paragraph: Anzahl im Vergleich
+    - paragraph: Noch keine Daten
+    - paragraph: Erfasse Einschätzungen, um die Verteilung zu sehen.
+    - text: Richtig 0 Falsch 0
+  - region "Instrumentübersicht":
+    - text: Instrumente · Prognose und Umsetzung
+    - button "Aktie hinzufügen"
+    - textbox "Instrumente durchsuchen":
+      - /placeholder: Instrument suchen (Name oder Ticker)…
+    - link "FIBQA-S Synthetische Aktie · Aktien 111,00USD":
+      - /url: /stock/1
+    - paragraph: Instrument-Gesamtwerte · alle Depots · Kursstand 16.11.2023, 01:00:00
+    - paragraph: Echtgeld · 0 abgeschlossen
+    - paragraph: Gewinnquote netto
+    - paragraph: Nicht berechenbar
+    - paragraph: n=0 · 0 ohne Grundlage
+    - paragraph: Ø geplantes CRV
+    - paragraph: Nicht berechenbar
+    - paragraph: n=0 · 0 ohne Grundlage
+    - paragraph: Ø realisiertes R
+    - paragraph: Nicht berechenbar
+    - paragraph: n=0 · 0 ohne Grundlage
+    - paragraph: Demo · 1 abgeschlossen
+    - paragraph: Gewinnquote netto
+    - paragraph: 100%
+    - paragraph: n=1 · 0 ohne Grundlage
+    - paragraph: Ø geplantes CRV
+    - paragraph: Nicht berechenbar
+    - paragraph: n=0 · 1 ohne Grundlage
+    - paragraph: Ø realisiertes R
+    - paragraph: Nicht berechenbar
+    - paragraph: n=0 · 1 ohne Grundlage
+    - paragraph: "USD: 2.000 netto · n=1 · 0 unvollständig"
+    - text: "Wellen: 70"
+    - link "Retracements n=70 · Expansionen n=0":
+      - /url: /stock/1#fibonacci
+    - text: Prognosen 0 —
+    - button "Chart-Link"
+    - link "Details":
+      - /url: /stock/1
+    - button "Einschätzung"
+    - button "Synthetische Aktie löschen"
+- region "Notifications alt+T"
+- alert

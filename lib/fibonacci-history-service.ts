@@ -1,3 +1,4 @@
+import { marketDb } from '@/lib/market-data/database'
 import { createHash } from "node:crypto";
 import { and, eq, sql, asc, gte, lte } from "drizzle-orm";
 import { db } from "@/lib/db";
@@ -108,7 +109,7 @@ export async function snapshotStoredHistory(
       404,
       "Kein eindeutig zugeordnetes Anbietersymbol vorhanden.",
     );
-  const candles = await db
+  const candles = await marketDb
     .select({
       time: candleCache.time,
       open: candleCache.open,

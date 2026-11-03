@@ -15,7 +15,8 @@ export async function reserveAutomaticCandles(key: string, since?: number, role:
     const budget = await tx.execute(sql`SELECT attempts FROM automatic_candle_budget WHERE hour=${hour.toISOString()} FOR UPDATE`)
     const found = await tx.execute(sql`SELECT * FROM automatic_candle_fetch WHERE key=${key} FOR UPDATE`)
     const previous = found.rows[0] as undefined | { hour: Date; completedAt: Date | null; error: string | null; since: number | null; leaseUntil: Date;attemptedAt:Date;attempts:number }
-    if (previous && new Date(previous.leaseUntil) > now) throw new Error('Kursreihe wird bereits gesammelt; Fortsetzung beim nächsten Aufruf.')
+    // A completed lease is terminal, even if DB and process clocks differ slightly.
+    if (previous && !previous.completedAt && new Date(previous.leaseUntil) > now) throw new Error('Kursreihe wird bereits gesammelt; Fortsetzung beim nächsten Aufruf.')
     if (previous && new Date(previous.hour).getTime() === hour.getTime()) {
       if (previous.completedAt && !previous.error && (previous.since == null || since != null && previous.since <= since)) return { reused: true, token: null,completedAt:new Date(previous.completedAt).toISOString() }
       if ((previous.completedAt&&!previous.error) || previous.attempts>=3 || now.getTime()-new Date(previous.attemptedAt).getTime()<300_000) {

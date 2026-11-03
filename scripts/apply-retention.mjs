@@ -1,3 +1,4 @@
+import { MarketMaintenanceClient } from './market-client.mjs'
 // Setzt die gestaffelten Aufbewahrungsgrenzen RUECKWIRKEND durch.
 //
 // Warum es das gibt: `pruneStoredCandles` schneidet im Sammellauf immer nur die
@@ -102,7 +103,7 @@ const BYTES_JE_KERZE = 195
 
 const trocken = process.argv.includes('--dry')
 
-const c = new Client({ connectionString: process.env.DATABASE_URL })
+const c = new MarketMaintenanceClient()
 await c.connect()
 
 // Die Stufe je Anbieter-Symbol: eine Mengenabfrage statt einer Frage je

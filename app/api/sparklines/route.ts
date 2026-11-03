@@ -86,7 +86,7 @@ export async function GET(req: Request) {
   // gespeicherten Stand SOFORT zeigen — mit Zeitstempel, also ehrlich als das,
   // was er ist. Ein Kurs von vor zwei Minuten, sichtbar beschriftet, ist besser
   // als ein leeres Feld, das auf den perfekten Kurs wartet.
-  if (wantCloses) await refreshQuotesIfStale()
+  if (wantCloses) await refreshQuotesIfStale(undefined, session.user.id)
 
   const rows = await db
     .select({

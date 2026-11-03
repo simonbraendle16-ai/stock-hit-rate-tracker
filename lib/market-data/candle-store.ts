@@ -17,7 +17,7 @@
  */
 
 import { and, asc, desc, eq, gte, inArray, lt, sql } from 'drizzle-orm'
-import { db } from '@/lib/db'
+import { marketDb } from './database'
 import { candleCache, candleSeries } from '@/lib/db/schema'
 import { resolveProvider } from './index'
 import type { Candle, Interval, Market } from './types'
@@ -116,8 +116,7 @@ export async function readStoredCandles(
     ? Math.min(MAX_DELIVERY_LIMIT, Math.floor(options.limit))
     : MAX_DELIVERY_LIMIT
 
-  const rows = await db
-    .select(spalten)
+  const rows = await marketDb.select(spalten)
     .from(candleCache)
     .where(and(...bedingungen))
     .orderBy(options.ascending ? asc(candleCache.time) : desc(candleCache.time))
@@ -134,8 +133,7 @@ export async function readStoredCandles(
  * als Zehntausende Zeilen zu holen, um sie selbst abzuzählen.
  */
 async function readCoverage(symbol: string, interval: Interval): Promise<SeriesCoverage> {
-  const [row] = await db
-    .select({
+  const [row] = await marketDb.select({
       firstTime: sql<number | null>`min(${candleCache.time})`,
       lastTime: sql<number | null>`max(${candleCache.time})`,
       count: sql<number>`count(*)::int`,
@@ -151,8 +149,7 @@ async function readCoverage(symbol: string, interval: Interval): Promise<SeriesC
 }
 
 async function readSeries(symbol: string, interval: Interval) {
-  const [row] = await db
-    .select({ fetchedAt: candleSeries.fetchedAt })
+  const [row] = await marketDb.select({ fetchedAt: candleSeries.fetchedAt })
     .from(candleSeries)
     .where(and(eq(candleSeries.symbol, symbol), eq(candleSeries.interval, interval)))
   return row ?? null
@@ -165,7 +162,7 @@ export async function getStoredCloses(symbol: string, market: Market, interval: 
     ? Math.min(MAX_DELIVERY_LIMIT, Math.floor(requestedLimit)) : MAX_DELIVERY_LIMIT
   const series = await readSeries(symbol, interval)
   if (isFresh(interval, series?.fetchedAt ?? null)) {
-    const rows = await db.select({ close: candleCache.close }).from(candleCache)
+    const rows = await marketDb.select({ close: candleCache.close }).from(candleCache)
       .where(and(eq(candleCache.symbol, symbol), eq(candleCache.interval, interval)))
       .orderBy(desc(candleCache.time)).limit(limit)
     if (rows.length) return rows.reverse().map(row => row.close)
@@ -184,8 +181,7 @@ async function writeCandles(
 ): Promise<void> {
   for (let i = 0; i < candles.length; i += CHUNK) {
     const teil = candles.slice(i, i + CHUNK)
-    await db
-      .insert(candleCache)
+    await marketDb.insert(candleCache)
       .values(
         teil.map((c) => ({
           symbol,
@@ -236,8 +232,7 @@ async function writeSeries(
 ): Promise<void> {
   const jetzt = new Date()
 
-  await db
-    .insert(candleSeries)
+  await marketDb.insert(candleSeries)
     .values({
       symbol,
       interval,
@@ -436,7 +431,7 @@ export async function pruneStoredCandles(
   const grenze = retentionLimit(interval, stufe)
   if (grenze == null || grenze <= 0) return 0
 
-  const ergebnis = await db.execute(sql`
+  const ergebnis = await marketDb.execute(sql`
     DELETE FROM ${candleCache}
     WHERE ${candleCache.symbol} = ${symbol}
       AND ${candleCache.interval} = ${interval}
@@ -456,8 +451,7 @@ export async function pruneStoredCandles(
   // unangetastet: Aufräumen ist kein Anbieterabruf und darf die Frischeprüfung
   // nicht beeinflussen.
   const abdeckung = await readCoverage(symbol, interval)
-  await db
-    .update(candleSeries)
+  await marketDb.update(candleSeries)
     .set({
       firstTime: abdeckung.firstTime,
       lastTime: abdeckung.lastTime,
@@ -483,8 +477,7 @@ export async function getSeriesCoverage(
   }[]
 > {
   if (symbols.length === 0 || intervals.length === 0) return []
-  return db
-    .select({
+  return marketDb.select({
       symbol: candleSeries.symbol,
       interval: candleSeries.interval,
       firstTime: candleSeries.firstTime,

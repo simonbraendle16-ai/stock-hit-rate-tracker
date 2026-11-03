@@ -66,23 +66,10 @@ export async function getWatchlistQuotes(): Promise<WatchlistQuote[]> {
   }))
 }
 
-/**
- * Selbstheilung, während eine Seite offen ist.
- *
- * Der Cron-Job ist der Regelweg — aber auf dem Vercel-Hobby-Plan darf er nur
- * einmal am Tag laufen, und ein Zeitplan kann grundsätzlich hängen. Deshalb
- * fragt die Oberfläche im Takt nach (`components/quote-auto-refresh.tsx`) und
- * holt bei zu altem Stand selbst nach.
- *
- * Die Schwelle in `refreshQuotesIfStale` verhindert, dass daraus ein Abruf pro
- * Nachfrage wird; die Klammer dort verhindert parallele Läufe.
- *
- * Gibt `true` zurück, wenn wirklich geholt wurde — nur dann lohnt sich auf der
- * Seite ein Neuladen.
- */
+/** Explicit course demand of the signed-in user. No browser timer calls this. */
 export async function refreshQuotes(maxAgeMs?: number): Promise<boolean> {
-  await getUserId()
-  const refreshed = await refreshQuotesIfStale(maxAgeMs)
+  const userId = await getUserId()
+  const refreshed = await refreshQuotesIfStale(maxAgeMs, userId)
   if (refreshed) {
     // Die vier Orte, an denen Kurse stehen — sonst zeigt die Seite nach dem
     // Lauf weiter den alten Stand aus dem Server-Cache.

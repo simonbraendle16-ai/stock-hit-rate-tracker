@@ -17,7 +17,7 @@ describe('watchlist sparkline transfer', () => {
   it('requests exactly 90 closes once per confirmed series, retaining every watchlist entry', async () => {
     const data = await (await GET(new Request('http://localhost/api/sparklines?closes=1'))).json()
     expect(state.closes).toHaveBeenCalledExactlyOnceWith('AAPL', 'aktien', '1day', 90)
-    expect(state.refresh).toHaveBeenCalledOnce()
+    expect(state.refresh).toHaveBeenCalledExactlyOnceWith(undefined, 'synthetic')
     expect(data.sparks[1].closes).toEqual([1, 2, 3])
     expect(data.sparks[2]).toEqual(data.sparks[1])
     expect(data.sparks[3]).toEqual({ status: 'unresolved', note: 'synthetic' })

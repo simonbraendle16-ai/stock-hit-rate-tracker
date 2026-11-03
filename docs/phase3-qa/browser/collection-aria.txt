@@ -1,0 +1,301 @@
+- paragraph: Kurse werden bei Bedarf geladen. Automatische Versorgung aktiver Trades setzt einen eingerichteten Stundenplan voraus. Alarme und Demoausführung benötigen eine eigene Freigabe.
+- banner:
+  - link "Zum Inhalt":
+    - /url: "#cockpit-content"
+  - link "Trading Cockpit":
+    - /url: /
+  - button "Alle Echtgeld-Depots"
+  - button "Abmelden"
+  - complementary:
+    - navigation "Hauptnavigation":
+      - link "Cockpit":
+        - /url: /
+      - link "Watchlist":
+        - /url: /watchlist
+      - link "Trades":
+        - /url: /trades
+      - link "Journal":
+        - /url: /journal
+      - link "Datensammlung":
+        - /url: /collection?fib.basis=1
+      - link "Wellenstatistik":
+        - /url: /analysis#fibonacci
+      - link "Prognoseprüfung":
+        - /url: /forecasts
+      - link "Auswertung":
+        - /url: /tracking
+      - link "Freunde":
+        - /url: /friends
+      - link "Einstellungen":
+        - /url: /settings
+- main:
+  - heading "Datensammlung" [level=1]
+  - paragraph: Beobachtungen erfassen und korrigieren. Derselbe Bestand wird in der Wellenstatistik ausgewertet.
+  - region "Wellensammlung":
+    - paragraph:
+      - strong: 82 Beobachtungen insgesamt
+      - text: · 79 Retracements · 3 Expansionen
+    - button "Welle erfassen"
+    - button "Erweiterte Suche und Auswertung"
+    - link "Wellenstatistik öffnen":
+      - /url: /analysis#fibonacci
+    - text: Wellen suchen
+    - textbox "Wellen suchen":
+      - /placeholder: Instrument, Welle oder Notiz
+    - paragraph: 82 Treffer im gesamten Bestand
+    - article:
+      - strong: FIBQA-S · Welle B
+      - paragraph: 2026-11-03 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle B
+      - paragraph: 2026-11-03 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle A
+      - paragraph: 2026-11-03 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2026-11-03 · Minor · 1d · Expansion · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle C
+      - paragraph: 2026-11-03 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle B
+      - paragraph: 2026-11-03 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle B
+      - paragraph: 2026-11-03 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle A
+      - paragraph: 2026-11-03 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2026-11-03 · Minor · 1d · Expansion · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle B
+      - paragraph: 2026-11-03 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle A
+      - paragraph: 2026-11-03 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2026-11-03 · Minor · 1d · Expansion · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - article:
+      - strong: FIBQA-S · Welle 4
+      - paragraph: 2020-01-01 · Minor · 1d · Retracement · abgeschlossen
+      - button "Details"
+      - button "Bearbeiten"
+    - navigation "Wellen-Seiten":
+      - button "Zurück" [disabled]
+      - text: 1–50 von 82
+      - button "Weiter"
+- region "Notifications alt+T"
+- alert

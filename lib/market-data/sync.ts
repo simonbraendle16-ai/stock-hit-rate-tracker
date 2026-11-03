@@ -20,6 +20,7 @@
 // auflösen lässt, darf die anderen 92 nicht aufhalten. Jeder Teilfehler landet
 // am Datensatz, nicht in einem Abbruch.
 
+import { activeTradeInstruments } from './active-trade-demand'
 import { db } from '@/lib/db'
 import { quoteSnapshot, stock, symbolSyncRun } from '@/lib/db/schema'
 import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm'
@@ -253,6 +254,14 @@ export async function runSymbolSync(options: {
   forceResolve?: boolean
   maxResolves?: number
 }): Promise<SyncReport> {
+  if (options.trigger === 'cron') {
+    const active = await activeTradeInstruments()
+    const allowed = active.map(i => i.id).filter(id => !options.onlyStockIds || options.onlyStockIds.includes(id))
+    // An empty scope must never fall back to the whole watchlist.
+    if (!allowed.length) return { runId: null, symbolsTotal: 0, resolvedNew: 0, stillUnresolved: 0,
+      quotesUpdated: 0, quotesFailed: 0, tradesLinked: 0, durationMs: 0, error: null, details: [] }
+    options = { ...options, onlyStockIds: allowed, maxResolves: 0 }
+  }
   const startedAt = Date.now()
   const details: SyncReport['details'] = []
 
@@ -377,12 +386,24 @@ export async function runSymbolSync(options: {
       // Crumb und kommt durch, wenn die Batch-Abfrage klemmt.
       if (symbols.some(isSpotGoldTicker)) {
         try {
-          const q = await getSpotGoldQuote()
+          let q: YahooQuote
+          if (options.trigger === 'cron') {
+            // Use the existing shared candle reservation, including provider-day limits.
+            const { getStoredCandles } = await import('./candle-store')
+            const candles = await getStoredCandles('XAUUSD', 'rohstoffe', '5min', {
+              limit: 1, forceRefresh: true, requireFresh: true, automatic: true,
+              automaticRole: 'archive', provider: 'twelvedata' })
+            const last = candles.at(-1)
+            if (!last || !(last.close > 0)) throw new Error('Kein bestätigter Spotkurs.')
+            q = { symbol: 'XAUUSD', price: last.close, time: last.time, name: 'Gold Spot / US Dollar',
+              exchange: 'Commodity Aggregate', currency: 'USD', financialCurrency: null,
+              previousClose: null, changePct: null, quoteType: 'COMMODITY', marketState: null, volume: null }
+          } else q = await getSpotGoldQuote()
           quotes.set(q.symbol, q)
         } catch { /* retain the prior spot quote and record this symbol's failure */ }
       }
       const missing = symbols.filter((s) => !isSpotGoldTicker(s) && !quotes.has(s.toUpperCase()))
-      if (missing.length > 0 && missing.length <= 15) {
+      if (options.trigger !== 'cron' && missing.length > 0 && missing.length <= 15) {
         await mapLimit(missing, RESOLVE_CONCURRENCY, async (sym) => {
           try {
             const q = await getYahooQuoteViaChart(sym)
@@ -415,7 +436,7 @@ export async function runSymbolSync(options: {
     // Zuordnung die frisch aufgelösten Anbieter-Symbole von oben braucht.
     try {
       const { linkLooseTrades } = await import('@/lib/link-trades')
-      const linked = await linkLooseTrades({})
+      const linked = options.trigger === 'cron' ? { linked: 0 } : await linkLooseTrades({})
       report.tradesLinked = linked.linked
     } catch {
       // Kein Grund, den ganzen Lauf scheitern zu lassen — die Kurse stehen.
@@ -463,35 +484,26 @@ export async function runSymbolSync(options: {
  * Die Klammer gilt pro Serverprozess. Auf mehreren Instanzen kann es weiterhin
  * einen Lauf je Instanz geben — unschädlich, weil die Upserts idempotent sind.
  */
-let inFlightRefresh: Promise<boolean> | null = null
+const inFlightRefresh = new Map<string, Promise<boolean>>()
 
-/**
- * Kurse auffrischen, wenn der Speicher älter ist als `maxAgeMs`.
- *
- * Gibt zurück, ob tatsächlich geholt wurde — die Oberfläche lädt nur dann neu.
- * Bewusst NUR Kurse (`maxResolves: 0`): Ein Seitenaufruf soll schnell bleiben,
- * Neuauflösungen sind Sache des Cron-Laufs.
- *
- * Wirft nie: Ein Anbieterausfall darf die Seite nicht mitreißen — dann bleibt
- * eben der letzte bekannte Kurs mit seinem Zeitstempel stehen.
- */
-export async function refreshQuotesIfStale(maxAgeMs = QUOTE_STALE_MS): Promise<boolean> {
-  const age = await quotesAgeMs()
-  if (age !== null && age < maxAgeMs) return false
-  if (inFlightRefresh) return inFlightRefresh
-
-  inFlightRefresh = (async () => {
+/** Explicit page demand only, scoped to its owner. Background callers do nothing. */
+export async function refreshQuotesIfStale(maxAgeMs = QUOTE_STALE_MS, userId?: string): Promise<boolean> {
+  if (!userId) return false
+  const pending = inFlightRefresh.get(userId)
+  if (pending) return pending
+  const task = (async () => {
     try {
-      await runSymbolSync({ trigger: 'onload', maxResolves: 0 })
-      return true
-    } catch {
-      return false
-    } finally {
-      inFlightRefresh = null
-    }
+      const rows = await db.select({ id: stock.id, fetchedAt: quoteSnapshot.fetchedAt }).from(stock)
+        .leftJoin(quoteSnapshot, and(eq(stock.providerSymbol, quoteSnapshot.symbol), eq(stock.provider, quoteSnapshot.provider)))
+        .where(and(eq(stock.userId, userId), eq(stock.resolutionStatus, 'ok')))
+      const ids = rows.filter(r => !r.fetchedAt || Date.now() - r.fetchedAt.getTime() >= maxAgeMs).map(r => r.id)
+      if (!ids.length) return false
+      const report = await runSymbolSync({ trigger: 'onload', maxResolves: 0, onlyStockIds: ids })
+      return report.quotesUpdated > 0
+    } catch { return false }
   })()
-
-  return inFlightRefresh
+  inFlightRefresh.set(userId, task)
+  try { return await task } finally { inFlightRefresh.delete(userId) }
 }
 
 export async function quotesAgeMs(): Promise<number | null> {

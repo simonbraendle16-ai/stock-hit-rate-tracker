@@ -1,0 +1,59 @@
+{
+  "synthetic": true,
+  "checks": [
+    {
+      "name": "bounded-reads",
+      "rows": 3,
+      "phase2StoredReadQueries": 1,
+      "phase3StoredReadQueries": 1,
+      "phase2WarmClosesQueries": 2,
+      "phase3WarmClosesQueries": 2,
+      "storedReadRows": 3,
+      "storedPayloadBytes": 94,
+      "warmCloseRows": 4,
+      "warmClosePayloadBytes": 54
+    },
+    {
+      "name": "shared-budget-and-idempotent-fetch",
+      "providerCalls": 1
+    },
+    {
+      "name": "pool-exhaustion-isolation",
+      "elapsedMs": 2015,
+      "max": 3
+    },
+    {
+      "name": "statement-timeout-retry",
+      "elapsedMs": 4017
+    },
+    {
+      "name": "B-loss-A-save-recovery"
+    },
+    {
+      "name": "A-loss-B-read-no-false-budget"
+    },
+    {
+      "name": "trainer-bot-excursion-shared-series",
+      "rows": 101,
+      "duplicateProviderCalls": 0
+    },
+    {
+      "name": "real-concurrent-fence-drains-legacy-writers"
+    },
+    {
+      "name": "synthetic-demo-close-idempotent-A-events-B-evidence",
+      "events": 2,
+      "noBrokerCalls": true
+    },
+    {
+      "name": "real-migration-exclusive-session-resume-safety",
+      "copied": 2,
+      "resumed": 0,
+      "rows": 1003,
+      "payloadBytes": 96333,
+      "verifiedBytes": 96328,
+      "targetVerifiedBytes": 96328,
+      "sequenceNextId": 51
+    }
+  ]
+}

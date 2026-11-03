@@ -171,10 +171,10 @@ let credentialsInFlight: Promise<Credentials> | null = null
 
 const CREDENTIALS_TTL_MS = 1000 * 60 * 60 * 6
 
-async function fetchCredentials(): Promise<Credentials> {
+async function fetchCredentials(signal: AbortSignal): Promise<Credentials> {
   const cookieRes = await fetch('https://fc.yahoo.com', {
     headers: { 'User-Agent': UA },
-    cache: 'no-store',
+    cache: 'no-store', signal,
   }).catch(() => null)
 
   // fc.yahoo.com antwortet absichtlich mit einem Fehlerstatus, setzt dabei aber
@@ -189,7 +189,7 @@ async function fetchCredentials(): Promise<Credentials> {
 
   const crumbRes = await fetch('https://query1.finance.yahoo.com/v1/test/getcrumb', {
     headers: { 'User-Agent': UA, cookie },
-    cache: 'no-store',
+    cache: 'no-store', signal,
   })
   const crumb = (await crumbRes.text()).trim()
 
@@ -201,7 +201,7 @@ async function fetchCredentials(): Promise<Credentials> {
 }
 
 /** Cookie + Crumb, prozessweit gecacht. `force` erzwingt eine Neubeschaffung. */
-async function getCredentials(force = false): Promise<Credentials> {
+async function getCredentials(force = false, signal = AbortSignal.timeout(20_000)): Promise<Credentials> {
   if (force) {
     credentials = null
     credentialsInFlight = null
@@ -211,7 +211,7 @@ async function getCredentials(force = false): Promise<Credentials> {
   }
   // Parallele Aufrufe teilen sich EINE Beschaffung — sonst holen 90 Symbole
   // gleichzeitig 90 Crumbs.
-  credentialsInFlight ??= fetchCredentials()
+  credentialsInFlight ??= fetchCredentials(signal)
     .then((c) => {
       credentials = c
       return c
@@ -493,21 +493,21 @@ function validTime(value: unknown): value is number {
 /** Yahoo verträgt lange Symbollisten nicht beliebig — in Blöcken abfragen. */
 const QUOTE_CHUNK = 40
 
-async function fetchQuoteChunk(symbols: string[], retry = true): Promise<RawQuote[]> {
-  const { cookie, crumb } = await getCredentials()
+async function fetchQuoteChunk(symbols: string[], signal: AbortSignal, retry = true): Promise<RawQuote[]> {
+  const { cookie, crumb } = await getCredentials(false, signal)
   const url = new URL('https://query1.finance.yahoo.com/v7/finance/quote')
   url.searchParams.set('symbols', symbols.join(','))
   url.searchParams.set('crumb', crumb)
 
   const res = await fetch(url, {
     headers: { 'User-Agent': UA, cookie },
-    cache: 'no-store',
+    cache: 'no-store', signal,
   })
 
   if ((res.status === 401 || res.status === 403) && retry) {
     // Crumb abgelaufen — genau einmal neu holen und wiederholen.
-    await getCredentials(true)
-    return fetchQuoteChunk(symbols, false)
+    await getCredentials(true, signal)
+    return fetchQuoteChunk(symbols, signal, false)
   }
   if (res.status === 429) {
     throw new MarketDataError('Yahoo-Rate-Limit erreicht — bitte kurz warten.', 'rate_limit')
@@ -527,14 +527,14 @@ async function fetchQuoteChunk(symbols: string[], retry = true): Promise<RawQuot
  * nicht kennt, fehlen im Ergebnis — der Aufrufer erkennt sie an der Lücke und
  * kann sie als „nicht auflösbar" markieren, statt still eine Null anzuzeigen.
  */
-export async function getYahooQuotes(symbols: string[]): Promise<Map<string, YahooQuote>> {
+export async function getYahooQuotes(symbols: string[], signal = AbortSignal.timeout(20_000)): Promise<Map<string, YahooQuote>> {
   const unique = Array.from(new Set(symbols.filter(Boolean)))
   const out = new Map<string, YahooQuote>()
   if (unique.length === 0) return out
 
   for (let i = 0; i < unique.length; i += QUOTE_CHUNK) {
     const chunk = unique.slice(i, i + QUOTE_CHUNK)
-    const raw = await fetchQuoteChunk(chunk)
+    const raw = await fetchQuoteChunk(chunk, signal)
     for (const r of raw) {
       const q = mapQuote(r)
       if (q) out.set(q.symbol.toUpperCase(), q)

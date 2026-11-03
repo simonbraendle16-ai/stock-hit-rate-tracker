@@ -1,3 +1,4 @@
+import { marketDb } from '@/lib/market-data/database'
 // Demo orders are evaluated on completed 5-minute candles, at their planned
 // prices. A durable cursor replaces the old two-hour lookback. Every batch
 // shares the same portfolio/trade lock as manual actions.
@@ -163,7 +164,7 @@ export async function runDemoFills(
           }
           const [instrument] = t.stockId == null ? [] : await db.select({ exchange: stock.resolvedExchange }).from(stock)
             .where(and(eq(stock.id, t.stockId), eq(stock.userId, t.userId))).limit(1)
-          const [series]=await db.select({session:candleSeries.executionSession}).from(candleSeries).where(and(eq(candleSeries.symbol,symbol),eq(candleSeries.interval,FILL_INTERVAL))).limit(1)
+          const [series]=await marketDb.select({session:candleSeries.executionSession}).from(candleSeries).where(and(eq(candleSeries.symbol,symbol),eq(candleSeries.interval,FILL_INTERVAL))).limit(1)
           const session=series?.session?.symbol===symbol?series.session:null
           const coverage = demoCoveragePrefix(candles, previous[0] ?? null, beginn, t.market, instrument?.exchange,DEMO_CANDLE_SECONDS,session)
           if (coverage.gap && !coverage.usable.length) {

@@ -1,4 +1,5 @@
 'use client'
+import { useSparklines } from './use-sparklines'
 
 import { useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import Link from 'next/link'
@@ -105,92 +106,6 @@ type SparkEntry =
  * Rate-Limits gibt es nicht mehr. Erneut versucht wird nur noch, solange der
  * Speicher für einzelne Symbole noch gar nicht gefüllt ist (`pending`).
  */
-/**
- * Takt, in dem die offene Watchlist nachfragt.
- *
- * Die Route frischt dabei selbst auf, wenn der Kursspeicher älter als
- * `QUOTE_STALE_MS` ist — eine Minute Takt heißt also nicht „jede Minute zum
- * Anbieter", sondern „höchstens so alt darf das Angezeigte werden".
- */
-const POLL_MS = 60_000
-
-function useSparklines() {
-  const [sparks, setSparks] = useState<Record<number, SparkEntry>>({})
-  // Hochzählen erzwingt einen neuen Durchlauf des Effekts. Gebraucht nach jeder
-  // Änderung an der Zuordnung: `router.refresh()` erneuert nur die Server-Daten,
-  // die Kursliste hier liegt im Client — ohne dieses Signal stünde nach einer
-  // erfolgreichen Reparatur weiterhin „kein Symbol" in der Zeile.
-  const [reloadKey, setReloadKey] = useState(0)
-
-  useEffect(() => {
-    let cancelled = false
-    let attempts = 0
-    let timer: ReturnType<typeof setTimeout> | null = null
-
-    const schedule = (ms: number) => {
-      if (timer) clearTimeout(timer)
-      timer = setTimeout(load, ms)
-    }
-
-    const load = async ({ force = false } = {}) => {
-      // Im Hintergrundtab nicht WEITER abfragen: Niemand sieht die Zahl, und der
-      // Anbieter bekommt trotzdem Verkehr. Beim Zurückkommen holt der
-      // Sichtbarkeits-Horcher unten sofort nach.
-      //
-      // Der erste Abruf läuft trotzdem (`force`) — sonst stünde in einem im
-      // Hintergrund geöffneten Tab dauerhaft „…" statt eines Kurses.
-      if (!force && document.visibilityState === 'hidden') {
-        schedule(POLL_MS)
-        return
-      }
-      try {
-        // Etappe 14, in zwei Zügen: Zuerst nur die Kurse (ein
-        // Datenbankzugriff, sofort da), dann die Verläufe für die Sparklines
-        // (bis zu neunzig Kerzen-Abrufe). Vorher warteten die Kurse auf die
-        // Verläufe — das waren die fünf bis zehn Sekunden mit leeren Feldern.
-        const res = await fetch('/api/sparklines', { cache: 'no-store' })
-        if (!res.ok) throw new Error()
-        const data = (await res.json()) as { sparks: Record<number, SparkEntry> }
-        if (cancelled) return
-        setSparks(data.sparks)
-        attempts = 0
-
-        // Die Verläufe kommen nach und ersetzen den Stand, sobald sie da sind.
-        // Bleiben sie aus, steht trotzdem überall ein Kurs.
-        void fetch('/api/sparklines?closes=1', { cache: 'no-store' })
-          .then((r) => (r.ok ? r.json() : null))
-          .then((full: { sparks: Record<number, SparkEntry> } | null) => {
-            if (!cancelled && full) setSparks(full.sparks)
-          })
-          .catch(() => {
-            /* Verlauf ist Beiwerk — ohne ihn bleibt die Zeile vollständig lesbar. */
-          })
-        // Noch ungefüllte Symbole kommen schneller dran als der Regeltakt.
-        const hasPending = Object.values(data.sparks).some((e) => e.status === 'pending')
-        schedule(hasPending ? 20_000 : POLL_MS)
-      } catch {
-        if (cancelled) return
-        // Nach einem Fehlschlag zurückhaltender werden statt stur weiterzuklopfen.
-        attempts++
-        schedule(Math.min(POLL_MS, 10_000 * attempts))
-      }
-    }
-
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') void load()
-    }
-    document.addEventListener('visibilitychange', onVisible)
-    void load({ force: true })
-
-    return () => {
-      cancelled = true
-      document.removeEventListener('visibilitychange', onVisible)
-      if (timer) clearTimeout(timer)
-    }
-  }, [reloadKey])
-
-  return { sparks, reload: () => setReloadKey((k) => k + 1) }
-}
 
 function Sparkline({ closes, positive }: { closes: number[]; positive: boolean }) {
   const path = useMemo(() => {

@@ -1,365 +1,99 @@
-/**
- * Der Sammellauf des Kerzenspeichers.
- *
- * Er füllt den Speicher auch dann, wenn niemand einen Chart öffnet — und das
- * ist der Punkt: Ein Vorrat, der nur beim Hinsehen wächst, hat genau dort
- * Lücken, wo man länger nicht hingesehen hat. Bei 15-Minuten-Kerzen reicht ein
- * Blick alle 60 Tage; wer ein Instrument ein Quartal ruhen lässt, verliert das
- * Quartal für immer.
- *
- * Drei Entscheidungen tragen den Lauf:
- *
- * **Budget.** Yahoo kennt für Kerzen keinen Sammelabruf — jede Reihe ist eine
- * Anfrage. Rund neunzig Instrumente mal sieben Zeitebenen wären über sechshundert
- * Abrufe am Stück; das dauert Minuten und lädt geradezu zur Drosselung ein.
- * Ein Lauf nimmt deshalb höchstens `MAX_FETCHES_PER_RUN` Reihen.
- *
- * **Rotation.** Damit das Budget nicht immer denselben Reihen zugutekommt, wird
- * nach „am längsten nicht geholt" geordnet (`orderByStaleness`). Noch nie
- * geholte Reihen stehen vorn.
- *
- * **Staffel.** 15m/30m/1h laufen dem Anbieter davon und werden täglich geholt;
- * Tages-, Wochen- und Monatskerzen liefert Yahoo jahrzehntelang, die genügen
- * wöchentlich (`isDueForCollection`). Jede unnötige Anfrage ginge vom Budget der
- * knappen Reihen ab.
- */
-
-import { and, desc, eq, inArray } from 'drizzle-orm'
+import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
-import {
-  assessment,
-  candleCollectRun,
-  candleSeries,
-  stock,
-  trade,
-  trainingSession,
-} from '@/lib/db/schema'
-import { intervalsForStufe, type Interval, type Market, type SammelStufe } from './types'
-import { getStoredCandles, pruneStoredCandles } from './candle-store'
-import { isDueForCollection, orderByStaleness } from './candle-merge'
+import { marketDb } from './database'
+import { candleCollectRun, candleSeries } from '@/lib/db/schema'
+import { intervalsForStufe, type Interval, type Market } from './types'
+import { getStoredCandles } from './candle-store'
+import { orderByStaleness } from './candle-merge'
 import { isSpotGoldTicker } from './spot-gold'
 import type { ProviderName } from './index'
+import { activeTradeInstruments, hasActiveTradeDemand } from './active-trade-demand'
+import { runSymbolSync } from './sync'
 
-/** Höchstzahl an Anbieter-Abrufen je Lauf. */
 export const MAX_FETCHES_PER_RUN = 150
-
-/**
- * Zeitbudget je Lauf — die eigentliche Bremse.
- *
- * Auf Vercel bricht eine Route nach `maxDuration` (60 s) ab, und zwar mitten
- * im Schreiben: Der Lauf stünde dann ohne `finishedAt` in der Tabelle und
- * niemand wüsste, wie weit er gekommen ist. Ein Lauf hört deshalb von SELBST
- * auf, bevor die Grenze erreicht ist, und schreibt sein Ergebnis. Was liegen
- * bleibt, holt der nächste Lauf — die Rotation nach „am längsten nicht geholt"
- * sorgt dafür, dass es dieselben Reihen nicht zweimal trifft.
- *
- * Gemessen: 150 Reihen brauchten deutlich über zwei Minuten (der erste Lauf
- * schrieb dabei 299.133 Kerzen). Anzahl allein ist also kein brauchbares Maß —
- * eine Krypto-Stundenreihe über zwei Jahre ist 17.000 Kerzen, eine
- * Monatsreihe 160.
- */
-export const TIME_BUDGET_MS = 45 * 1000
-
-/**
- * So oft darf ein Lauf überhaupt stattfinden — der Takt ruft alle fünf Minuten
- * an. Eine Stunde, nicht mehr: Bei rund 90 Instrumenten sind 637 Reihen zu
- * füllen, und mit einem Zeitbudget von 45 Sekunden schafft ein Lauf nur einen
- * Teil davon. Stündlich ist der erste vollständige Durchgang nach gut einem
- * Tag fertig, danach reicht der Takt bequem für die täglich fälligen Reihen.
- */
-export const RUN_INTERVAL_MS = 60 * 60 * 1000
-
-/**
- * Alle Zeitebenen, in der Reihenfolge ihrer Dringlichkeit.
- *
- * WELCHE davon ein einzelnes Instrument bekommt, entscheidet seine Sammelstufe
- * (`intervalsForStufe`) — nicht diese Liste. Sie bleibt die vollständige
- * Aufzählung für alles, was über alle Ebenen laufen muss.
- */
-export const COLLECTED_INTERVALS: Interval[] = [
-  '1min',
-  '5min',
-  '15min',
-  '30min',
-  '1h',
-  '4h',
-  '1day',
-  '1week',
-  '1month',
-]
-
-/**
- * Die Sammelstufe je Anbieter-Symbol.
- *
- * Der teure Teil wäre, das je Instrument einzeln zu fragen; deshalb ein paar
- * Mengenabfragen und danach eine Zuordnung im Speicher. Ein Symbol kann in
- * mehreren Instrumenten stecken — es gewinnt die **höchste** Stufe, sonst
- * verlöre ein gehandeltes Papier seine Historie, weil dasselbe Symbol
- * woanders ungenutzt herumsteht.
- *
- * **Eine Trainer-Sitzung zählt wie eine Prognose (Stufe B).** Gemessen am
- * 20.08.2026: Auf `G24.DE` war trainiert worden, ohne Trade und ohne Prognose
- * — das Instrument fiele in Stufe C mit 1.500 Stundenkerzen, während der
- * Trainer 3.000 anfordert. Der Sammellauf holte sie, das Aufräumen schnitte
- * sie sofort wieder weg: ein Schreib-Karussell ohne Nutzen.
- *
- * Verknüpft wird über `stockId`, **nie über `trainingSession.symbol`**. Dort
- * steht der Rohticker, wie ihn der Nutzer eingegeben hat: Sitzung 1 heißt
- * `CL1!`, im Kerzenspeicher liegt sie unter `CL=F`. Über den Namen zu
- * verknüpfen hiesse, dem Anbieter-Symbol einen Rohticker unterzuschieben.
- */
-async function stufenJeSymbol(): Promise<Map<string, SammelStufe>> {
-  const [mitOffenemTrade, mitTrade, mitPrognose, mitTraining] = await Promise.all([
-    db
-      .selectDistinct({ symbol: stock.providerSymbol })
-      .from(stock)
-      .innerJoin(trade, eq(trade.stockId, stock.id))
-      .where(inArray(trade.status, ['aktiv', 'geplant'])),
-    db
-      .selectDistinct({ symbol: stock.providerSymbol })
-      .from(stock)
-      .innerJoin(trade, eq(trade.stockId, stock.id)),
-    db
-      .selectDistinct({ symbol: stock.providerSymbol })
-      .from(stock)
-      .innerJoin(assessment, eq(assessment.stockId, stock.id)),
-    db
-      .selectDistinct({ symbol: stock.providerSymbol })
-      .from(stock)
-      .innerJoin(trainingSession, eq(trainingSession.stockId, stock.id)),
-  ])
-
-  // Reihenfolge ist Absicht: B zuerst, A überschreibt. Ein Symbol mit offenem
-  // Trade behält so seine volle Tiefe, auch wenn es anderswo nur eine Prognose
-  // trägt.
-  const stufen = new Map<string, SammelStufe>()
-  for (const r of [...mitTrade, ...mitPrognose, ...mitTraining])
-    if (r.symbol) stufen.set(r.symbol, 'B')
-  for (const r of mitOffenemTrade) if (r.symbol) stufen.set(r.symbol, 'A')
-  return stufen
-}
-
+export const TIME_BUDGET_MS = 45_000
+export const RUN_INTERVAL_MS = 3_600_000
+export const COLLECTED_INTERVALS = intervalsForStufe('A')
 export interface CollectReport {
-  ran: boolean
-  /** Grund, wenn nicht gelaufen (z. B. noch nicht fällig). */
-  skipped: string | null
-  seriesDue: number
-  seriesFetched: number
-  seriesFailed: number
-  candlesAdded: number
-  /** Wie viele alte Kerzen das Aufräumen zurückgeschnitten hat (`RETENTION_LIMIT`). */
-  candlesPruned: number
-  error: string | null
+  ran: boolean; skipped: string | null; seriesDue: number; seriesFetched: number
+  seriesFailed: number; candlesAdded: number; candlesPruned: number; error: string | null
 }
+const empty = (skipped: string): CollectReport => ({ ran: false, skipped,
+  seriesDue: 0, seriesFetched: 0, seriesFailed: 0, candlesAdded: 0, candlesPruned: 0, error: null })
 
-/** Wann der letzte Lauf war — die Grundlage der Fälligkeitsprüfung. */
 export async function lastCollectRun(): Promise<Date | null> {
-  const [row] = await db
-    .select({ startedAt: candleCollectRun.startedAt })
-    .from(candleCollectRun)
-    .orderBy(desc(candleCollectRun.startedAt))
-    .limit(1)
+  const [row] = await marketDb.select({ startedAt: candleCollectRun.startedAt }).from(candleCollectRun)
+    .orderBy(desc(candleCollectRun.startedAt)).limit(1)
   return row?.startedAt ?? null
 }
 
-/**
- * Ein Sammellauf.
- *
- * Sitzungsfrei wie `runAlertCheck` — der Takt kommt von außen und gehört
- * keinem Nutzer. Gesammelt wird über ALLE Instrumente aller Nutzer, weil eine
- * Kerze ohnehin für alle dieselbe ist (der Speicher hat kein `userId`).
- */
-export async function runCandleCollect(options: {
-  trigger?: 'cron' | 'manual'
-  /** Fälligkeitsprüfung überspringen (Knopf „jetzt sammeln"). */
-  force?: boolean
-  maxFetches?: number
-  /** Zeitbudget in Millisekunden; ohne Angabe `TIME_BUDGET_MS`. */
-  timeBudgetMs?: number
-}): Promise<CollectReport> {
-  const trigger = options.trigger ?? 'cron'
-  const budget = Math.max(1, options.maxFetches ?? MAX_FETCHES_PER_RUN)
-
-  if (!options.force) {
-    const letzter = await lastCollectRun()
-    if (letzter && Date.now() - letzter.getTime() < RUN_INTERVAL_MS) {
-      return {
-        ran: false,
-        skipped: 'Noch nicht fällig.',
-        seriesDue: 0,
-        seriesFetched: 0,
-        seriesFailed: 0,
-        candlesAdded: 0,
-        candlesPruned: 0,
-        error: null,
-      }
-    }
-  }
-
-  const [lauf] = await db
-    .insert(candleCollectRun)
-    .values({ trigger })
-    .returning({ id: candleCollectRun.id })
-
-  let fetched = 0
-  let failed = 0
-  let added = 0
-  /** Wie viele alte Kerzen dieser Lauf zurückgeschnitten hat. */
-  let pruned = 0
-  let due = 0
-  let fehler: string | null = null
-
-  try {
-    // Die aufgelösten Instrumente aller Nutzer — nur sie haben ein Symbol, das
-    // beim Anbieter nachweislich existiert (Etappe 9). Ein unaufgelöstes
-    // Instrument würde jeden Lauf mit demselben Fehlschlag belasten.
-    const instrumente = await db
-      .select({
-        symbol: stock.providerSymbol,
-        market: stock.market,
-        provider: stock.provider,
-      })
-      .from(stock)
-      .where(eq(stock.resolutionStatus, 'ok'))
-
-    // Dasselbe Papier steht womöglich in mehreren Watchlists — einmal genügt.
-    const jeSymbol = new Map<string, Market>()
-    const providerJeSymbol = new Map<string, ProviderName>()
-    for (const i of instrumente) {
-      if (i.symbol) { jeSymbol.set(i.symbol, i.market as Market); providerJeSymbol.set(i.symbol, (i.provider ?? 'yahoo') as ProviderName) }
-    }
-
-    const symbole = [...jeSymbol.keys()]
-    if (symbole.length === 0) {
-      await abschliessen(lauf.id, { due: 0, fetched: 0, failed: 0, added: 0, fehler: null })
-      return {
-        ran: true,
-        skipped: null,
-        seriesDue: 0,
-        seriesFetched: 0,
-        seriesFailed: 0,
-        candlesAdded: 0,
-        candlesPruned: 0,
-        error: null,
-      }
-    }
-
-    const bestand = await db
-      .select({
-        symbol: candleSeries.symbol,
-        interval: candleSeries.interval,
-        fetchedAt: candleSeries.fetchedAt,
-        candleCount: candleSeries.candleCount,
-      })
-      .from(candleSeries)
-      .where(inArray(candleSeries.symbol, symbole))
-
-    const stand = new Map<string, { fetchedAt: Date | null; candleCount: number }>()
-    for (const b of bestand) {
-      stand.set(`${b.symbol}|${b.interval}`, {
-        fetchedAt: b.fetchedAt,
-        candleCount: b.candleCount,
-      })
-    }
-
-    // Jede Kombination aus Symbol und Zeitebene ist eine Reihe — aber nur die
-    // Ebenen, die der Stufe des Instruments zustehen. Ohne Eintrag gilt 'C':
-    // Ein Symbol, das weder Trade noch Prognose trägt, bekommt keine
-    // Minutenkerzen.
-    const stufen = await stufenJeSymbol()
-    const faellig: {
-      symbol: string
-      market: Market
-      interval: Interval
-      stufe: SammelStufe
-      fetchedAt: Date | null
-    }[] = []
-    for (const [symbol, market] of jeSymbol) {
-      const stufe = stufen.get(symbol) ?? 'C'
-      for (const interval of intervalsForStufe(stufe)) {
-        // Keep this limited-credit source below its existing request budget.
-        if (isSpotGoldTicker(symbol) && !['5min', '1h', '1day'].includes(interval)) continue
-        const s = stand.get(`${symbol}|${interval}`) ?? { fetchedAt: null, candleCount: 0 }
-        if (isDueForCollection(interval, s.fetchedAt)) {
-          faellig.push({ symbol, market, interval, stufe, fetchedAt: s.fetchedAt })
-        }
-      }
-    }
-    due = faellig.length
-
-    const reihenfolge = orderByStaleness(faellig).slice(0, budget)
-    const frist = Date.now() + (options.timeBudgetMs ?? TIME_BUDGET_MS)
-
-    for (const reihe of reihenfolge) {
-      // Vor jeder Reihe prüfen, nicht danach: Eine begonnene Reihe wird immer
-      // fertig geschrieben, angefangen wird aber nichts mehr, wofür die Zeit
-      // nicht reicht.
-      if (Date.now() >= frist) break
-
-      const vorher = stand.get(`${reihe.symbol}|${reihe.interval}`)?.candleCount ?? 0
-      try {
-        // Über denselben Weg wie jeder andere Abruf — der Speicher wird beim
-        // Holen fortgeschrieben. Ein zweiter Schreibweg wäre eine zweite
-        // Wahrheit darüber, wie Kerzen in die Datenbank kommen.
-        await getStoredCandles(reihe.symbol, reihe.market, reihe.interval, {
-          limit: 1, forceRefresh: true, requireFresh: true,
-          automatic: true, automaticRole:'archive',provider: providerJeSymbol.get(reihe.symbol),
-        })
-        fetched++
-
-        const [nachher] = await db
-          .select({ candleCount: candleSeries.candleCount })
-          .from(candleSeries)
-          .where(
-            and(
-              eq(candleSeries.symbol, reihe.symbol),
-              eq(candleSeries.interval, reihe.interval),
-            ),
-          )
-        added += Math.max(0, (nachher?.candleCount ?? 0) - vorher)
-
-        // Erst zählen, dann zurückschneiden — sonst wäre `added` um genau die
-        // Kerzen zu klein, die dieser Lauf gerade geholt hat. Das Aufräumen
-        // hält den Speicher unter dem 500-MB-Limit des Gratistarifs; ohne es
-        // wächst der Kerzenspeicher unbegrenzt weiter (siehe `RETENTION_LIMIT`).
-        pruned += await pruneStoredCandles(reihe.symbol, reihe.interval, reihe.stufe)
-      } catch {
-        // Der Fehlschlag steht bereits an der Reihe (`lastError`, `failCount`);
-        // ein einzelnes unbekanntes Symbol darf den Lauf nicht beenden.
-        failed++
-      }
-    }
-  } catch (err) {
-    fehler = err instanceof Error ? err.message : 'Unbekannter Fehler'
-  }
-
-  await abschliessen(lauf.id, { due, fetched, failed, added, fehler })
-
-  return {
-    ran: true,
-    skipped: null,
-    seriesDue: due,
-    seriesFetched: fetched,
-    seriesFailed: failed,
-    candlesAdded: added,
-    candlesPruned: pruned,
-    error: fehler,
-  }
+/** Atomic persisted gate across processes. No browser/activity dependency.
+ * Even manual/force calls cannot reopen the hourly automatic budget.
+ * UTC hour slots avoid skipping a full hour when a scheduler runs a few seconds early.
+ * Claims survive interrupted workers; the next hour can recover safely. */
+export async function claimCollectHour(): Promise<boolean> {
+  const result = await db.execute(sql`INSERT INTO background_job_gate(job,"ranAt")
+    VALUES('active-trade-market-data',date_trunc('hour',now())) ON CONFLICT(job) DO UPDATE SET "ranAt"=date_trunc('hour',now())
+    WHERE background_job_gate."ranAt"<date_trunc('hour',now()) RETURNING job`)
+  return result.rows.length > 0
 }
 
-async function abschliessen(
-  id: number,
-  werte: { due: number; fetched: number; failed: number; added: number; fehler: string | null },
-) {
-  await db
-    .update(candleCollectRun)
-    .set({
-      finishedAt: new Date(),
-      seriesDue: werte.due,
-      seriesFetched: werte.fetched,
-      seriesFailed: werte.failed,
-      candlesAdded: werte.added,
-      error: werte.fehler,
-    })
-    .where(eq(candleCollectRun.id, id))
+/** Only active trades create demand. Historical rows are never pruned here. */
+export async function runCandleCollect(options: {
+  trigger?: 'cron' | 'manual'; force?: boolean; maxFetches?: number; timeBudgetMs?: number
+}): Promise<CollectReport> {
+  const instruments = await activeTradeInstruments()
+  if (!instruments.length) return empty('Keine aktiven Trades.')
+  if (!await claimCollectHour()) return empty('Noch nicht fällig oder bereits reserviert.')
+  const deadline = Date.now() + (options.timeBudgetMs ?? TIME_BUDGET_MS)
+  const [run] = await marketDb.insert(candleCollectRun).values({ trigger: options.trigger ?? 'cron' })
+    .returning({ id: candleCollectRun.id })
+  const report: CollectReport = { ...empty(''), ran: true, skipped: null }
+  try {
+    if (Date.now() < deadline) {
+      const current = await activeTradeInstruments()
+      if (current.length) {
+        const quotes = await runSymbolSync({ trigger: 'cron', onlyStockIds: current.map(i => i.id), maxResolves: 0 })
+        if (quotes.error || quotes.quotesFailed) report.error = 'Kurs-Snapshots konnten nicht vollständig aktualisiert werden.'
+      }
+    }
+    const symbols = [...new Set(instruments.map(i => i.symbol).filter((s): s is string => !!s))]
+    if (!symbols.length) throw new Error('Aktiver Trade ohne bestätigtes Anbietersymbol.')
+    const stored = await marketDb.select({ symbol: candleSeries.symbol, interval: candleSeries.interval,
+      fetchedAt: candleSeries.fetchedAt, candleCount: candleSeries.candleCount }).from(candleSeries)
+      .where(inArray(candleSeries.symbol, symbols))
+    const state = new Map(stored.map(s => [`${s.symbol}|${s.interval}`, s]))
+    const series = new Map<string, {symbol: string; market: Market; provider: ProviderName; interval: Interval; fetchedAt: Date | null}>()
+    for (const i of instruments) {
+      if (!i.symbol) continue
+      for (const interval of COLLECTED_INTERVALS) {
+        if (isSpotGoldTicker(i.symbol) && !['5min', '1h', '1day'].includes(interval)) continue
+        const key = `${i.symbol}|${interval}`, previous = state.get(key)
+        if (previous?.fetchedAt && previous.fetchedAt.getTime() >= Math.floor(Date.now() / RUN_INTERVAL_MS) * RUN_INTERVAL_MS) continue
+        series.set(key, { symbol: i.symbol, market: i.market as Market,
+          provider: (i.provider ?? 'yahoo') as ProviderName, interval, fetchedAt: previous?.fetchedAt ?? null })
+      }
+    }
+    report.seriesDue = series.size
+    for (const s of orderByStaleness([...series.values()]).slice(0, Math.max(1, options.maxFetches ?? MAX_FETCHES_PER_RUN))) {
+      if (Date.now() >= deadline) break
+      // Recheck after closure, preserving demand from another active owner/trade.
+      if (!await hasActiveTradeDemand(s.symbol, s.provider)) continue
+      try {
+        await getStoredCandles(s.symbol, s.market, s.interval, { limit: 1, forceRefresh: true,
+          requireFresh: true, automatic: true, automaticRole: 'archive', provider: s.provider })
+        report.seriesFetched++
+        const [after] = await marketDb.select({ candleCount: candleSeries.candleCount }).from(candleSeries)
+          .where(and(eq(candleSeries.symbol, s.symbol), eq(candleSeries.interval, s.interval)))
+        report.candlesAdded += Math.max(0, (after?.candleCount ?? 0) - (state.get(`${s.symbol}|${s.interval}`)?.candleCount ?? 0))
+      } catch { report.seriesFailed++ }
+    }
+    if (Date.now() >= deadline) report.error = 'Zeitbudget erreicht; verbleibender Bedarf wird beim nächsten Stundenlauf geprüft.'
+  } catch (error) {
+    report.error = error instanceof Error ? error.message : 'Sammellauf fehlgeschlagen.'
+  }
+  await marketDb.update(candleCollectRun).set({ finishedAt: new Date(), seriesDue: report.seriesDue,
+    seriesFetched: report.seriesFetched, seriesFailed: report.seriesFailed, candlesAdded: report.candlesAdded,
+    error: report.error }).where(eq(candleCollectRun.id, run.id))
+  return report
 }

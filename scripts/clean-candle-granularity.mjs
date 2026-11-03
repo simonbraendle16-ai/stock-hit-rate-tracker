@@ -1,3 +1,4 @@
+import { MarketMaintenanceClient } from './market-client.mjs'
 // Entfernt Wochen- und Monatsreihen, die in Wahrheit QUARTALSKERZEN enthalten.
 //
 // Warum es das gibt: Yahoo stuft bei `range=max` still auf
@@ -76,7 +77,7 @@ const MIN_ABSTAENDE = 5
 
 const trocken = process.argv.includes('--dry')
 
-const c = new Client({ connectionString: process.env.DATABASE_URL })
+const c = new MarketMaintenanceClient()
 await c.connect()
 
 const reihen = (

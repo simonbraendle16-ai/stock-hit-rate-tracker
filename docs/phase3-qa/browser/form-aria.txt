@@ -1,0 +1,98 @@
+- dialog "Fibonacci-Beobachtung erfassen":
+  - heading "Fibonacci-Beobachtung erfassen" [level=2]
+  - paragraph: Eine konkrete Welle, ihre Referenzbewegung und das beobachtete Extrem. Planwerte gehören nicht in diese Messung.
+  - group:
+    - group "1 · Kerndaten der Welle":
+      - text: 1 · Kerndaten der Welle
+      - group:
+        - text: Instrument
+        - combobox "Instrument": Instrument auswählen
+        - paragraph: Nach Instrumentname oder Symbol suchen, dann einen Treffer auswählen.
+      - group:
+        - text: Welle
+        - combobox "Welle": Bitte auswählen
+      - group:
+        - text: Muster der untersuchten Welle
+        - combobox "Muster der untersuchten Welle": Unbekannt
+      - group:
+        - text: Innere Unterteilung
+        - combobox "Innere Unterteilung": Unbekannt
+      - group:
+        - text: Sicherheit der Unterteilung
+        - combobox "Sicherheit der Unterteilung": Bestätigt
+      - paragraph: Unterteilung und Muster beschreiben diese Welle. Das Muster der übergeordneten Korrektur gehört zur Elternwelle. Unbekannte Angaben können offenbleiben.
+      - group:
+        - text: Sicherheit des Musters
+        - combobox "Sicherheit des Musters": Bestätigt
+      - group:
+        - text: Wellengrad
+        - combobox "Wellengrad": Unbekannt
+      - group:
+        - text: Timeframe
+        - combobox "Timeframe": Bitte auswählen
+      - group:
+        - text: Richtung der untersuchten Welle
+        - combobox "Richtung der untersuchten Welle": Bitte auswählen
+      - group:
+        - text: Messart
+        - combobox "Messart": Retracement
+    - group "2 · Erwartung":
+      - text: 2 · Erwartung
+      - paragraph: Wellenziel, möglicher Trade-Einstieg und tatsächliche Umkehr sind getrennte Angaben.
+      - group "Erwartete Fibonacci-Zielzone":
+        - text: Erwartete Fibonacci-Zielzone
+        - group:
+          - text: Erwartete Fibonacci-Zielzone · Eingabe
+          - combobox "Erwartete Fibonacci-Zielzone · Eingabe": Bereich
+        - group:
+          - text: Von Level
+          - combobox "Von Level": Nicht erhoben
+        - group:
+          - text: Bis Level
+          - combobox "Bis Level": Nicht erhoben
+      - group: Erwartung und möglicher Einstieg
+    - group "3 · Tatsächliche Beobachtung":
+      - text: 3 · Tatsächliche Beobachtung
+      - group:
+        - text: Schlüsselfibonacci · tatsächlich angelaufenes Level
+        - combobox "Schlüsselfibonacci · tatsächlich angelaufenes Level": Nicht erhoben
+      - paragraph: "Das entscheidende angelaufene Level, unabhängig von Zielzone und Umkehrbereich. Beispiel: Schlüsselfibonacci 61,8 %, Umkehr zwischen 61,8 und 78,6 %."
+      - group:
+        - text: Zielzone berührt / durchlaufen?
+        - combobox "Zielzone berührt / durchlaufen?": Unbekannt
+      - group:
+        - text: Beobachtete Umkehr
+        - combobox "Beobachtete Umkehr": Nicht bekannt
+      - status: "Zielbewertung offen: Angaben reichen noch nicht für einen Treffer oder eine Verfehlung."
+      - group: Erreichte und verfehlte Levels auswählen
+    - group "4 · Zeitraum und Verhalten":
+      - text: 4 · Zeitraum und Verhalten
+      - group:
+        - text: Wellenstatus
+        - combobox "Wellenstatus": Abgeschlossen
+      - group:
+        - text: Erfasst am
+        - textbox "Erfasst am": 2026-11-03
+      - group:
+        - text: Historischer Beginn
+        - textbox "Historischer Beginn":
+          - /placeholder: JJJJ, MM.JJJJ oder TT.MM.JJJJ
+        - paragraph: Jahr, Monat oder Tag wird automatisch erkannt. Leer = unbekannt.
+      - group:
+        - text: Historisches Ende
+        - textbox "Historisches Ende":
+          - /placeholder: JJJJ, MM.JJJJ oder TT.MM.JJJJ
+        - paragraph: Jahr, Monat oder Tag wird automatisch erkannt. Leer = unbekannt.
+      - group "Wellendauer":
+        - text: Wellendauer
+        - paragraph: Zeit vom Beginn bis zum Ende der untersuchten Welle. Kalenderzeit einschließlich Nächten, Wochenenden und Feiertagen.
+        - group:
+          - text: Dauerklasse
+          - combobox "Dauerklasse": Nicht erhoben
+        - paragraph: Untergrenze einschließlich, Obergrenze ausschließlich. Keine Berechnung eines Durchschnitts aus Klassenmitten.
+      - group: Genaue Dauern und Zielzonenverhalten
+    - group: 5 · Optionale Ergänzungen
+  - button "Abbrechen"
+  - button "Speichern und weitere Welle"
+  - button "Speichern"
+  - button "Schließen"

@@ -6,7 +6,9 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 /** Die Neon-Postgres-Verbindung, bereitgestellt als DATABASE_URL. */
 const connectionString = process.env.DATABASE_URL
 
-export const pool = new Pool({ connectionString,connectionTimeoutMillis:8_000 })
+export const pool = new Pool({ connectionString, max: 10, application_name: 'tracker-core', connectionTimeoutMillis:8_000 })
+// Idle connection failures must not terminate the process; queries still reject.
+pool.on('error', () => {})
 const operationDeadlines=new AsyncLocalStorage<number>()
 // Only callers that opt into a deadline receive a per-query client timeout.
 // Transaction cleanup must remain possible after the working deadline expired.

@@ -39,7 +39,7 @@ export function quoteInterval(_market: Market): Interval {
  * Kerzen-Anbindung (rate_limit / unknown_symbol / unsupported / upstream), damit
  * die aufrufende Route/Action sie unverändert behandeln kann.
  */
-export async function getCachedQuote(symbol: string, market: Market): Promise<Quote> {
+export async function getCachedQuote(symbol: string, market: Market, storedOnly = false): Promise<Quote> {
   const interval = quoteInterval(market)
   // Ausdrücklich nur EINE Kerze. Der Kurs ist der Schluss der letzten — alles
   // davor ist hier ohne Verwendung, und es zu übertragen war der teuerste Weg
@@ -47,7 +47,7 @@ export async function getCachedQuote(symbol: string, market: Market): Promise<Qu
   // und ohne dieses Limit kam jedes Mal die vollständige Reihe mit (bei einer
   // Krypto-Stundenreihe rund 17.000 Kerzen) — bis das Transferkontingent der
   // Datenbank aufgebraucht war und sie nichts mehr auslieferte.
-  const candles = await getCachedCandles(symbol, market, interval, { limit: 1 })
+  const candles = await getCachedCandles(symbol, market, interval, { limit: 1, storedOnly })
   const last = candles[candles.length - 1]
   if (!last) {
     // getCandles wirft bei leerem Ergebnis bereits; dieser Fall ist die

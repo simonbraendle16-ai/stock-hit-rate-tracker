@@ -1,0 +1,1343 @@
+diff --git a/app/actions/symbols.ts b/app/actions/symbols.ts
+index 6a34a32..25d8036 100644
+--- a/app/actions/symbols.ts
++++ b/app/actions/symbols.ts
+@@ -66,23 +66,10 @@ export async function getWatchlistQuotes(): Promise<WatchlistQuote[]> {
+   }))
+ }
+ 
+-/**
+- * Selbstheilung, während eine Seite offen ist.
+- *
+- * Der Cron-Job ist der Regelweg — aber auf dem Vercel-Hobby-Plan darf er nur
+- * einmal am Tag laufen, und ein Zeitplan kann grundsätzlich hängen. Deshalb
+- * fragt die Oberfläche im Takt nach (`components/quote-auto-refresh.tsx`) und
+- * holt bei zu altem Stand selbst nach.
+- *
+- * Die Schwelle in `refreshQuotesIfStale` verhindert, dass daraus ein Abruf pro
+- * Nachfrage wird; die Klammer dort verhindert parallele Läufe.
+- *
+- * Gibt `true` zurück, wenn wirklich geholt wurde — nur dann lohnt sich auf der
+- * Seite ein Neuladen.
+- */
++/** Explicit course demand of the signed-in user. No browser timer calls this. */
+ export async function refreshQuotes(maxAgeMs?: number): Promise<boolean> {
+-  await getUserId()
+-  const refreshed = await refreshQuotesIfStale(maxAgeMs)
++  const userId = await getUserId()
++  const refreshed = await refreshQuotesIfStale(maxAgeMs, userId)
+   if (refreshed) {
+     // Die vier Orte, an denen Kurse stehen — sonst zeigt die Seite nach dem
+     // Lauf weiter den alten Stand aus dem Server-Cache.
+diff --git a/app/api/cron/collect-candles/route.ts b/app/api/cron/collect-candles/route.ts
+index cc74a40..5a7a480 100644
+--- a/app/api/cron/collect-candles/route.ts
++++ b/app/api/cron/collect-candles/route.ts
+@@ -1,26 +1,8 @@
+-import {backgroundDue} from '@/lib/background-activity'
+ import { runCandleCollect } from '@/lib/market-data/candle-collect'
+ import { NextRequest, NextResponse } from 'next/server'
+ 
+-/**
+- * Der Lauf, der den Kerzenspeicher füllt (Migration 0027).
+- *
+- * WARUM ER AM 5-MINUTEN-TAKT HÄNGT UND TROTZDEM NICHT ALLE 5 MINUTEN ARBEITET
+- * Vercel-Hobby lässt genau EINEN Cron-Lauf pro Tag zu (siehe CLAUDE.md — das
+- * hat schon zwei Tage gekostet). Den Takt gibt deshalb derselbe
+- * aktive Demo-Workflow vor, unabhängig vom Alarm-Workflow. Damit daraus keine 288 Läufe am
+- * Tag werden, entscheidet die Route SELBST, ob sie fällig ist
+- * (`RUN_INTERVAL_MS`, eine Stunde) und antwortet sonst mit `ran: false`.
+- *
+- * Die Fälligkeit im Code statt im Zeitplan zu führen hat einen zweiten Vorteil:
+- * Fällt der Takt für einen halben Tag aus, arbeitet der nächste Aufruf sofort —
+- * ein zweiter Zeitplan hätte stattdessen bis zu seinem nächsten Termin gewartet.
+- *
+- * Von Hand anstoßen (PowerShell):
+- *   curl.exe -H "Authorization: Bearer $secret" https://<app>/api/cron/collect-candles?force=1
+- */
+-
+-// Holt Kerzen und schreibt sie — darf nie aus einem Cache beantwortet werden.
++/** Server-only market-data maintenance. Independent of app activity.
++ * Scheduling is prepared separately and remains disabled in Phase 2. */
+ export const dynamic = 'force-dynamic'
+ export const maxDuration = 60
+ 
+@@ -42,15 +24,12 @@ export async function GET(req: NextRequest) {
+     return NextResponse.json({ error: 'Nicht berechtigt.' }, { status: 401 })
+   }
+ 
+-  if(req.nextUrl.searchParams.get('force')!=='1'&&!await backgroundDue('candles')) return NextResponse.json({ok:true,ran:false,skipped:'inactive_interval'})
+-  const force = req.nextUrl.searchParams.get('force') === '1'
+-  const report = await runCandleCollect({ trigger: 'cron', force })
++  try {
++    const report = await runCandleCollect({ trigger: 'cron' })
+ 
+-  // Auch ein Lauf mit einzelnen Fehlschlägen gilt als beantwortet — sonst
+-  // wertet der externe Dienst ihn als Ausfall, obwohl der Speicher gewachsen
+-  // ist. Ein unbekanntes Symbol steht an seiner Reihe, nicht am ganzen Lauf.
+-  return NextResponse.json({
+-    ok: report.error === null,
++    // Partial failures remain visible to the scheduler; stored history stays available.
++    return NextResponse.json({
++    ok: report.error === null && report.seriesFailed === 0,
+     ran: report.ran,
+     skipped: report.skipped,
+     seriesDue: report.seriesDue,
+@@ -59,5 +38,8 @@ export async function GET(req: NextRequest) {
+     candlesAdded: report.candlesAdded,
+     candlesPruned: report.candlesPruned,
+     error: report.error,
+-  })
++  }, { status: report.error || report.seriesFailed ? 503 : 200 })
++  } catch {
++    return NextResponse.json({ ok: false, ran: false, error: 'Kursdatenpflege fehlgeschlagen.' }, { status: 503 })
++  }
+ }
+diff --git a/app/api/cron/sync-symbols/route.ts b/app/api/cron/sync-symbols/route.ts
+index 6c0456d..f37f3ec 100644
+--- a/app/api/cron/sync-symbols/route.ts
++++ b/app/api/cron/sync-symbols/route.ts
+@@ -1,55 +1,4 @@
+-import { runSymbolSync } from '@/lib/market-data/sync'
+-import { NextRequest, NextResponse } from 'next/server'
+-
+-/**
+- * Der Hintergrundlauf, der die Watchlist am Leben hält.
+- *
+- * Aufgerufen von Vercel Cron (Zeitplan in `vercel.json`). Vercel schickt dabei
+- * den Header `Authorization: Bearer <CRON_SECRET>`; ohne gültiges Geheimnis
+- * antwortet die Route mit 401. Das ist kein Selbstzweck: Die Route stößt
+- * Abfragen bei einem externen Anbieter an, und die soll nicht jeder auslösen
+- * können, der die URL kennt.
+- *
+- * Von Hand anstoßen (PowerShell):
+- *   curl -H "Authorization: Bearer $env:CRON_SECRET" https://<deine-app>/api/cron/sync-symbols
+- */
+-
+-// Der Lauf spricht mit einem externen Dienst und schreibt in die Datenbank —
+-// er darf unter keinen Umständen aus einem Cache beantwortet werden.
++// Compatibility entry point: one shared active-trade maintenance gate.
++export { GET } from '../collect-candles/route'
+ export const dynamic = 'force-dynamic'
+ export const maxDuration = 60
+-
+-export async function GET(req: NextRequest) {
+-  const secret = process.env.CRON_SECRET
+-  if (!secret) {
+-    return NextResponse.json(
+-      {
+-        error:
+-          'CRON_SECRET ist nicht gesetzt. Ohne Geheimnis läuft die Synchronisierung nicht — ' +
+-          'bitte in den Projekt-Einstellungen (und in .env.local) hinterlegen.',
+-      },
+-      { status: 500 },
+-    )
+-  }
+-
+-  const header = req.headers.get('authorization')
+-  if (header !== `Bearer ${secret}`) {
+-    return NextResponse.json({ error: 'Nicht berechtigt.' }, { status: 401 })
+-  }
+-
+-  const report = await runSymbolSync({ trigger: 'cron' })
+-
+-  // Auch ein Lauf mit Teilfehlern gilt als erfolgreich beantwortet — sonst
+-  // wertet Vercel ihn als fehlgeschlagen, obwohl 90 von 93 Kursen frisch sind.
+-  // Der Zustand steht im Rumpf und im Protokoll (`symbol_sync_run`).
+-  return NextResponse.json({
+-    ok: report.error === null,
+-    symbolsTotal: report.symbolsTotal,
+-    resolvedNew: report.resolvedNew,
+-    stillUnresolved: report.stillUnresolved,
+-    quotesUpdated: report.quotesUpdated,
+-    quotesFailed: report.quotesFailed,
+-    durationMs: report.durationMs,
+-    error: report.error,
+-  })
+-}
+diff --git a/app/api/sparklines/route.ts b/app/api/sparklines/route.ts
+index 152162a..11ae2d4 100644
+--- a/app/api/sparklines/route.ts
++++ b/app/api/sparklines/route.ts
+@@ -86,7 +86,7 @@ export async function GET(req: Request) {
+   // gespeicherten Stand SOFORT zeigen — mit Zeitstempel, also ehrlich als das,
+   // was er ist. Ein Kurs von vor zwei Minuten, sichtbar beschriftet, ist besser
+   // als ein leeres Feld, das auf den perfekten Kurs wartet.
+-  if (wantCloses) await refreshQuotesIfStale()
++  if (wantCloses) await refreshQuotesIfStale(undefined, session.user.id)
+ 
+   const rows = await db
+     .select({
+diff --git a/components/analysis-auto-refresh.tsx b/components/analysis-auto-refresh.tsx
+index 8a31793..3870dcc 100644
+--- a/components/analysis-auto-refresh.tsx
++++ b/components/analysis-auto-refresh.tsx
+@@ -1,27 +1,4 @@
+ "use client";
+-import { useEffect } from "react";
+-import { useRouter } from "next/navigation";
+-
+-/** Includes writes from API/another tab. No broker or market-data operation. */
+-export function AnalysisAutoRefresh() {
+-  const router = useRouter();
+-  useEffect(() => {
+-    let last = 0;
+-    const refresh = () => {
+-      if (document.visibilityState !== "visible" || Date.now() - last < 1000) return;
+-      // An automatic refresh must not interrupt an open data-entry dialog.
+-      if (document.querySelector('[role="dialog"], [role="alertdialog"]')) return;
+-      last = Date.now();
+-      router.refresh();
+-    };
+-    const timer = setInterval(refresh, 60_000);
+-    window.addEventListener("focus", refresh);
+-    document.addEventListener("visibilitychange", refresh);
+-    return () => {
+-      clearInterval(timer);
+-      window.removeEventListener("focus", refresh);
+-      document.removeEventListener("visibilitychange", refresh);
+-    };
+-  }, [router]);
+-  return null;
+-}
++/** External changes appear on navigation/manual refresh. A background page
++ * refresh must not indirectly reload charts or interfere with wave entry. */
++export function AnalysisAutoRefresh() { return null; }
+diff --git a/components/quote-auto-refresh.tsx b/components/quote-auto-refresh.tsx
+index 198a6d9..81411af 100644
+--- a/components/quote-auto-refresh.tsx
++++ b/components/quote-auto-refresh.tsx
+@@ -1,67 +1,4 @@
+ 'use client'
+-
+-// Hält die Kurse einer offenen Seite frisch.
+-//
+-// Warum es das braucht: Die Kurse stehen in `quote_snapshot` und werden vom
+-// Cron-Lauf gefüllt. Auf dem Vercel-Hobby-Plan darf der aber nur EINMAL AM TAG
+-// laufen — ohne Zutun stünde auf Analyse, Auswertung und Instrument-Detail also
+-// stundenalte Ware. Die Watchlist löst das über ihren eigenen Takt auf
+-// `/api/sparklines`; für die serverseitig gerenderten Seiten übernimmt es diese
+-// Komponente.
+-//
+-// Sie rendert nichts. Sie fragt nur nach — und die Serveraktion entscheidet
+-// anhand des Alters, ob wirklich beim Anbieter geholt wird. Ein Takt von einer
+-// Minute heißt deshalb nicht „jede Minute eine Anbieteranfrage", sondern
+-// „höchstens so alt darf das Angezeigte werden".
+-
+-import { useEffect, useRef } from 'react'
+-import { useRouter } from 'next/navigation'
+-import { refreshQuotes } from '@/app/actions/symbols'
+-
+-const POLL_MS = 60_000
+-
+-export function QuoteAutoRefresh() {
+-  const router = useRouter()
+-  // Verhindert überlappende Läufe, wenn eine Anfrage länger dauert als der Takt.
+-  const busy = useRef(false)
+-
+-  useEffect(() => {
+-    let cancelled = false
+-    let timer: ReturnType<typeof setInterval> | null = null
+-
+-    const tick = async ({ force = false } = {}) => {
+-      if (cancelled || busy.current) return
+-      if (document.querySelector('[role="dialog"], [role="alertdialog"]')) return
+-      // Im Hintergrundtab nicht WEITER nachfragen — niemand sieht die Zahl. Der
+-      // erste Lauf greift trotzdem, sonst bliebe eine im Hintergrund geöffnete
+-      // Seite auf ihrem alten Stand stehen, bis man sie anschaut.
+-      if (!force && document.visibilityState === 'hidden') return
+-      busy.current = true
+-      try {
+-        // Nur wenn wirklich geholt wurde, lohnt das Neuladen der Serverdaten.
+-        if (await refreshQuotes() && !document.querySelector('[role="dialog"], [role="alertdialog"]')) router.refresh()
+-      } catch {
+-        // Ein Anbieter- oder Netzfehler darf die Seite nicht stören: Es bleibt
+-        // der letzte bekannte Kurs mit seinem Zeitstempel stehen.
+-      } finally {
+-        busy.current = false
+-      }
+-    }
+-
+-    const onVisible = () => {
+-      if (document.visibilityState === 'visible') void tick()
+-    }
+-
+-    void tick({ force: true })
+-    timer = setInterval(() => void tick(), POLL_MS)
+-    document.addEventListener('visibilitychange', onVisible)
+-
+-    return () => {
+-      cancelled = true
+-      if (timer) clearInterval(timer)
+-      document.removeEventListener('visibilitychange', onVisible)
+-    }
+-  }, [router])
+-
+-  return null
+-}
++/** Retained for existing page imports. Quotes refresh only on explicit demand;
++ * active-trade maintenance belongs to the server job. */
++export function QuoteAutoRefresh() { return null }
+diff --git a/components/watchlist/watchlist-grid.tsx b/components/watchlist/watchlist-grid.tsx
+index 8d5d1d6..6b5c8bd 100644
+--- a/components/watchlist/watchlist-grid.tsx
++++ b/components/watchlist/watchlist-grid.tsx
+@@ -1,4 +1,5 @@
+ 'use client'
++import { useSparklines } from './use-sparklines'
+ 
+ import { useEffect, useMemo, useRef, useState, useTransition } from 'react'
+ import Link from 'next/link'
+@@ -105,92 +106,6 @@ type SparkEntry =
+  * Rate-Limits gibt es nicht mehr. Erneut versucht wird nur noch, solange der
+  * Speicher für einzelne Symbole noch gar nicht gefüllt ist (`pending`).
+  */
+-/**
+- * Takt, in dem die offene Watchlist nachfragt.
+- *
+- * Die Route frischt dabei selbst auf, wenn der Kursspeicher älter als
+- * `QUOTE_STALE_MS` ist — eine Minute Takt heißt also nicht „jede Minute zum
+- * Anbieter", sondern „höchstens so alt darf das Angezeigte werden".
+- */
+-const POLL_MS = 60_000
+-
+-function useSparklines() {
+-  const [sparks, setSparks] = useState<Record<number, SparkEntry>>({})
+-  // Hochzählen erzwingt einen neuen Durchlauf des Effekts. Gebraucht nach jeder
+-  // Änderung an der Zuordnung: `router.refresh()` erneuert nur die Server-Daten,
+-  // die Kursliste hier liegt im Client — ohne dieses Signal stünde nach einer
+-  // erfolgreichen Reparatur weiterhin „kein Symbol" in der Zeile.
+-  const [reloadKey, setReloadKey] = useState(0)
+-
+-  useEffect(() => {
+-    let cancelled = false
+-    let attempts = 0
+-    let timer: ReturnType<typeof setTimeout> | null = null
+-
+-    const schedule = (ms: number) => {
+-      if (timer) clearTimeout(timer)
+-      timer = setTimeout(load, ms)
+-    }
+-
+-    const load = async ({ force = false } = {}) => {
+-      // Im Hintergrundtab nicht WEITER abfragen: Niemand sieht die Zahl, und der
+-      // Anbieter bekommt trotzdem Verkehr. Beim Zurückkommen holt der
+-      // Sichtbarkeits-Horcher unten sofort nach.
+-      //
+-      // Der erste Abruf läuft trotzdem (`force`) — sonst stünde in einem im
+-      // Hintergrund geöffneten Tab dauerhaft „…" statt eines Kurses.
+-      if (!force && document.visibilityState === 'hidden') {
+-        schedule(POLL_MS)
+-        return
+-      }
+-      try {
+-        // Etappe 14, in zwei Zügen: Zuerst nur die Kurse (ein
+-        // Datenbankzugriff, sofort da), dann die Verläufe für die Sparklines
+-        // (bis zu neunzig Kerzen-Abrufe). Vorher warteten die Kurse auf die
+-        // Verläufe — das waren die fünf bis zehn Sekunden mit leeren Feldern.
+-        const res = await fetch('/api/sparklines', { cache: 'no-store' })
+-        if (!res.ok) throw new Error()
+-        const data = (await res.json()) as { sparks: Record<number, SparkEntry> }
+-        if (cancelled) return
+-        setSparks(data.sparks)
+-        attempts = 0
+-
+-        // Die Verläufe kommen nach und ersetzen den Stand, sobald sie da sind.
+-        // Bleiben sie aus, steht trotzdem überall ein Kurs.
+-        void fetch('/api/sparklines?closes=1', { cache: 'no-store' })
+-          .then((r) => (r.ok ? r.json() : null))
+-          .then((full: { sparks: Record<number, SparkEntry> } | null) => {
+-            if (!cancelled && full) setSparks(full.sparks)
+-          })
+-          .catch(() => {
+-            /* Verlauf ist Beiwerk — ohne ihn bleibt die Zeile vollständig lesbar. */
+-          })
+-        // Noch ungefüllte Symbole kommen schneller dran als der Regeltakt.
+-        const hasPending = Object.values(data.sparks).some((e) => e.status === 'pending')
+-        schedule(hasPending ? 20_000 : POLL_MS)
+-      } catch {
+-        if (cancelled) return
+-        // Nach einem Fehlschlag zurückhaltender werden statt stur weiterzuklopfen.
+-        attempts++
+-        schedule(Math.min(POLL_MS, 10_000 * attempts))
+-      }
+-    }
+-
+-    const onVisible = () => {
+-      if (document.visibilityState === 'visible') void load()
+-    }
+-    document.addEventListener('visibilitychange', onVisible)
+-    void load({ force: true })
+-
+-    return () => {
+-      cancelled = true
+-      document.removeEventListener('visibilitychange', onVisible)
+-      if (timer) clearTimeout(timer)
+-    }
+-  }, [reloadKey])
+-
+-  return { sparks, reload: () => setReloadKey((k) => k + 1) }
+-}
+ 
+ function Sparkline({ closes, positive }: { closes: number[]; positive: boolean }) {
+   const path = useMemo(() => {
+diff --git a/lib/alert-run-service.ts b/lib/alert-run-service.ts
+index fdcd532..ef2a030 100644
+--- a/lib/alert-run-service.ts
++++ b/lib/alert-run-service.ts
+@@ -4,7 +4,6 @@ import { alertCheckRun, alertMailDelivery, priceAlert, quoteSnapshot, trade, use
+ import { and, asc, desc, eq, gt, inArray, isNotNull, isNull } from 'drizzle-orm'
+ import { revalidatePath } from 'next/cache'
+ import { getCachedQuote } from '@/lib/market-data/quote'
+-import { refreshQuotesIfStale } from '@/lib/market-data/sync'
+ import type { Market } from '@/lib/market-data'
+ import { createAlertSourceResolver } from './alert-symbols'
+ import { candleReachesLevel, isAlertDirection, isLevelReached, type AlertKind } from '@/lib/alerts'
+@@ -41,7 +40,6 @@ export async function runAlertCheck(opts: { userId?: string; trigger: 'cron' | '
+   try {
+     const [run] = await db.insert(alertCheckRun).values({ trigger: opts.origin ?? opts.trigger }).returning({ id: alertCheckRun.id })
+     runId = run.id
+-    await boundedRead(refreshQuotesIfStale(), Math.min(4_000, deadline - Date.now())).catch(() => false)
+     const open = await db.select().from(priceAlert).where(and(eq(priceAlert.active, true), isNull(priceAlert.triggeredAt),
+       gt(priceAlert.id, cursor), opts.userId ? eq(priceAlert.userId, opts.userId) : undefined)).orderBy(asc(priceAlert.id)).limit(BATCH_SIZE)
+     report.alertsOpen = open.length
+@@ -67,7 +65,7 @@ export async function runAlertCheck(opts: { userId?: string; trigger: 'cron' | '
+         continue
+       }
+       if (!candles.has(key)) {
+-        const c = await boundedRead(getCachedQuote(symbol, a.market as Market), Math.min(2_000, deadline - Date.now())).catch(() => null)
++        const c = await boundedRead(getCachedQuote(symbol, a.market as Market, true), Math.min(2_000, deadline - Date.now())).catch(() => null)
+         // Source time is the start of the hourly candle, not the fetch time.
+         candles.set(key, c && usableAlertPrice(c.price, c.time, Date.now(), 75 * 60_000)
+           && Number.isFinite(c.high) && Number.isFinite(c.low) && c.low > 0 && c.high >= c.low ? c : null)
+diff --git a/lib/analysis-auto-refresh.test.ts b/lib/analysis-auto-refresh.test.ts
+index c92f626..350787c 100644
+--- a/lib/analysis-auto-refresh.test.ts
++++ b/lib/analysis-auto-refresh.test.ts
+@@ -1,19 +1,10 @@
+-import {afterEach,expect,it,vi} from 'vitest';
+-const state=vi.hoisted(()=>({refresh:vi.fn(),cleanup:undefined as undefined|(()=>void)}));
+-vi.mock('next/navigation',()=>({useRouter:()=>({refresh:state.refresh})}));
+-vi.mock('react',()=>({useEffect:(effect:()=>()=>void)=>{state.cleanup=effect();}}));
+-import {AnalysisAutoRefresh} from '../components/analysis-auto-refresh';
+-afterEach(()=>{state.cleanup?.();vi.useRealTimers();vi.unstubAllGlobals();vi.clearAllMocks();});
+-it('refreshes external writes on focus and each visible minute; hidden tabs and unmounted pages do not poll',()=>{
+- vi.useFakeTimers();vi.setSystemTime(new Date('2026-10-17T12:00:00Z'));
+- let dialogOpen=false;
+- const doc=Object.assign(new EventTarget(),{visibilityState:'visible',querySelector:()=>dialogOpen?{}:null});
+- const win=new EventTarget();vi.stubGlobal('document',doc);vi.stubGlobal('window',win);
+- AnalysisAutoRefresh();vi.advanceTimersByTime(60000);expect(state.refresh).toHaveBeenCalledTimes(1);
+- doc.visibilityState='hidden';vi.advanceTimersByTime(60000);expect(state.refresh).toHaveBeenCalledTimes(1);
+- doc.visibilityState='visible';doc.dispatchEvent(new Event('visibilitychange'));win.dispatchEvent(new Event('focus'));expect(state.refresh).toHaveBeenCalledTimes(2);
+- vi.advanceTimersByTime(1001);win.dispatchEvent(new Event('focus'));expect(state.refresh).toHaveBeenCalledTimes(3);
+- dialogOpen=true;vi.advanceTimersByTime(60000);win.dispatchEvent(new Event('focus'));expect(state.refresh).toHaveBeenCalledTimes(3);
+- dialogOpen=false;vi.advanceTimersByTime(60000);expect(state.refresh).toHaveBeenCalledTimes(4);
+- state.cleanup?.();vi.advanceTimersByTime(60000);win.dispatchEvent(new Event('focus'));expect(state.refresh).toHaveBeenCalledTimes(4);
+-});
++import { expect, it, vi } from 'vitest'
++import { AnalysisAutoRefresh } from '../components/analysis-auto-refresh'
++import { QuoteAutoRefresh } from '../components/quote-auto-refresh'
++it('analysis and wave pages install no timers, focus handlers or quote effects', () => {
++  const interval = vi.spyOn(globalThis, 'setInterval')
++  expect(AnalysisAutoRefresh()).toBeNull()
++  expect(QuoteAutoRefresh()).toBeNull()
++  expect(interval).not.toHaveBeenCalled()
++  interval.mockRestore()
++})
+diff --git a/lib/fibonacci-db.test.ts b/lib/fibonacci-db.test.ts
+index 6c6f060..2f25eb3 100644
+--- a/lib/fibonacci-db.test.ts
++++ b/lib/fibonacci-db.test.ts
+@@ -13,6 +13,9 @@ import { readFileSync, writeFileSync } from "node:fs";
+ import { NextRequest } from "next/server";
+ vi.mock("next/headers",()=>({headers:async()=>new Headers()}));
+ vi.mock("@/lib/auth", () => ({ auth: { api: { getSession: async () => ({ user: { id: "owner" } }) } } }));
++const marketCalls = vi.hoisted(() => ({ candles: vi.fn(), quotes: vi.fn() }));
++vi.mock('@/lib/market-data/cached', () => ({ getCachedCandles: marketCalls.candles, getCachedCloses: marketCalls.candles }));
++vi.mock('@/lib/market-data/sync', () => ({ refreshQuotesIfStale: marketCalls.quotes, runSymbolSync: marketCalls.quotes }));
+ import {saveFibonacci} from "@/app/actions/fibonacci";
+ import {collectionPage,collectionDetail,collectionChoices} from "@/app/actions/collection";
+ const state = vi.hoisted(() => ({ database: null as any }));
+@@ -929,3 +932,15 @@ it('compact save confirms exactly one row and authoritative counts without dupli
+  }
+  expect((await collectionPage()).total).toBe(1);
+ });
++
++it('Phase 2: saves and statistically evaluates a running wave without any course request', async () => {
++  marketCalls.candles.mockClear(); marketCalls.quotes.mockClear();
++  const id = crypto.randomUUID();
++  await saveFib('owner', id, { ...input, status: 'laufend' });
++  expect((await getFib('owner', id)).status).toBe('laufend');
++  const result = await GET(request('?wave=B'));
++  expect(result.status).toBe(200);
++  expect((await result.json()).total).toBe(1);
++  expect(marketCalls.candles).not.toHaveBeenCalled();
++  expect(marketCalls.quotes).not.toHaveBeenCalled();
++});
+diff --git a/lib/market-data/candle-collect.test.ts b/lib/market-data/candle-collect.test.ts
+index 2b49550..b543126 100644
+--- a/lib/market-data/candle-collect.test.ts
++++ b/lib/market-data/candle-collect.test.ts
+@@ -1,51 +1,114 @@
+-import { beforeEach, describe, expect, it, vi } from 'vitest'
+-import { getTableName } from 'drizzle-orm'
++import { beforeAll, afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
++import { PGlite } from '@electric-sql/pglite'
++import { drizzle } from 'drizzle-orm/pglite'
++import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core'
++import { eq } from 'drizzle-orm'
++import { stock, trade, candleSeries, candleCollectRun } from '@/lib/db/schema'
+ 
+-const state = vi.hoisted(() => ({ last: null as Date | null, fail: true, calls: [] as { symbol: string; options: unknown }[] }))
+-vi.mock('@/lib/db', () => {
+-  const query = (rows: () => unknown[]) => {
+-    const q = { where: () => q, orderBy: () => q, limit: () => q, innerJoin: () => q,
+-      then: (resolve: (value: unknown) => unknown) => Promise.resolve(rows()).then(resolve) }
+-    return q
++const state = vi.hoisted(() => ({ db: null as any, fetch: vi.fn(), quotes: vi.fn() }))
++vi.mock('@/lib/db', () => ({ get db() { return state.db } }))
++vi.mock('./candle-store', () => ({ getStoredCandles: state.fetch }))
++vi.mock('./sync', () => ({ runSymbolSync: state.quotes }))
++import { runCandleCollect, COLLECTED_INTERVALS, claimCollectHour } from './candle-collect'
++import { activeTradeInstruments } from './active-trade-demand'
++
++let pg: PGlite
++beforeAll(async () => {
++  pg = new PGlite(); state.db = drizzle(pg)
++  const dialect = new PgDialect()
++  for (const table of [stock, trade, candleSeries, candleCollectRun]) {
++    const config = getTableConfig(table)
++    const columns = config.columns.map(c => {
++      const v = c.default
++      const d = v === undefined ? '' : ' DEFAULT ' + (typeof v === 'string' ? "'" + v.replaceAll("'", "''") + "'" :
++        typeof v === 'number' || typeof v === 'boolean' ? String(v) : dialect.sqlToQuery(v as any).sql)
++      return `"${c.name}" ${c.getSQLType()}${c.primary ? ' PRIMARY KEY' : ''}${d}`
++    })
++    // composite key is created separately below
++    await pg.exec(`CREATE TABLE "${config.name}" (${columns.join(',')})`)
+   }
+-  return { db: {
+-    selectDistinct: () => ({ from: () => query(() => [{ symbol: 'BAD' }, { symbol: 'META' }]) }),
+-    select: () => ({ from: (table: Parameters<typeof getTableName>[0]) => query(() => {
+-      switch (getTableName(table)) {
+-        case 'candle_collect_run': return state.last ? [{ startedAt: state.last }] : []
+-        case 'stock': return [{ symbol: 'BAD', market: 'aktien' }, { symbol: 'META', market: 'aktien' }]
+-        case 'candle_series': return []
+-        default: return []
+-      }
+-    }) }),
+-    insert: () => ({ values: () => ({ returning: async () => [{ id: 1 }] }) }),
+-    update: () => ({ set: () => query(() => []) }),
+-  } }
++  await pg.exec('CREATE UNIQUE INDEX series_key ON candle_series(symbol,interval); CREATE TABLE background_job_gate(job text PRIMARY KEY,"ranAt" timestamptz NOT NULL)')
++})
++afterAll(async () => { await pg.close() })
++beforeEach(async () => {
++  await pg.exec('TRUNCATE stock,trade,candle_series,candle_collect_run,background_job_gate RESTART IDENTITY')
++  await state.db.insert(stock).values({ id: 1, userId: 'synthetic', ticker: 'TEST', name: 'Isolated', market: 'aktien',
++    providerSymbol: 'TEST', provider: 'yahoo', resolutionStatus: 'ok' })
++  state.fetch.mockReset().mockResolvedValue([])
++  state.quotes.mockReset().mockResolvedValue({ error: null, quotesFailed: 0 })
+ })
+-vi.mock('./candle-store', () => ({
+-  getStoredCandles: async (symbol: string, _market: string, _interval: string, options: unknown) => {
+-    state.calls.push({ symbol, options })
+-    if (symbol === 'BAD' && state.fail) throw new Error('Provider offline; old cache exists')
+-    return []
+-  },
+-  pruneStoredCandles: async () => 0,
+-}))
+-import { runCandleCollect } from './candle-collect'
++async function addTrade(id: number, status = 'aktiv', stockId = 1, userId = 'synthetic') {
++  await state.db.insert(trade).values({ id, stockId, userId, ticker: 'TEST', name: 'Isolated', status })
++}
++async function nextHour() { await pg.exec(`UPDATE background_job_gate SET "ranAt"=now()-interval '61 minutes'`) }
+ 
+-beforeEach(() => { state.last = null; state.fail = true; state.calls = [] })
+-describe('Unabhängiger Kerzensammler', () => {
+-  it('zählt Anbieterfehler statt alten Cache als Erfolg und sammelt andere Symbole weiter', async () => {
++describe('isolated active-trade maintenance on PostgreSQL', () => {
++  it.each(['none', 'geplant', 'abgeschlossen'])('no automatic calls for %s demand, independent of waves', async status => {
++    if (status !== 'none') await addTrade(1, status)
++    expect(await runCandleCollect({ force: true })).toMatchObject({ ran: false, seriesFetched: 0, candlesPruned: 0 })
++    expect(state.fetch).not.toHaveBeenCalled(); expect(state.quotes).not.toHaveBeenCalled()
++    expect((await pg.query('SELECT * FROM background_job_gate')).rows).toEqual([])
++  })
++  it('one active trade updates each shared series once and scopes quote snapshots', async () => {
++    await addTrade(1)
+     const report = await runCandleCollect({})
+-    expect(report.seriesFailed).toBeGreaterThan(0)
+-    expect(report.seriesFetched).toBeGreaterThan(0)
+-    expect(state.calls.some(c => c.symbol === 'META')).toBe(true)
+-    for (const call of state.calls) expect(call.options).toMatchObject({limit:1,forceRefresh:true,requireFresh:true,automatic:true,provider:'yahoo'})
+-    state.fail = false
+-    expect((await runCandleCollect({ force: true })).seriesFailed).toBe(0)
+-  })
+-  it('behält die stündliche Fälligkeit trotz häufigem Workflow-Aufruf', async () => {
+-    state.last = new Date()
+-    expect(await runCandleCollect({})).toMatchObject({ ran: false, seriesFetched: 0 })
+-    expect(state.calls).toEqual([])
++    expect(report).toMatchObject({ ran: true, seriesFetched: COLLECTED_INTERVALS.length, seriesFailed: 0, candlesPruned: 0 })
++    expect(state.fetch).toHaveBeenCalledTimes(COLLECTED_INTERVALS.length)
++    expect(state.quotes).toHaveBeenCalledExactlyOnceWith({ trigger: 'cron', onlyStockIds: [1], maxResolves: 0 })
++    for (const call of state.fetch.mock.calls) expect(call[3]).toMatchObject({ limit: 1, automatic: true, automaticRole: 'archive', requireFresh: true, provider: 'yahoo' })
++  })
++  it('multiple owners and trades sharing the symbol do not duplicate series', async () => {
++    await addTrade(1); await addTrade(2)
++    await state.db.insert(stock).values({ id: 2, userId: 'other', ticker: 'TEST', name: 'Isolated', market: 'aktien', providerSymbol: 'TEST', provider: 'yahoo', resolutionStatus: 'ok' })
++    await addTrade(3, 'aktiv', 2, 'other')
++    expect((await runCandleCollect({})).seriesFetched).toBe(COLLECTED_INTERVALS.length)
++    await state.db.update(trade).set({ status: 'abgeschlossen' }).where(eq(trade.id, 1)); await nextHour()
++    expect((await runCandleCollect({})).seriesFetched).toBe(COLLECTED_INTERVALS.length)
++    await state.db.update(trade).set({ status: 'abgeschlossen' }); await nextHour()
++    const calls = state.fetch.mock.calls.length
++    expect((await runCandleCollect({})).ran).toBe(false); expect(state.fetch).toHaveBeenCalledTimes(calls)
++  })
++  it('rechecks closure during a running job and retains historical series', async () => {
++    await addTrade(1)
++    await state.db.insert(candleSeries).values({ symbol: 'HISTORY', interval: '1h', market: 'aktien', candleCount: 100, fetchedAt: new Date(0) })
++    state.fetch.mockImplementationOnce(async () => { await state.db.update(trade).set({ status: 'abgeschlossen' }); return [] })
++    expect((await runCandleCollect({})).seriesFetched).toBe(1)
++    expect(state.quotes).toHaveBeenCalledTimes(1) // started while the trade was still active
++    expect((await state.db.select().from(candleSeries))[0]).toMatchObject({ symbol: 'HISTORY', candleCount: 100 })
++  })
++  it('repeated, forced and parallel invocations share one persisted hourly claim', async () => {
++    await addTrade(1)
++    const reports = await Promise.all([runCandleCollect({}), runCandleCollect({ force: true }), runCandleCollect({})])
++    expect(reports.filter(r => r.ran)).toHaveLength(1)
++    expect(state.fetch).toHaveBeenCalledTimes(COLLECTED_INTERVALS.length)
++    expect((await runCandleCollect({ force: true })).ran).toBe(false)
++    await nextHour(); expect(await claimCollectHour()).toBe(true)
++  })
++  it('provider failure is counted, other series continue, and next hour recovers', async () => {
++    await addTrade(1)
++    state.fetch.mockRejectedValueOnce(new Error('isolated provider outage'))
++    const report = await runCandleCollect({})
++    expect(report.seriesFailed).toBe(1); expect(report.seriesFetched).toBe(COLLECTED_INTERVALS.length - 1)
++    expect((await state.db.select().from(candleCollectRun))[0]).toMatchObject({ seriesFailed: 1 })
++    await nextHour(); expect((await runCandleCollect({})).seriesFailed).toBe(0)
++  })
++  it('honors per-series 60-minute freshness and does not conflate a recent daily run', async () => {
++    await addTrade(1)
++    await state.db.insert(candleSeries).values({ symbol: 'TEST', interval: '1h', market: 'aktien', candleCount: 20, fetchedAt: new Date() })
++    expect((await runCandleCollect({})).seriesFetched).toBe(COLLECTED_INTERVALS.length - 1)
++    expect(state.fetch.mock.calls.some(c => c[2] === '1h')).toBe(false)
++    await nextHour(); await state.db.update(candleSeries).set({ fetchedAt: new Date(Date.now() - 3_600_001) })
++    expect((await runCandleCollect({})).seriesFetched).toBe(COLLECTED_INTERVALS.length)
++  })
++  it('does not accept a mismatched owner as active demand', async () => {
++    await addTrade(1, 'aktiv', 1, 'foreign')
++    expect(await activeTradeInstruments()).toEqual([])
++    expect((await runCandleCollect({})).ran).toBe(false)
++  })
++  it('reports quote failure and time budget exhaustion without pretending completion', async () => {
++    await addTrade(1); state.quotes.mockResolvedValueOnce({ error: null, quotesFailed: 1 })
++    expect((await runCandleCollect({})).error).toContain('Snapshots')
++    await nextHour()
++    expect((await runCandleCollect({ timeBudgetMs: 0 })).error).toContain('Zeitbudget')
+   })
+ })
+diff --git a/lib/market-data/candle-collect.ts b/lib/market-data/candle-collect.ts
+index c681df3..603bfa4 100644
+--- a/lib/market-data/candle-collect.ts
++++ b/lib/market-data/candle-collect.ts
+@@ -1,365 +1,98 @@
+-/**
+- * Der Sammellauf des Kerzenspeichers.
+- *
+- * Er füllt den Speicher auch dann, wenn niemand einen Chart öffnet — und das
+- * ist der Punkt: Ein Vorrat, der nur beim Hinsehen wächst, hat genau dort
+- * Lücken, wo man länger nicht hingesehen hat. Bei 15-Minuten-Kerzen reicht ein
+- * Blick alle 60 Tage; wer ein Instrument ein Quartal ruhen lässt, verliert das
+- * Quartal für immer.
+- *
+- * Drei Entscheidungen tragen den Lauf:
+- *
+- * **Budget.** Yahoo kennt für Kerzen keinen Sammelabruf — jede Reihe ist eine
+- * Anfrage. Rund neunzig Instrumente mal sieben Zeitebenen wären über sechshundert
+- * Abrufe am Stück; das dauert Minuten und lädt geradezu zur Drosselung ein.
+- * Ein Lauf nimmt deshalb höchstens `MAX_FETCHES_PER_RUN` Reihen.
+- *
+- * **Rotation.** Damit das Budget nicht immer denselben Reihen zugutekommt, wird
+- * nach „am längsten nicht geholt" geordnet (`orderByStaleness`). Noch nie
+- * geholte Reihen stehen vorn.
+- *
+- * **Staffel.** 15m/30m/1h laufen dem Anbieter davon und werden täglich geholt;
+- * Tages-, Wochen- und Monatskerzen liefert Yahoo jahrzehntelang, die genügen
+- * wöchentlich (`isDueForCollection`). Jede unnötige Anfrage ginge vom Budget der
+- * knappen Reihen ab.
+- */
+-
+-import { and, desc, eq, inArray } from 'drizzle-orm'
++import { and, desc, eq, inArray, sql } from 'drizzle-orm'
+ import { db } from '@/lib/db'
+-import {
+-  assessment,
+-  candleCollectRun,
+-  candleSeries,
+-  stock,
+-  trade,
+-  trainingSession,
+-} from '@/lib/db/schema'
+-import { intervalsForStufe, type Interval, type Market, type SammelStufe } from './types'
+-import { getStoredCandles, pruneStoredCandles } from './candle-store'
+-import { isDueForCollection, orderByStaleness } from './candle-merge'
++import { candleCollectRun, candleSeries } from '@/lib/db/schema'
++import { intervalsForStufe, type Interval, type Market } from './types'
++import { getStoredCandles } from './candle-store'
++import { orderByStaleness } from './candle-merge'
+ import { isSpotGoldTicker } from './spot-gold'
+ import type { ProviderName } from './index'
++import { activeTradeInstruments, hasActiveTradeDemand } from './active-trade-demand'
++import { runSymbolSync } from './sync'
+ 
+-/** Höchstzahl an Anbieter-Abrufen je Lauf. */
+ export const MAX_FETCHES_PER_RUN = 150
+-
+-/**
+- * Zeitbudget je Lauf — die eigentliche Bremse.
+- *
+- * Auf Vercel bricht eine Route nach `maxDuration` (60 s) ab, und zwar mitten
+- * im Schreiben: Der Lauf stünde dann ohne `finishedAt` in der Tabelle und
+- * niemand wüsste, wie weit er gekommen ist. Ein Lauf hört deshalb von SELBST
+- * auf, bevor die Grenze erreicht ist, und schreibt sein Ergebnis. Was liegen
+- * bleibt, holt der nächste Lauf — die Rotation nach „am längsten nicht geholt"
+- * sorgt dafür, dass es dieselben Reihen nicht zweimal trifft.
+- *
+- * Gemessen: 150 Reihen brauchten deutlich über zwei Minuten (der erste Lauf
+- * schrieb dabei 299.133 Kerzen). Anzahl allein ist also kein brauchbares Maß —
+- * eine Krypto-Stundenreihe über zwei Jahre ist 17.000 Kerzen, eine
+- * Monatsreihe 160.
+- */
+-export const TIME_BUDGET_MS = 45 * 1000
+-
+-/**
+- * So oft darf ein Lauf überhaupt stattfinden — der Takt ruft alle fünf Minuten
+- * an. Eine Stunde, nicht mehr: Bei rund 90 Instrumenten sind 637 Reihen zu
+- * füllen, und mit einem Zeitbudget von 45 Sekunden schafft ein Lauf nur einen
+- * Teil davon. Stündlich ist der erste vollständige Durchgang nach gut einem
+- * Tag fertig, danach reicht der Takt bequem für die täglich fälligen Reihen.
+- */
+-export const RUN_INTERVAL_MS = 60 * 60 * 1000
+-
+-/**
+- * Alle Zeitebenen, in der Reihenfolge ihrer Dringlichkeit.
+- *
+- * WELCHE davon ein einzelnes Instrument bekommt, entscheidet seine Sammelstufe
+- * (`intervalsForStufe`) — nicht diese Liste. Sie bleibt die vollständige
+- * Aufzählung für alles, was über alle Ebenen laufen muss.
+- */
+-export const COLLECTED_INTERVALS: Interval[] = [
+-  '1min',
+-  '5min',
+-  '15min',
+-  '30min',
+-  '1h',
+-  '4h',
+-  '1day',
+-  '1week',
+-  '1month',
+-]
+-
+-/**
+- * Die Sammelstufe je Anbieter-Symbol.
+- *
+- * Der teure Teil wäre, das je Instrument einzeln zu fragen; deshalb ein paar
+- * Mengenabfragen und danach eine Zuordnung im Speicher. Ein Symbol kann in
+- * mehreren Instrumenten stecken — es gewinnt die **höchste** Stufe, sonst
+- * verlöre ein gehandeltes Papier seine Historie, weil dasselbe Symbol
+- * woanders ungenutzt herumsteht.
+- *
+- * **Eine Trainer-Sitzung zählt wie eine Prognose (Stufe B).** Gemessen am
+- * 20.08.2026: Auf `G24.DE` war trainiert worden, ohne Trade und ohne Prognose
+- * — das Instrument fiele in Stufe C mit 1.500 Stundenkerzen, während der
+- * Trainer 3.000 anfordert. Der Sammellauf holte sie, das Aufräumen schnitte
+- * sie sofort wieder weg: ein Schreib-Karussell ohne Nutzen.
+- *
+- * Verknüpft wird über `stockId`, **nie über `trainingSession.symbol`**. Dort
+- * steht der Rohticker, wie ihn der Nutzer eingegeben hat: Sitzung 1 heißt
+- * `CL1!`, im Kerzenspeicher liegt sie unter `CL=F`. Über den Namen zu
+- * verknüpfen hiesse, dem Anbieter-Symbol einen Rohticker unterzuschieben.
+- */
+-async function stufenJeSymbol(): Promise<Map<string, SammelStufe>> {
+-  const [mitOffenemTrade, mitTrade, mitPrognose, mitTraining] = await Promise.all([
+-    db
+-      .selectDistinct({ symbol: stock.providerSymbol })
+-      .from(stock)
+-      .innerJoin(trade, eq(trade.stockId, stock.id))
+-      .where(inArray(trade.status, ['aktiv', 'geplant'])),
+-    db
+-      .selectDistinct({ symbol: stock.providerSymbol })
+-      .from(stock)
+-      .innerJoin(trade, eq(trade.stockId, stock.id)),
+-    db
+-      .selectDistinct({ symbol: stock.providerSymbol })
+-      .from(stock)
+-      .innerJoin(assessment, eq(assessment.stockId, stock.id)),
+-    db
+-      .selectDistinct({ symbol: stock.providerSymbol })
+-      .from(stock)
+-      .innerJoin(trainingSession, eq(trainingSession.stockId, stock.id)),
+-  ])
+-
+-  // Reihenfolge ist Absicht: B zuerst, A überschreibt. Ein Symbol mit offenem
+-  // Trade behält so seine volle Tiefe, auch wenn es anderswo nur eine Prognose
+-  // trägt.
+-  const stufen = new Map<string, SammelStufe>()
+-  for (const r of [...mitTrade, ...mitPrognose, ...mitTraining])
+-    if (r.symbol) stufen.set(r.symbol, 'B')
+-  for (const r of mitOffenemTrade) if (r.symbol) stufen.set(r.symbol, 'A')
+-  return stufen
+-}
+-
++export const TIME_BUDGET_MS = 45_000
++export const RUN_INTERVAL_MS = 3_600_000
++export const COLLECTED_INTERVALS = intervalsForStufe('A')
+ export interface CollectReport {
+-  ran: boolean
+-  /** Grund, wenn nicht gelaufen (z. B. noch nicht fällig). */
+-  skipped: string | null
+-  seriesDue: number
+-  seriesFetched: number
+-  seriesFailed: number
+-  candlesAdded: number
+-  /** Wie viele alte Kerzen das Aufräumen zurückgeschnitten hat (`RETENTION_LIMIT`). */
+-  candlesPruned: number
+-  error: string | null
++  ran: boolean; skipped: string | null; seriesDue: number; seriesFetched: number
++  seriesFailed: number; candlesAdded: number; candlesPruned: number; error: string | null
+ }
++const empty = (skipped: string): CollectReport => ({ ran: false, skipped,
++  seriesDue: 0, seriesFetched: 0, seriesFailed: 0, candlesAdded: 0, candlesPruned: 0, error: null })
+ 
+-/** Wann der letzte Lauf war — die Grundlage der Fälligkeitsprüfung. */
+ export async function lastCollectRun(): Promise<Date | null> {
+-  const [row] = await db
+-    .select({ startedAt: candleCollectRun.startedAt })
+-    .from(candleCollectRun)
+-    .orderBy(desc(candleCollectRun.startedAt))
+-    .limit(1)
++  const [row] = await db.select({ startedAt: candleCollectRun.startedAt }).from(candleCollectRun)
++    .orderBy(desc(candleCollectRun.startedAt)).limit(1)
+   return row?.startedAt ?? null
+ }
+ 
+-/**
+- * Ein Sammellauf.
+- *
+- * Sitzungsfrei wie `runAlertCheck` — der Takt kommt von außen und gehört
+- * keinem Nutzer. Gesammelt wird über ALLE Instrumente aller Nutzer, weil eine
+- * Kerze ohnehin für alle dieselbe ist (der Speicher hat kein `userId`).
+- */
++/** Atomic persisted gate across processes. No browser/activity dependency.
++ * Even manual/force calls cannot reopen the hourly automatic budget.
++ * UTC hour slots avoid skipping a full hour when a scheduler runs a few seconds early.
++ * Claims survive interrupted workers; the next hour can recover safely. */
++export async function claimCollectHour(): Promise<boolean> {
++  const result = await db.execute(sql`INSERT INTO background_job_gate(job,"ranAt")
++    VALUES('active-trade-market-data',date_trunc('hour',now())) ON CONFLICT(job) DO UPDATE SET "ranAt"=date_trunc('hour',now())
++    WHERE background_job_gate."ranAt"<date_trunc('hour',now()) RETURNING job`)
++  return result.rows.length > 0
++}
++
++/** Only active trades create demand. Historical rows are never pruned here. */
+ export async function runCandleCollect(options: {
+-  trigger?: 'cron' | 'manual'
+-  /** Fälligkeitsprüfung überspringen (Knopf „jetzt sammeln"). */
+-  force?: boolean
+-  maxFetches?: number
+-  /** Zeitbudget in Millisekunden; ohne Angabe `TIME_BUDGET_MS`. */
+-  timeBudgetMs?: number
++  trigger?: 'cron' | 'manual'; force?: boolean; maxFetches?: number; timeBudgetMs?: number
+ }): Promise<CollectReport> {
+-  const trigger = options.trigger ?? 'cron'
+-  const budget = Math.max(1, options.maxFetches ?? MAX_FETCHES_PER_RUN)
+-
+-  if (!options.force) {
+-    const letzter = await lastCollectRun()
+-    if (letzter && Date.now() - letzter.getTime() < RUN_INTERVAL_MS) {
+-      return {
+-        ran: false,
+-        skipped: 'Noch nicht fällig.',
+-        seriesDue: 0,
+-        seriesFetched: 0,
+-        seriesFailed: 0,
+-        candlesAdded: 0,
+-        candlesPruned: 0,
+-        error: null,
+-      }
+-    }
+-  }
+-
+-  const [lauf] = await db
+-    .insert(candleCollectRun)
+-    .values({ trigger })
++  const instruments = await activeTradeInstruments()
++  if (!instruments.length) return empty('Keine aktiven Trades.')
++  if (!await claimCollectHour()) return empty('Noch nicht fällig oder bereits reserviert.')
++  const deadline = Date.now() + (options.timeBudgetMs ?? TIME_BUDGET_MS)
++  const [run] = await db.insert(candleCollectRun).values({ trigger: options.trigger ?? 'cron' })
+     .returning({ id: candleCollectRun.id })
+-
+-  let fetched = 0
+-  let failed = 0
+-  let added = 0
+-  /** Wie viele alte Kerzen dieser Lauf zurückgeschnitten hat. */
+-  let pruned = 0
+-  let due = 0
+-  let fehler: string | null = null
+-
++  const report: CollectReport = { ...empty(''), ran: true, skipped: null }
+   try {
+-    // Die aufgelösten Instrumente aller Nutzer — nur sie haben ein Symbol, das
+-    // beim Anbieter nachweislich existiert (Etappe 9). Ein unaufgelöstes
+-    // Instrument würde jeden Lauf mit demselben Fehlschlag belasten.
+-    const instrumente = await db
+-      .select({
+-        symbol: stock.providerSymbol,
+-        market: stock.market,
+-        provider: stock.provider,
+-      })
+-      .from(stock)
+-      .where(eq(stock.resolutionStatus, 'ok'))
+-
+-    // Dasselbe Papier steht womöglich in mehreren Watchlists — einmal genügt.
+-    const jeSymbol = new Map<string, Market>()
+-    const providerJeSymbol = new Map<string, ProviderName>()
+-    for (const i of instrumente) {
+-      if (i.symbol) { jeSymbol.set(i.symbol, i.market as Market); providerJeSymbol.set(i.symbol, (i.provider ?? 'yahoo') as ProviderName) }
+-    }
+-
+-    const symbole = [...jeSymbol.keys()]
+-    if (symbole.length === 0) {
+-      await abschliessen(lauf.id, { due: 0, fetched: 0, failed: 0, added: 0, fehler: null })
+-      return {
+-        ran: true,
+-        skipped: null,
+-        seriesDue: 0,
+-        seriesFetched: 0,
+-        seriesFailed: 0,
+-        candlesAdded: 0,
+-        candlesPruned: 0,
+-        error: null,
++    if (Date.now() < deadline) {
++      const current = await activeTradeInstruments()
++      if (current.length) {
++        const quotes = await runSymbolSync({ trigger: 'cron', onlyStockIds: current.map(i => i.id), maxResolves: 0 })
++        if (quotes.error || quotes.quotesFailed) report.error = 'Kurs-Snapshots konnten nicht vollständig aktualisiert werden.'
+       }
+     }
+-
+-    const bestand = await db
+-      .select({
+-        symbol: candleSeries.symbol,
+-        interval: candleSeries.interval,
+-        fetchedAt: candleSeries.fetchedAt,
+-        candleCount: candleSeries.candleCount,
+-      })
+-      .from(candleSeries)
+-      .where(inArray(candleSeries.symbol, symbole))
+-
+-    const stand = new Map<string, { fetchedAt: Date | null; candleCount: number }>()
+-    for (const b of bestand) {
+-      stand.set(`${b.symbol}|${b.interval}`, {
+-        fetchedAt: b.fetchedAt,
+-        candleCount: b.candleCount,
+-      })
+-    }
+-
+-    // Jede Kombination aus Symbol und Zeitebene ist eine Reihe — aber nur die
+-    // Ebenen, die der Stufe des Instruments zustehen. Ohne Eintrag gilt 'C':
+-    // Ein Symbol, das weder Trade noch Prognose trägt, bekommt keine
+-    // Minutenkerzen.
+-    const stufen = await stufenJeSymbol()
+-    const faellig: {
+-      symbol: string
+-      market: Market
+-      interval: Interval
+-      stufe: SammelStufe
+-      fetchedAt: Date | null
+-    }[] = []
+-    for (const [symbol, market] of jeSymbol) {
+-      const stufe = stufen.get(symbol) ?? 'C'
+-      for (const interval of intervalsForStufe(stufe)) {
+-        // Keep this limited-credit source below its existing request budget.
+-        if (isSpotGoldTicker(symbol) && !['5min', '1h', '1day'].includes(interval)) continue
+-        const s = stand.get(`${symbol}|${interval}`) ?? { fetchedAt: null, candleCount: 0 }
+-        if (isDueForCollection(interval, s.fetchedAt)) {
+-          faellig.push({ symbol, market, interval, stufe, fetchedAt: s.fetchedAt })
+-        }
++    const symbols = [...new Set(instruments.map(i => i.symbol).filter((s): s is string => !!s))]
++    if (!symbols.length) throw new Error('Aktiver Trade ohne bestätigtes Anbietersymbol.')
++    const stored = await db.select({ symbol: candleSeries.symbol, interval: candleSeries.interval,
++      fetchedAt: candleSeries.fetchedAt, candleCount: candleSeries.candleCount }).from(candleSeries)
++      .where(inArray(candleSeries.symbol, symbols))
++    const state = new Map(stored.map(s => [`${s.symbol}|${s.interval}`, s]))
++    const series = new Map<string, {symbol: string; market: Market; provider: ProviderName; interval: Interval; fetchedAt: Date | null}>()
++    for (const i of instruments) {
++      if (!i.symbol) continue
++      for (const interval of COLLECTED_INTERVALS) {
++        if (isSpotGoldTicker(i.symbol) && !['5min', '1h', '1day'].includes(interval)) continue
++        const key = `${i.symbol}|${interval}`, previous = state.get(key)
++        if (previous?.fetchedAt && previous.fetchedAt.getTime() >= Math.floor(Date.now() / RUN_INTERVAL_MS) * RUN_INTERVAL_MS) continue
++        series.set(key, { symbol: i.symbol, market: i.market as Market,
++          provider: (i.provider ?? 'yahoo') as ProviderName, interval, fetchedAt: previous?.fetchedAt ?? null })
+       }
+     }
+-    due = faellig.length
+-
+-    const reihenfolge = orderByStaleness(faellig).slice(0, budget)
+-    const frist = Date.now() + (options.timeBudgetMs ?? TIME_BUDGET_MS)
+-
+-    for (const reihe of reihenfolge) {
+-      // Vor jeder Reihe prüfen, nicht danach: Eine begonnene Reihe wird immer
+-      // fertig geschrieben, angefangen wird aber nichts mehr, wofür die Zeit
+-      // nicht reicht.
+-      if (Date.now() >= frist) break
+-
+-      const vorher = stand.get(`${reihe.symbol}|${reihe.interval}`)?.candleCount ?? 0
++    report.seriesDue = series.size
++    for (const s of orderByStaleness([...series.values()]).slice(0, Math.max(1, options.maxFetches ?? MAX_FETCHES_PER_RUN))) {
++      if (Date.now() >= deadline) break
++      // Recheck after closure, preserving demand from another active owner/trade.
++      if (!await hasActiveTradeDemand(s.symbol, s.provider)) continue
+       try {
+-        // Über denselben Weg wie jeder andere Abruf — der Speicher wird beim
+-        // Holen fortgeschrieben. Ein zweiter Schreibweg wäre eine zweite
+-        // Wahrheit darüber, wie Kerzen in die Datenbank kommen.
+-        await getStoredCandles(reihe.symbol, reihe.market, reihe.interval, {
+-          limit: 1, forceRefresh: true, requireFresh: true,
+-          automatic: true, automaticRole:'archive',provider: providerJeSymbol.get(reihe.symbol),
+-        })
+-        fetched++
+-
+-        const [nachher] = await db
+-          .select({ candleCount: candleSeries.candleCount })
+-          .from(candleSeries)
+-          .where(
+-            and(
+-              eq(candleSeries.symbol, reihe.symbol),
+-              eq(candleSeries.interval, reihe.interval),
+-            ),
+-          )
+-        added += Math.max(0, (nachher?.candleCount ?? 0) - vorher)
+-
+-        // Erst zählen, dann zurückschneiden — sonst wäre `added` um genau die
+-        // Kerzen zu klein, die dieser Lauf gerade geholt hat. Das Aufräumen
+-        // hält den Speicher unter dem 500-MB-Limit des Gratistarifs; ohne es
+-        // wächst der Kerzenspeicher unbegrenzt weiter (siehe `RETENTION_LIMIT`).
+-        pruned += await pruneStoredCandles(reihe.symbol, reihe.interval, reihe.stufe)
+-      } catch {
+-        // Der Fehlschlag steht bereits an der Reihe (`lastError`, `failCount`);
+-        // ein einzelnes unbekanntes Symbol darf den Lauf nicht beenden.
+-        failed++
+-      }
++        await getStoredCandles(s.symbol, s.market, s.interval, { limit: 1, forceRefresh: true,
++          requireFresh: true, automatic: true, automaticRole: 'archive', provider: s.provider })
++        report.seriesFetched++
++        const [after] = await db.select({ candleCount: candleSeries.candleCount }).from(candleSeries)
++          .where(and(eq(candleSeries.symbol, s.symbol), eq(candleSeries.interval, s.interval)))
++        report.candlesAdded += Math.max(0, (after?.candleCount ?? 0) - (state.get(`${s.symbol}|${s.interval}`)?.candleCount ?? 0))
++      } catch { report.seriesFailed++ }
+     }
+-  } catch (err) {
+-    fehler = err instanceof Error ? err.message : 'Unbekannter Fehler'
+-  }
+-
+-  await abschliessen(lauf.id, { due, fetched, failed, added, fehler })
+-
+-  return {
+-    ran: true,
+-    skipped: null,
+-    seriesDue: due,
+-    seriesFetched: fetched,
+-    seriesFailed: failed,
+-    candlesAdded: added,
+-    candlesPruned: pruned,
+-    error: fehler,
++    if (Date.now() >= deadline) report.error = 'Zeitbudget erreicht; verbleibender Bedarf wird beim nächsten Stundenlauf geprüft.'
++  } catch (error) {
++    report.error = error instanceof Error ? error.message : 'Sammellauf fehlgeschlagen.'
+   }
+-}
+-
+-async function abschliessen(
+-  id: number,
+-  werte: { due: number; fetched: number; failed: number; added: number; fehler: string | null },
+-) {
+-  await db
+-    .update(candleCollectRun)
+-    .set({
+-      finishedAt: new Date(),
+-      seriesDue: werte.due,
+-      seriesFetched: werte.fetched,
+-      seriesFailed: werte.failed,
+-      candlesAdded: werte.added,
+-      error: werte.fehler,
+-    })
+-    .where(eq(candleCollectRun.id, id))
++  await db.update(candleCollectRun).set({ finishedAt: new Date(), seriesDue: report.seriesDue,
++    seriesFetched: report.seriesFetched, seriesFailed: report.seriesFailed, candlesAdded: report.candlesAdded,
++    error: report.error }).where(eq(candleCollectRun.id, run.id))
++  return report
+ }
+diff --git a/lib/market-data/quote.ts b/lib/market-data/quote.ts
+index 37ffda4..e26fab6 100644
+--- a/lib/market-data/quote.ts
++++ b/lib/market-data/quote.ts
+@@ -39,7 +39,7 @@ export function quoteInterval(_market: Market): Interval {
+  * Kerzen-Anbindung (rate_limit / unknown_symbol / unsupported / upstream), damit
+  * die aufrufende Route/Action sie unverändert behandeln kann.
+  */
+-export async function getCachedQuote(symbol: string, market: Market): Promise<Quote> {
++export async function getCachedQuote(symbol: string, market: Market, storedOnly = false): Promise<Quote> {
+   const interval = quoteInterval(market)
+   // Ausdrücklich nur EINE Kerze. Der Kurs ist der Schluss der letzten — alles
+   // davor ist hier ohne Verwendung, und es zu übertragen war der teuerste Weg
+@@ -47,7 +47,7 @@ export async function getCachedQuote(symbol: string, market: Market): Promise<Qu
+   // und ohne dieses Limit kam jedes Mal die vollständige Reihe mit (bei einer
+   // Krypto-Stundenreihe rund 17.000 Kerzen) — bis das Transferkontingent der
+   // Datenbank aufgebraucht war und sie nichts mehr auslieferte.
+-  const candles = await getCachedCandles(symbol, market, interval, { limit: 1 })
++  const candles = await getCachedCandles(symbol, market, interval, { limit: 1, storedOnly })
+   const last = candles[candles.length - 1]
+   if (!last) {
+     // getCandles wirft bei leerem Ergebnis bereits; dieser Fall ist die
+diff --git a/lib/market-data/sparklines-transfer.test.ts b/lib/market-data/sparklines-transfer.test.ts
+index dfd31f8..7023335 100644
+--- a/lib/market-data/sparklines-transfer.test.ts
++++ b/lib/market-data/sparklines-transfer.test.ts
+@@ -17,7 +17,7 @@ describe('watchlist sparkline transfer', () => {
+   it('requests exactly 90 closes once per confirmed series, retaining every watchlist entry', async () => {
+     const data = await (await GET(new Request('http://localhost/api/sparklines?closes=1'))).json()
+     expect(state.closes).toHaveBeenCalledExactlyOnceWith('AAPL', 'aktien', '1day', 90)
+-    expect(state.refresh).toHaveBeenCalledOnce()
++    expect(state.refresh).toHaveBeenCalledExactlyOnceWith(undefined, 'synthetic')
+     expect(data.sparks[1].closes).toEqual([1, 2, 3])
+     expect(data.sparks[2]).toEqual(data.sparks[1])
+     expect(data.sparks[3]).toEqual({ status: 'unresolved', note: 'synthetic' })
+diff --git a/lib/market-data/sync.ts b/lib/market-data/sync.ts
+index afc99c8..cf674df 100644
+--- a/lib/market-data/sync.ts
++++ b/lib/market-data/sync.ts
+@@ -20,6 +20,7 @@
+ // auflösen lässt, darf die anderen 92 nicht aufhalten. Jeder Teilfehler landet
+ // am Datensatz, nicht in einem Abbruch.
+ 
++import { activeTradeInstruments } from './active-trade-demand'
+ import { db } from '@/lib/db'
+ import { quoteSnapshot, stock, symbolSyncRun } from '@/lib/db/schema'
+ import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm'
+@@ -253,6 +254,14 @@ export async function runSymbolSync(options: {
+   forceResolve?: boolean
+   maxResolves?: number
+ }): Promise<SyncReport> {
++  if (options.trigger === 'cron') {
++    const active = await activeTradeInstruments()
++    const allowed = active.map(i => i.id).filter(id => !options.onlyStockIds || options.onlyStockIds.includes(id))
++    // An empty scope must never fall back to the whole watchlist.
++    if (!allowed.length) return { runId: null, symbolsTotal: 0, resolvedNew: 0, stillUnresolved: 0,
++      quotesUpdated: 0, quotesFailed: 0, tradesLinked: 0, durationMs: 0, error: null, details: [] }
++    options = { ...options, onlyStockIds: allowed, maxResolves: 0 }
++  }
+   const startedAt = Date.now()
+   const details: SyncReport['details'] = []
+ 
+@@ -377,12 +386,24 @@ export async function runSymbolSync(options: {
+       // Crumb und kommt durch, wenn die Batch-Abfrage klemmt.
+       if (symbols.some(isSpotGoldTicker)) {
+         try {
+-          const q = await getSpotGoldQuote()
++          let q: YahooQuote
++          if (options.trigger === 'cron') {
++            // Use the existing shared candle reservation, including provider-day limits.
++            const { getStoredCandles } = await import('./candle-store')
++            const candles = await getStoredCandles('XAUUSD', 'rohstoffe', '5min', {
++              limit: 1, forceRefresh: true, requireFresh: true, automatic: true,
++              automaticRole: 'archive', provider: 'twelvedata' })
++            const last = candles.at(-1)
++            if (!last || !(last.close > 0)) throw new Error('Kein bestätigter Spotkurs.')
++            q = { symbol: 'XAUUSD', price: last.close, time: last.time, name: 'Gold Spot / US Dollar',
++              exchange: 'Commodity Aggregate', currency: 'USD', financialCurrency: null,
++              previousClose: null, changePct: null, quoteType: 'COMMODITY', marketState: null, volume: null }
++          } else q = await getSpotGoldQuote()
+           quotes.set(q.symbol, q)
+         } catch { /* retain the prior spot quote and record this symbol's failure */ }
+       }
+       const missing = symbols.filter((s) => !isSpotGoldTicker(s) && !quotes.has(s.toUpperCase()))
+-      if (missing.length > 0 && missing.length <= 15) {
++      if (options.trigger !== 'cron' && missing.length > 0 && missing.length <= 15) {
+         await mapLimit(missing, RESOLVE_CONCURRENCY, async (sym) => {
+           try {
+             const q = await getYahooQuoteViaChart(sym)
+@@ -415,7 +436,7 @@ export async function runSymbolSync(options: {
+     // Zuordnung die frisch aufgelösten Anbieter-Symbole von oben braucht.
+     try {
+       const { linkLooseTrades } = await import('@/lib/link-trades')
+-      const linked = await linkLooseTrades({})
++      const linked = options.trigger === 'cron' ? { linked: 0 } : await linkLooseTrades({})
+       report.tradesLinked = linked.linked
+     } catch {
+       // Kein Grund, den ganzen Lauf scheitern zu lassen — die Kurse stehen.
+@@ -463,35 +484,26 @@ export async function runSymbolSync(options: {
+  * Die Klammer gilt pro Serverprozess. Auf mehreren Instanzen kann es weiterhin
+  * einen Lauf je Instanz geben — unschädlich, weil die Upserts idempotent sind.
+  */
+-let inFlightRefresh: Promise<boolean> | null = null
+-
+-/**
+- * Kurse auffrischen, wenn der Speicher älter ist als `maxAgeMs`.
+- *
+- * Gibt zurück, ob tatsächlich geholt wurde — die Oberfläche lädt nur dann neu.
+- * Bewusst NUR Kurse (`maxResolves: 0`): Ein Seitenaufruf soll schnell bleiben,
+- * Neuauflösungen sind Sache des Cron-Laufs.
+- *
+- * Wirft nie: Ein Anbieterausfall darf die Seite nicht mitreißen — dann bleibt
+- * eben der letzte bekannte Kurs mit seinem Zeitstempel stehen.
+- */
+-export async function refreshQuotesIfStale(maxAgeMs = QUOTE_STALE_MS): Promise<boolean> {
+-  const age = await quotesAgeMs()
+-  if (age !== null && age < maxAgeMs) return false
+-  if (inFlightRefresh) return inFlightRefresh
+-
+-  inFlightRefresh = (async () => {
++const inFlightRefresh = new Map<string, Promise<boolean>>()
++
++/** Explicit page demand only, scoped to its owner. Background callers do nothing. */
++export async function refreshQuotesIfStale(maxAgeMs = QUOTE_STALE_MS, userId?: string): Promise<boolean> {
++  if (!userId) return false
++  const pending = inFlightRefresh.get(userId)
++  if (pending) return pending
++  const task = (async () => {
+     try {
+-      await runSymbolSync({ trigger: 'onload', maxResolves: 0 })
+-      return true
+-    } catch {
+-      return false
+-    } finally {
+-      inFlightRefresh = null
+-    }
++      const rows = await db.select({ id: stock.id, fetchedAt: quoteSnapshot.fetchedAt }).from(stock)
++        .leftJoin(quoteSnapshot, and(eq(stock.providerSymbol, quoteSnapshot.symbol), eq(stock.provider, quoteSnapshot.provider)))
++        .where(and(eq(stock.userId, userId), eq(stock.resolutionStatus, 'ok')))
++      const ids = rows.filter(r => !r.fetchedAt || Date.now() - r.fetchedAt.getTime() >= maxAgeMs).map(r => r.id)
++      if (!ids.length) return false
++      const report = await runSymbolSync({ trigger: 'onload', maxResolves: 0, onlyStockIds: ids })
++      return report.quotesUpdated > 0
++    } catch { return false }
+   })()
+-
+-  return inFlightRefresh
++  inFlightRefresh.set(userId, task)
++  try { return await task } finally { inFlightRefresh.delete(userId) }
+ }
+ 
+ export async function quotesAgeMs(): Promise<number | null> {
+diff --git a/lib/market-data/yahoo-quote.test.ts b/lib/market-data/yahoo-quote.test.ts
+index 44dfec4..960434b 100644
+--- a/lib/market-data/yahoo-quote.test.ts
++++ b/lib/market-data/yahoo-quote.test.ts
+@@ -41,3 +41,15 @@ describe('Yahoo-Kurse ohne erfundene Aktualität', () => {
+     expect(await getYahooQuoteViaChart('EXM')).toMatchObject({ price: 11, time: 1700000000 })
+   })
+ })
++
++it('bounds the quote batch with one abort signal including credential and retry requests', async () => {
++  const controller = new AbortController()
++  const fetch = vi.fn(async (_url: unknown, options: RequestInit) => {
++    expect(options.signal).toBe(controller.signal)
++    controller.abort()
++    throw new DOMException('Isolated timeout', 'AbortError')
++  })
++  vi.stubGlobal('fetch', fetch)
++  await expect(getYahooQuotes(['TIMEOUT'], controller.signal)).rejects.toBeDefined()
++  expect(fetch).toHaveBeenCalled()
++})
+diff --git a/lib/market-data/yahoo.ts b/lib/market-data/yahoo.ts
+index a2a613a..f417bac 100644
+--- a/lib/market-data/yahoo.ts
++++ b/lib/market-data/yahoo.ts
+@@ -171,10 +171,10 @@ let credentialsInFlight: Promise<Credentials> | null = null
+ 
+ const CREDENTIALS_TTL_MS = 1000 * 60 * 60 * 6
+ 
+-async function fetchCredentials(): Promise<Credentials> {
++async function fetchCredentials(signal: AbortSignal): Promise<Credentials> {
+   const cookieRes = await fetch('https://fc.yahoo.com', {
+     headers: { 'User-Agent': UA },
+-    cache: 'no-store',
++    cache: 'no-store', signal,
+   }).catch(() => null)
+ 
+   // fc.yahoo.com antwortet absichtlich mit einem Fehlerstatus, setzt dabei aber
+@@ -189,7 +189,7 @@ async function fetchCredentials(): Promise<Credentials> {
+ 
+   const crumbRes = await fetch('https://query1.finance.yahoo.com/v1/test/getcrumb', {
+     headers: { 'User-Agent': UA, cookie },
+-    cache: 'no-store',
++    cache: 'no-store', signal,
+   })
+   const crumb = (await crumbRes.text()).trim()
+ 
+@@ -201,7 +201,7 @@ async function fetchCredentials(): Promise<Credentials> {
+ }
+ 
+ /** Cookie + Crumb, prozessweit gecacht. `force` erzwingt eine Neubeschaffung. */
+-async function getCredentials(force = false): Promise<Credentials> {
++async function getCredentials(force = false, signal = AbortSignal.timeout(20_000)): Promise<Credentials> {
+   if (force) {
+     credentials = null
+     credentialsInFlight = null
+@@ -211,7 +211,7 @@ async function getCredentials(force = false): Promise<Credentials> {
+   }
+   // Parallele Aufrufe teilen sich EINE Beschaffung — sonst holen 90 Symbole
+   // gleichzeitig 90 Crumbs.
+-  credentialsInFlight ??= fetchCredentials()
++  credentialsInFlight ??= fetchCredentials(signal)
+     .then((c) => {
+       credentials = c
+       return c
+@@ -493,21 +493,21 @@ function validTime(value: unknown): value is number {
+ /** Yahoo verträgt lange Symbollisten nicht beliebig — in Blöcken abfragen. */
+ const QUOTE_CHUNK = 40
+ 
+-async function fetchQuoteChunk(symbols: string[], retry = true): Promise<RawQuote[]> {
+-  const { cookie, crumb } = await getCredentials()
++async function fetchQuoteChunk(symbols: string[], signal: AbortSignal, retry = true): Promise<RawQuote[]> {
++  const { cookie, crumb } = await getCredentials(false, signal)
+   const url = new URL('https://query1.finance.yahoo.com/v7/finance/quote')
+   url.searchParams.set('symbols', symbols.join(','))
+   url.searchParams.set('crumb', crumb)
+ 
+   const res = await fetch(url, {
+     headers: { 'User-Agent': UA, cookie },
+-    cache: 'no-store',
++    cache: 'no-store', signal,
+   })
+ 
+   if ((res.status === 401 || res.status === 403) && retry) {
+     // Crumb abgelaufen — genau einmal neu holen und wiederholen.
+-    await getCredentials(true)
+-    return fetchQuoteChunk(symbols, false)
++    await getCredentials(true, signal)
++    return fetchQuoteChunk(symbols, signal, false)
+   }
+   if (res.status === 429) {
+     throw new MarketDataError('Yahoo-Rate-Limit erreicht — bitte kurz warten.', 'rate_limit')
+@@ -527,14 +527,14 @@ async function fetchQuoteChunk(symbols: string[], retry = true): Promise<RawQuot
+  * nicht kennt, fehlen im Ergebnis — der Aufrufer erkennt sie an der Lücke und
+  * kann sie als „nicht auflösbar" markieren, statt still eine Null anzuzeigen.
+  */
+-export async function getYahooQuotes(symbols: string[]): Promise<Map<string, YahooQuote>> {
++export async function getYahooQuotes(symbols: string[], signal = AbortSignal.timeout(20_000)): Promise<Map<string, YahooQuote>> {
+   const unique = Array.from(new Set(symbols.filter(Boolean)))
+   const out = new Map<string, YahooQuote>()
+   if (unique.length === 0) return out
+ 
+   for (let i = 0; i < unique.length; i += QUOTE_CHUNK) {
+     const chunk = unique.slice(i, i + QUOTE_CHUNK)
+-    const raw = await fetchQuoteChunk(chunk)
++    const raw = await fetchQuoteChunk(chunk, signal)
+     for (const r of raw) {
+       const q = mapQuote(r)
+       if (q) out.set(q.symbol.toUpperCase(), q)

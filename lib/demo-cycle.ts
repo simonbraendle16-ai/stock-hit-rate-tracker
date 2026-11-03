@@ -1,3 +1,4 @@
+import { marketDb } from '@/lib/market-data/database'
 import { randomUUID } from 'node:crypto'
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import { db,withDatabaseDeadline } from '@/lib/db'
@@ -156,7 +157,7 @@ async function performDemoCycle(scope: CycleScope, trigger: 'automatic'|'manual'
         const checkedAt = after?.demoCheckedAt?.toISOString() ?? null
         const cutoff = Math.floor(work.asOf/300_000)*300
         const checked = after?.demoCheckedAt ? after.demoCheckedAt.getTime()/1000 : 0
-        const [series]=await db.select({session:candleSeries.executionSession}).from(candleSeries).where(and(eq(candleSeries.symbol,source.symbol),eq(candleSeries.interval,'5min'))).limit(1)
+        const [series]=await marketDb.select({session:candleSeries.executionSession}).from(candleSeries).where(and(eq(candleSeries.symbol,source.symbol),eq(candleSeries.interval,'5min'))).limit(1)
         const session=series?.session?.symbol===source.symbol?series.session:null
         const closed = current.market!=='krypto'&&checked>0 && closedExchangeGap(checked,cutoff,instrument?.resolvedExchange,session)
         const covered = checked>=cutoff || closed

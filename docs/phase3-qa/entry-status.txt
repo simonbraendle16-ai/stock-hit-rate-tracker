@@ -1,0 +1,25 @@
+﻿ M app/actions/symbols.ts
+ M app/api/cron/collect-candles/route.ts
+ M app/api/cron/sync-symbols/route.ts
+ M app/api/sparklines/route.ts
+ M components/analysis-auto-refresh.tsx
+ M components/quote-auto-refresh.tsx
+ M components/watchlist/watchlist-grid.tsx
+ M lib/alert-run-service.ts
+ M lib/analysis-auto-refresh.test.ts
+ M lib/fibonacci-db.test.ts
+ M lib/market-data/candle-collect.test.ts
+ M lib/market-data/candle-collect.ts
+ M lib/market-data/quote.ts
+ M lib/market-data/sparklines-transfer.test.ts
+ M lib/market-data/sync.ts
+ M lib/market-data/yahoo-quote.test.ts
+ M lib/market-data/yahoo.ts
+?? .github/workflow-templates/
+?? components/watchlist/use-sparklines.ts
+?? docs/phase2-qa/
+?? docs/phase3-qa/
+?? lib/market-data/active-trade-demand.ts
+?? lib/market-data/browser-demand.test.ts
+?? lib/market-data/collect-route.test.ts
+?? lib/market-data/sync-demand.test.ts

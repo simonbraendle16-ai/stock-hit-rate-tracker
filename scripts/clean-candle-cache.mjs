@@ -1,3 +1,4 @@
+import { MarketMaintenanceClient } from './market-client.mjs'
 // Entfernt Kerzenreihen, die unter einem ROHTICKER statt unter einem
 // aufgeloesten Anbieter-Symbol im Speicher liegen.
 //
@@ -54,7 +55,7 @@ const ANBIETER_MUSTER = /^[A-Z0-9.:^=-]+$/
 
 const trocken = process.argv.includes('--dry')
 
-const c = new Client({ connectionString: process.env.DATABASE_URL })
+const c = new MarketMaintenanceClient()
 await c.connect()
 
 const bekannt = new Set(

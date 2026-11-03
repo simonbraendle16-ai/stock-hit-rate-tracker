@@ -1,0 +1,21 @@
+{
+  "at": "2026-11-03T14:16:24.868Z",
+  "manualInspection": true,
+  "findings": "Desktop-/Mobilformular und Datensammlung ohne horizontalen Überlauf. Gespeicherte synthetische Details sichtbar. Desktop- und Mobilchart mit Kerzen und ausdrücklichem Cache-/Nicht-Echtzeit-Hinweis visuell gelesen. B-Ausfallaufnahme zeigt Ladefehler statt frischem Kursbeleg. Historischen pauschalen Automatikhinweis im aktuellen Build berichtigt.",
+  "inspected": [
+    "form-390.png",
+    "mobile-saved-detail.png",
+    "chart-desktop.png",
+    "chart-B-outage.png",
+    "chart-recovered-mobile.png",
+    "collection-mobile.png"
+  ],
+  "functionalMobileViewport": {
+    "width": 390,
+    "height": 844
+  },
+  "unclippedMobileChartScreenshotViewport": {
+    "width": 390,
+    "height": 1400
+  }
+}

@@ -1,4 +1,5 @@
-import { Client, types } from 'pg'
+import { types } from 'pg'
+import { MarketMaintenanceClient } from './market-client.mjs'
 
 // App timestamps are written as UTC. Match the server interpretation on Windows too.
 types.setTypeParser(1114, value => new Date(value.replace(' ', 'T') + 'Z'))
@@ -6,20 +7,23 @@ types.setTypeParser(1114, value => new Date(value.replace(' ', 'T') + 'Z'))
 // Read-only owner-scoped inventory. Never emits credentials, names or prices.
 const anchor = Number(process.argv[2])
 if (!Number.isSafeInteger(anchor) || anchor <= 0) throw new Error('Anker-Trade-ID erforderlich.')
-const client = new Client({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 8000, statement_timeout: 15000 })
+const client = new MarketMaintenanceClient()
 try {
   await client.connect()
   await client.query('BEGIN READ ONLY')
   const owner = await client.query('SELECT "userId" FROM trade WHERE id=$1', [anchor])
   if (owner.rowCount !== 1) throw new Error('Anker nicht eindeutig.')
   const userId = owner.rows[0].userId
-  const instruments = await client.query(`SELECT s.id,s.ticker,s.market,s."providerSymbol",s.provider,
+  const instrumentRows = await client.query(`SELECT s.id,s.ticker,s.market,s."providerSymbol",s.provider,
     s."resolutionStatus",s."resolutionApproximate",s."resolvedName",s."resolvedExchange",s."resolvedCurrency",
-    q."quotedAt",q."fetchedAt" AS "quoteFetchedAt",q."lastError" AS "quoteError",q."failCount" AS "quoteFailures",
-    c."firstTime",c."lastTime",c."candleCount",c."fetchedAt" AS "candleFetchedAt",c."lastError" AS "candleError"
+    q."quotedAt",q."fetchedAt" AS "quoteFetchedAt",q."lastError" AS "quoteError",q."failCount" AS "quoteFailures"
     FROM stock s LEFT JOIN quote_snapshot q ON q.symbol=s."providerSymbol" AND q.provider=s.provider
-    LEFT JOIN candle_series c ON c.symbol=s."providerSymbol" AND c.interval='5min'
-    WHERE s."userId"=$1 ORDER BY s.id`, [userId])
+    WHERE s."userId"=$1 ORDER BY s.id LIMIT 1001`, [userId])
+  if(instrumentRows.rows.length>1000)throw new Error('Auditumfang überschreitet sichere Seitengröße; explizite Pagination erforderlich.')
+  const symbols=[...new Set(instrumentRows.rows.map(r=>r.providerSymbol).filter(Boolean))]
+  const series=await client.query('SELECT symbol,"firstTime","lastTime","candleCount","fetchedAt" AS "candleFetchedAt","lastError" AS "candleError" FROM candle_series WHERE symbol=ANY($1::text[]) AND interval=$2', [symbols,'5min'])
+  const bySymbol=new Map(series.rows.map(r=>[r.symbol,r]))
+  const instruments={rowCount:instrumentRows.rowCount,rows:instrumentRows.rows.map(r=>({...r,...bySymbol.get(r.providerSymbol)}))}
   const trades = await client.query(`SELECT t.id,t.ticker,t.market,t.status,t.version,t."stockId",
     t."quoteCurrency",t."accountCurrency",t."quoteToAccountRate",t."fxRateAt",t."demoIssue",t."demoCheckedAt",
     s.market AS "instrumentMarket",s."providerSymbol",s."resolutionApproximate",

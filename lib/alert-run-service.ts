@@ -4,7 +4,6 @@ import { alertCheckRun, alertMailDelivery, priceAlert, quoteSnapshot, trade, use
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull } from 'drizzle-orm'
 import { revalidatePath } from 'next/cache'
 import { getCachedQuote } from '@/lib/market-data/quote'
-import { refreshQuotesIfStale } from '@/lib/market-data/sync'
 import type { Market } from '@/lib/market-data'
 import { createAlertSourceResolver } from './alert-symbols'
 import { candleReachesLevel, isAlertDirection, isLevelReached, type AlertKind } from '@/lib/alerts'
@@ -41,7 +40,6 @@ export async function runAlertCheck(opts: { userId?: string; trigger: 'cron' | '
   try {
     const [run] = await db.insert(alertCheckRun).values({ trigger: opts.origin ?? opts.trigger }).returning({ id: alertCheckRun.id })
     runId = run.id
-    await boundedRead(refreshQuotesIfStale(), Math.min(4_000, deadline - Date.now())).catch(() => false)
     const open = await db.select().from(priceAlert).where(and(eq(priceAlert.active, true), isNull(priceAlert.triggeredAt),
       gt(priceAlert.id, cursor), opts.userId ? eq(priceAlert.userId, opts.userId) : undefined)).orderBy(asc(priceAlert.id)).limit(BATCH_SIZE)
     report.alertsOpen = open.length
@@ -67,7 +65,7 @@ export async function runAlertCheck(opts: { userId?: string; trigger: 'cron' | '
         continue
       }
       if (!candles.has(key)) {
-        const c = await boundedRead(getCachedQuote(symbol, a.market as Market), Math.min(2_000, deadline - Date.now())).catch(() => null)
+        const c = await boundedRead(getCachedQuote(symbol, a.market as Market, true), Math.min(2_000, deadline - Date.now())).catch(() => null)
         // Source time is the start of the hourly candle, not the fetch time.
         candles.set(key, c && usableAlertPrice(c.price, c.time, Date.now(), 75 * 60_000)
           && Number.isFinite(c.high) && Number.isFinite(c.low) && c.low > 0 && c.high >= c.low ? c : null)

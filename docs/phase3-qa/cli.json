@@ -1,0 +1,40 @@
+{
+  "synthetic": true,
+  "checks": [
+    {
+      "operation": "schema",
+      "exit": 0,
+      "stdout": "Getrennte lokale Schemata vorbereitet; keine Umschaltung.\n",
+      "stderr": ""
+    },
+    {
+      "operation": "schema",
+      "exit": 0,
+      "stdout": "Getrennte lokale Schemata vorbereitet; keine Umschaltung.\n",
+      "stderr": ""
+    },
+    {
+      "operation": "copy",
+      "exit": 0,
+      "stdout": "{\"copied\":2,\"resumed\":0,\"rows\":2,\"payloadBytes\":261,\"verifiedBytes\":259,\"targetVerifiedBytes\":259}\nBeide Marktziele bleiben gesperrt. Keine Konfiguration umgestellt. Freigabe separat nach Abnahme.\n",
+      "stderr": ""
+    },
+    {
+      "operation": "resume",
+      "exit": 0,
+      "stdout": "{\"copied\":0,\"resumed\":2,\"rows\":0,\"payloadBytes\":0,\"verifiedBytes\":259,\"targetVerifiedBytes\":259}\nBeide Marktziele bleiben gesperrt. Keine Konfiguration umgestellt. Freigabe separat nach Abnahme.\n",
+      "stderr": ""
+    },
+    {
+      "operation": "rollback",
+      "exit": 0,
+      "stdout": "{\"copied\":2,\"resumed\":0,\"rows\":2,\"payloadBytes\":261,\"verifiedBytes\":259,\"targetVerifiedBytes\":259}\nBeide Marktziele bleiben gesperrt. Keine Konfiguration umgestellt. Freigabe separat nach Abnahme.\n",
+      "stderr": ""
+    },
+    {
+      "operation": "reject-nonlocal-before-connect",
+      "exit": 1,
+      "passed": true
+    }
+  ]
+}

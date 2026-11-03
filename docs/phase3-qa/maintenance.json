@@ -1,0 +1,42 @@
+[
+  {
+    "script": "audit-market-data.mjs",
+    "args": [
+      "900"
+    ],
+    "exit": 0,
+    "synthetic": true,
+    "output": "{\n  \"at\": \"2026-11-03T13:09:29.924Z\",\n  \"readOnly\": true,\n  \"summary\": {\n    \"instruments\": 1,\n    \"trades\": 2,\n    \"unlinked\": [],\n    \"marketMismatch\": [],\n    \"legacyCurrency\": [\n      1\n    ]\n  },\n  \"instruments\": [\n    {\n      \"id\": 1,\n      \"ticker\": \"FIBQA-S\",\n      \"market\": \"aktien\",\n      \"providerSymbol\": \"TEST\",\n      \"provider\": \"yahoo\",\n      \"resolutionStatus\": \"ok\",\n      \"resolutionApproximate\": false,\n      \"resolvedName\": null,\n      \"resolvedExchange\": null,\n      \"resolvedCurrency\": null,\n      \"quotedAt\": null,\n      \"quoteFetchedAt\": null,\n      \"quoteError\": null,\n      \"quoteFailures\": null,\n      \"symbol\": \"TEST\",\n      \"firstTime\": null,\n      \"lastTime\": null,\n      \"candleCount\": 0,\n      \"candleFetchedAt\": \"2026-11-03T13:08:25.676Z\",\n      \"candleError\": null\n    }\n  ],\n  \"trades\": [\n    {\n      \"id\": 1,\n      \"ticker\": \"FIBQA-S\",\n      \"market\": \"aktien\",\n      \"status\": \"aktiv\",\n      \"version\": 1,\n      \"stockId\": 1,\n      \"quoteCurrency\": null,\n      \"accountCurrency\": null,\n      \"quoteToAccountRate\": null,\n      \"fxRateAt\": null,\n      \"demoIssue\": null,\n      \"demoCheckedAt\": null,\n      \"instrumentMarket\": \"aktien\",\n      \"providerSymbol\": \"TEST\",\n      \"resolutionApproximate\": false,\n      \"eventCount\": 0,\n      \"brokerLinks\": 0\n    },\n    {\n      \"id\": 900,\n      \"ticker\": \"FIBQA-S\",\n      \"market\": \"aktien\",\n      \"status\": \"abgeschlossen\",\n      \"version\": 1,\n      \"stockId\": 1,\n      \"quoteCurrency\": \"USD\",\n      \"accountCurrency\": \"USD\",\n      \"quoteToAccountRate\": 1,\n      \"fxRateAt\": null,\n      \"demoIssue\": null,\n      \"demoCheckedAt\": \"2026-10-02T10:10:00.000Z\",\n      \"instrumentMarket\": \"aktien\",\n      \"providerSymbol\": \"TEST\",\n      \"resolutionApproximate\": false,\n      \"eventCount\": 2,\n      \"brokerLinks\": 0\n    }\n  ],\n  \"currencyEvidence\": []\n}\n",
+    "error": ""
+  },
+  {
+    "script": "apply-retention.mjs",
+    "args": [
+      "--dry"
+    ],
+    "exit": 0,
+    "synthetic": true,
+    "output": "2 Reihe(n), 104 Kerzen (~0.0 MB).\nInstrumente nach Stufe: A 1 (offener Trade) · B 0 (Prognose/alter Trade) · C 0 (ungenutzt).\n\n2 Reihe(n) liegen bereits innerhalb ihrer Grenze.\n\nNichts zu loeschen — die Grenzen sind bereits durchgesetzt.\n",
+    "error": ""
+  },
+  {
+    "script": "clean-candle-cache.mjs",
+    "args": [
+      "--dry"
+    ],
+    "exit": 0,
+    "synthetic": true,
+    "output": "Keine verwaisten Kerzenreihen gefunden.\n",
+    "error": ""
+  },
+  {
+    "script": "clean-candle-granularity.mjs",
+    "args": [
+      "--dry"
+    ],
+    "exit": 0,
+    "synthetic": true,
+    "output": "Keine Wochen- oder Monatsreihen im Kerzenspeicher.\n",
+    "error": ""
+  }
+]

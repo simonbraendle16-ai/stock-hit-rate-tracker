@@ -1,0 +1,50 @@
+{
+  "at": "2026-11-03T13:59:27.724Z",
+  "syntheticOnly": true,
+  "localEdge": true,
+  "productionBuild": "H6m1l90QaGxoV8Kdz2Yfy",
+  "viewports": [
+    {
+      "width": 1440,
+      "client": 672,
+      "scroll": 672
+    },
+    {
+      "width": 1024,
+      "client": 672,
+      "scroll": 672
+    },
+    {
+      "width": 768,
+      "client": 672,
+      "scroll": 672
+    },
+    {
+      "width": 390,
+      "client": 358,
+      "scroll": 358
+    }
+  ],
+  "mobileLayout": {
+    "width": 390,
+    "scroll": 390
+  },
+  "seriesSaveAndReadback": true,
+  "distinctIds": true,
+  "networkFailureRetainsDraft": true,
+  "retrySavedExactlyOnce": true,
+  "correctionSameId": true,
+  "correctionVersion": 2,
+  "revisions": 2,
+  "mobileSave": true,
+  "filterVisible": true,
+  "pagination": true,
+  "totalAndFilteredCounters": true,
+  "chartReadsB": true,
+  "chartCandles": 100,
+  "BOutageHonest502": true,
+  "personalSaveWhileBDown": "c0c9f35c-bc8e-44c2-a311-d5a0e8f53861",
+  "BRecoveryVisible": true,
+  "recoveredCandles": 100,
+  "pageErrors": []
+}

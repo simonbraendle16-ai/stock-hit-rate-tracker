@@ -13,6 +13,9 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { NextRequest } from "next/server";
 vi.mock("next/headers",()=>({headers:async()=>new Headers()}));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession: async () => ({ user: { id: "owner" } }) } } }));
+const marketCalls = vi.hoisted(() => ({ candles: vi.fn(), quotes: vi.fn() }));
+vi.mock('@/lib/market-data/cached', () => ({ getCachedCandles: marketCalls.candles, getCachedCloses: marketCalls.candles }));
+vi.mock('@/lib/market-data/sync', () => ({ refreshQuotesIfStale: marketCalls.quotes, runSymbolSync: marketCalls.quotes }));
 import {saveFibonacci} from "@/app/actions/fibonacci";
 import {collectionPage,collectionDetail,collectionChoices} from "@/app/actions/collection";
 const state = vi.hoisted(() => ({ database: null as any }));
@@ -928,4 +931,16 @@ it('compact save confirms exactly one row and authoritative counts without dupli
  expect(result.createdAt).toBeInstanceOf(Date);
  }
  expect((await collectionPage()).total).toBe(1);
+});
+
+it('Phase 2: saves and statistically evaluates a running wave without any course request', async () => {
+  marketCalls.candles.mockClear(); marketCalls.quotes.mockClear();
+  const id = crypto.randomUUID();
+  await saveFib('owner', id, { ...input, status: 'laufend' });
+  expect((await getFib('owner', id)).status).toBe('laufend');
+  const result = await GET(request('?wave=B'));
+  expect(result.status).toBe(200);
+  expect((await result.json()).total).toBe(1);
+  expect(marketCalls.candles).not.toHaveBeenCalled();
+  expect(marketCalls.quotes).not.toHaveBeenCalled();
 });

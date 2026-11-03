@@ -1,26 +1,8 @@
-import {backgroundDue} from '@/lib/background-activity'
 import { runCandleCollect } from '@/lib/market-data/candle-collect'
 import { NextRequest, NextResponse } from 'next/server'
 
-/**
- * Der Lauf, der den Kerzenspeicher füllt (Migration 0027).
- *
- * WARUM ER AM 5-MINUTEN-TAKT HÄNGT UND TROTZDEM NICHT ALLE 5 MINUTEN ARBEITET
- * Vercel-Hobby lässt genau EINEN Cron-Lauf pro Tag zu (siehe CLAUDE.md — das
- * hat schon zwei Tage gekostet). Den Takt gibt deshalb derselbe
- * aktive Demo-Workflow vor, unabhängig vom Alarm-Workflow. Damit daraus keine 288 Läufe am
- * Tag werden, entscheidet die Route SELBST, ob sie fällig ist
- * (`RUN_INTERVAL_MS`, eine Stunde) und antwortet sonst mit `ran: false`.
- *
- * Die Fälligkeit im Code statt im Zeitplan zu führen hat einen zweiten Vorteil:
- * Fällt der Takt für einen halben Tag aus, arbeitet der nächste Aufruf sofort —
- * ein zweiter Zeitplan hätte stattdessen bis zu seinem nächsten Termin gewartet.
- *
- * Von Hand anstoßen (PowerShell):
- *   curl.exe -H "Authorization: Bearer $secret" https://<app>/api/cron/collect-candles?force=1
- */
-
-// Holt Kerzen und schreibt sie — darf nie aus einem Cache beantwortet werden.
+/** Server-only market-data maintenance. Independent of app activity.
+ * Scheduling is prepared separately and remains disabled in Phase 2. */
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
@@ -42,15 +24,12 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Nicht berechtigt.' }, { status: 401 })
   }
 
-  if(req.nextUrl.searchParams.get('force')!=='1'&&!await backgroundDue('candles')) return NextResponse.json({ok:true,ran:false,skipped:'inactive_interval'})
-  const force = req.nextUrl.searchParams.get('force') === '1'
-  const report = await runCandleCollect({ trigger: 'cron', force })
+  try {
+    const report = await runCandleCollect({ trigger: 'cron' })
 
-  // Auch ein Lauf mit einzelnen Fehlschlägen gilt als beantwortet — sonst
-  // wertet der externe Dienst ihn als Ausfall, obwohl der Speicher gewachsen
-  // ist. Ein unbekanntes Symbol steht an seiner Reihe, nicht am ganzen Lauf.
-  return NextResponse.json({
-    ok: report.error === null,
+    // Partial failures remain visible to the scheduler; stored history stays available.
+    return NextResponse.json({
+    ok: report.error === null && report.seriesFailed === 0,
     ran: report.ran,
     skipped: report.skipped,
     seriesDue: report.seriesDue,
@@ -59,5 +38,8 @@ export async function GET(req: NextRequest) {
     candlesAdded: report.candlesAdded,
     candlesPruned: report.candlesPruned,
     error: report.error,
-  })
+  }, { status: report.error || report.seriesFailed ? 503 : 200 })
+  } catch {
+    return NextResponse.json({ ok: false, ran: false, error: 'Kursdatenpflege fehlgeschlagen.' }, { status: 503 })
+  }
 }

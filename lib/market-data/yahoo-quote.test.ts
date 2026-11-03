@@ -41,3 +41,15 @@ describe('Yahoo-Kurse ohne erfundene Aktualität', () => {
     expect(await getYahooQuoteViaChart('EXM')).toMatchObject({ price: 11, time: 1700000000 })
   })
 })
+
+it('bounds the quote batch with one abort signal including credential and retry requests', async () => {
+  const controller = new AbortController()
+  const fetch = vi.fn(async (_url: unknown, options: RequestInit) => {
+    expect(options.signal).toBe(controller.signal)
+    controller.abort()
+    throw new DOMException('Isolated timeout', 'AbortError')
+  })
+  vi.stubGlobal('fetch', fetch)
+  await expect(getYahooQuotes(['TIMEOUT'], controller.signal)).rejects.toBeDefined()
+  expect(fetch).toHaveBeenCalled()
+})
