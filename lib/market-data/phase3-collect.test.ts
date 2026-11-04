@@ -58,7 +58,11 @@ describe('isolated active-trade maintenance on PostgreSQL', () => {
       return []
     })
     expect(await runCandleCollect({})).toMatchObject({ seriesDeferred: 2, seriesFailed: 0 })
+    // The pre-existing daily compatibility cron may have claimed main first.
+    // The regular hourly workflow must still see its outstanding limited series.
+    expect(await runCandleCollect({})).toMatchObject({ ran: false, seriesDeferred: 2 })
     expect(await runCandleCollect({ phase: 'limited-1' })).toMatchObject({ seriesFetched: 1, seriesDeferred: 1, seriesFailed: 0 })
+    expect(await runCandleCollect({ phase: 'limited-1' })).toMatchObject({ ran: false, seriesDeferred: 1 })
     expect(await runCandleCollect({ phase: 'limited-2' })).toMatchObject({ seriesFetched: 1, seriesDeferred: 0, seriesFailed: 0 })
     expect(state.fetch.mock.calls.filter(c => c[3].provider === 'twelvedata')).toHaveLength(3)
     expect(new Set(state.fetch.mock.calls.filter(c => c[3].provider === 'twelvedata').map(c => c[2])).size).toBe(3)
@@ -78,6 +82,19 @@ describe('isolated active-trade maintenance on PostgreSQL', () => {
     await state.db.update(trade).set({ status: 'abgeschlossen' })
     expect((await runCandleCollect({ phase: 'limited-2' })).ran).toBe(false)
     expect(state.quotes).not.toHaveBeenCalled()
+  })
+  it('fails closed on unavailable B metadata after an existing main claim and recovers without reopening that claim', async () => {
+    await addTrade(1)
+    await state.db.update(stock).set({ provider: 'twelvedata', providerSymbol: 'XAUUSD' })
+    expect(await claimCollectHour()).toBe(true)
+    const market = state.market
+    state.market = { select: () => { throw new Error('synthetic B metadata outage') } }
+    try {
+      await expect(runCandleCollect({ force: true })).rejects.toThrow('synthetic B metadata outage')
+      expect(state.fetch).not.toHaveBeenCalled()
+    } finally { state.market = market }
+    expect(await runCandleCollect({})).toMatchObject({ ran: false, seriesDeferred: 3 })
+    expect(state.fetch).not.toHaveBeenCalled()
   })
   it.each(['none', 'geplant', 'abgeschlossen'])('no automatic calls for %s demand, independent of waves', async status => {
     if (status !== 'none') await addTrade(1, status)

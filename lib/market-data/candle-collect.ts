@@ -23,6 +23,28 @@ export interface CollectReport {
 const empty = (skipped: string): CollectReport => ({ ran: false, skipped,
   seriesDue: 0, seriesFetched: 0, seriesFailed: 0, seriesDeferred: 0, candlesAdded: 0, candlesPruned: 0, error: null })
 
+function intervalsForSymbol(symbol: string) {
+  return COLLECTED_INTERVALS.filter(interval => !isSpotGoldTicker(symbol) || ['5min', '1h', '1day'].includes(interval))
+}
+
+/** A different existing caller may have claimed main but not its follow-up phases.
+ * Claim rejection is not proof that the remaining limited-source demand is zero. */
+async function pendingLimitedSeries(instruments: Awaited<ReturnType<typeof activeTradeInstruments>>) {
+  const limited = instruments.filter(i => i.provider === 'twelvedata')
+  const symbols = [...new Set(limited.map(i => i.symbol).filter((s): s is string => !!s))]
+  if (!symbols.length) return 0
+  const stored = await marketDb.select({ symbol: candleSeries.symbol, interval: candleSeries.interval, fetchedAt: candleSeries.fetchedAt })
+    .from(candleSeries).where(inArray(candleSeries.symbol, symbols))
+  const fresh = new Set(stored.filter(s => s.fetchedAt && s.fetchedAt.getTime() >= Math.floor(Date.now() / RUN_INTERVAL_MS) * RUN_INTERVAL_MS)
+    .map(s => `${s.symbol}|${s.interval}`))
+  const pending = new Set<string>()
+  for (const i of limited) if (i.symbol) for (const interval of intervalsForSymbol(i.symbol)) {
+    const key = `${i.symbol}|${interval}`
+    if (!fresh.has(key)) pending.add(key)
+  }
+  return pending.size
+}
+
 export async function lastCollectRun(): Promise<Date | null> {
   const [row] = await marketDb.select({ startedAt: candleCollectRun.startedAt }).from(candleCollectRun)
     .orderBy(desc(candleCollectRun.startedAt)).limit(1)
@@ -50,7 +72,9 @@ export async function runCandleCollect(options: {
   if (!['main', 'limited-1', 'limited-2'].includes(phase)) throw new Error('Ungültige Sammelphase.')
   const instruments = await activeTradeInstruments()
   if (!instruments.length) return empty('Keine aktiven Trades.')
-  if (!await claimCollectHour(phase)) return empty('Noch nicht fällig oder bereits reserviert.')
+  if (!await claimCollectHour(phase)) return {
+    ...empty('Noch nicht fällig oder bereits reserviert.'), seriesDeferred: await pendingLimitedSeries(instruments),
+  }
   const deadline = Date.now() + (options.timeBudgetMs ?? TIME_BUDGET_MS)
   const [run] = await marketDb.insert(candleCollectRun).values({ trigger: options.trigger ?? 'cron' })
     .returning({ id: candleCollectRun.id })
@@ -72,8 +96,7 @@ export async function runCandleCollect(options: {
     const series = new Map<string, {symbol: string; market: Market; provider: ProviderName; interval: Interval; fetchedAt: Date | null}>()
     for (const i of instruments) {
       if (!i.symbol) continue
-      for (const interval of COLLECTED_INTERVALS) {
-        if (isSpotGoldTicker(i.symbol) && !['5min', '1h', '1day'].includes(interval)) continue
+      for (const interval of intervalsForSymbol(i.symbol)) {
         const key = `${i.symbol}|${interval}`, previous = state.get(key)
         if (previous?.fetchedAt && previous.fetchedAt.getTime() >= Math.floor(Date.now() / RUN_INTERVAL_MS) * RUN_INTERVAL_MS) continue
         series.set(key, { symbol: i.symbol, market: i.market as Market,
