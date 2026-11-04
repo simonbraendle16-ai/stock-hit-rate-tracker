@@ -1,5 +1,6 @@
 import { runCandleCollect, type CollectPhase } from '@/lib/market-data/candle-collect'
 import { NextRequest, NextResponse } from 'next/server'
+import { marketCronAuthorized } from '@/lib/market-data/market-cron-auth'
 
 /** Server-only market-data maintenance. Independent of app activity.
  * Scheduling is prepared separately and remains disabled in Phase 2. */
@@ -8,7 +9,7 @@ export const maxDuration = 60
 
 export async function GET(req: NextRequest) {
   const secret = process.env.CRON_SECRET
-  if (!secret) {
+  if (!secret && !process.env.MARKET_SCHEDULER_KEY) {
     return NextResponse.json(
       {
         error:
@@ -20,7 +21,9 @@ export async function GET(req: NextRequest) {
   }
 
   const header = req.headers.get('authorization')
-  if (header !== `Bearer ${secret}`) {
+  if (!marketCronAuthorized(header, req.nextUrl.pathname, {
+    CRON_SECRET: secret, MARKET_SCHEDULER_KEY: process.env.MARKET_SCHEDULER_KEY,
+  })) {
     return NextResponse.json({ error: 'Nicht berechtigt.' }, { status: 401 })
   }
 

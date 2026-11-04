@@ -7,6 +7,15 @@ import { GET } from '@/app/api/cron/collect-candles/route'
 import { GET as compatibilityGET } from '@/app/api/cron/sync-symbols/route'
 const request = (token = 'isolated') => new NextRequest('http://localhost/api/cron/collect-candles?force=1', { headers: { authorization: `Bearer ${token}` } })
 afterEach(() => { vi.unstubAllEnvs(); state.collect.mockReset() })
+it('accepts a scoped key only at the collector, not at the compatibility entry', async () => {
+  vi.stubEnv('CRON_SECRET', 'isolated')
+  vi.stubEnv('MARKET_SCHEDULER_KEY', 'synthetic-scoped')
+  state.collect.mockResolvedValue({ ran: false, error: null, seriesFailed: 0, seriesDeferred: 0 })
+  const scoped = (path: string) => new NextRequest(`http://localhost${path}`, { headers: { authorization: 'Bearer synthetic-scoped' } })
+  expect((await GET(scoped('/api/cron/collect-candles'))).status).toBe(200)
+  expect((await compatibilityGET(scoped('/api/cron/sync-symbols'))).status).toBe(401)
+  expect(state.collect).toHaveBeenCalledTimes(1)
+})
 it('allows only the fixed authenticated limited-source phases', async () => {
   vi.stubEnv('CRON_SECRET', 'isolated')
   const phaseRequest = (phase: string) => new NextRequest(`http://localhost/api/cron/collect-candles?phase=${phase}`, { headers: { authorization: 'Bearer isolated' } })
