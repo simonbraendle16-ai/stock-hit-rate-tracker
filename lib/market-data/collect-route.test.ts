@@ -7,6 +7,15 @@ import { GET } from '@/app/api/cron/collect-candles/route'
 import { GET as compatibilityGET } from '@/app/api/cron/sync-symbols/route'
 const request = (token = 'isolated') => new NextRequest('http://localhost/api/cron/collect-candles?force=1', { headers: { authorization: `Bearer ${token}` } })
 afterEach(() => { vi.unstubAllEnvs(); state.collect.mockReset() })
+it('allows only the fixed authenticated limited-source phases', async () => {
+  vi.stubEnv('CRON_SECRET', 'isolated')
+  const phaseRequest = (phase: string) => new NextRequest(`http://localhost/api/cron/collect-candles?phase=${phase}`, { headers: { authorization: 'Bearer isolated' } })
+  expect((await GET(phaseRequest('anything'))).status).toBe(400)
+  expect(state.collect).not.toHaveBeenCalled()
+  state.collect.mockResolvedValue({ ran: true, error: null, seriesFailed: 0, seriesDeferred: 1 })
+  expect((await GET(phaseRequest('limited-1'))).status).toBe(200)
+  expect(state.collect).toHaveBeenCalledExactlyOnceWith({ trigger: 'cron', phase: 'limited-1' })
+})
 it('authenticates both entries, ignores force bypass, and exposes partial/provider errors', async () => {
   vi.stubEnv('CRON_SECRET', 'isolated')
   expect((await GET(request('wrong'))).status).toBe(401)

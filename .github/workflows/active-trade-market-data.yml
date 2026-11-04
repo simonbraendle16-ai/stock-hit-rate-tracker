@@ -12,16 +12,26 @@ concurrency:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 6
     steps:
       - name: Collect market data only
         env:
           APP_URL: https://stock-hit-rate-tracker-astra-quest.vercel.app
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
-          curl --fail --silent --show-error --max-time 65 \
-            --output report.json --header "Authorization: Bearer $CRON_SECRET" \
-            "$APP_URL/api/cron/collect-candles"
-          jq '{ok, ran, skipped, seriesDue, seriesFetched, seriesFailed, error}' report.json
-          jq -e '.ok == true' report.json > /dev/null
+          failed=0
+          for phase in main limited-1 limited-2; do
+            if [ "$phase" != main ]; then sleep 65; fi
+            transport=0
+            http=$(curl --silent --show-error --max-time 65 --write-out '%{http_code}' \
+              --output report.json --header "Authorization: Bearer $CRON_SECRET" \
+              "$APP_URL/api/cron/collect-candles?phase=$phase") || transport=$?
+            echo "phase=$phase http=$http transport=$transport"
+            if [ "$transport" -ne 0 ]; then exit 1; fi
+            jq '{ok, ran, skipped, seriesDue, seriesFetched, seriesFailed, seriesDeferred, error}' report.json
+            if [ "$http" != 200 ] || ! jq -e '.ok == true' report.json > /dev/null; then failed=1; fi
+            if jq -e '.seriesDeferred == 0' report.json > /dev/null; then break; fi
+            if [ "$phase" = limited-2 ]; then failed=1; fi
+          done
+          exit "$failed"
 

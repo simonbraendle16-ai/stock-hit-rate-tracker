@@ -14,12 +14,14 @@ export const MAX_FETCHES_PER_RUN = 150
 export const TIME_BUDGET_MS = 45_000
 export const RUN_INTERVAL_MS = 3_600_000
 export const COLLECTED_INTERVALS = intervalsForStufe('A')
+export type CollectPhase = 'main' | 'limited-1' | 'limited-2'
 export interface CollectReport {
   ran: boolean; skipped: string | null; seriesDue: number; seriesFetched: number
   seriesFailed: number; candlesAdded: number; candlesPruned: number; error: string | null
+  seriesDeferred: number
 }
 const empty = (skipped: string): CollectReport => ({ ran: false, skipped,
-  seriesDue: 0, seriesFetched: 0, seriesFailed: 0, candlesAdded: 0, candlesPruned: 0, error: null })
+  seriesDue: 0, seriesFetched: 0, seriesFailed: 0, seriesDeferred: 0, candlesAdded: 0, candlesPruned: 0, error: null })
 
 export async function lastCollectRun(): Promise<Date | null> {
   const [row] = await marketDb.select({ startedAt: candleCollectRun.startedAt }).from(candleCollectRun)
@@ -31,9 +33,10 @@ export async function lastCollectRun(): Promise<Date | null> {
  * Even manual/force calls cannot reopen the hourly automatic budget.
  * UTC hour slots avoid skipping a full hour when a scheduler runs a few seconds early.
  * Claims survive interrupted workers; the next hour can recover safely. */
-export async function claimCollectHour(): Promise<boolean> {
+export async function claimCollectHour(phase: CollectPhase = 'main'): Promise<boolean> {
+  const job = phase === 'main' ? 'active-trade-market-data' : `active-trade-market-data:${phase}`
   const result = await db.execute(sql`INSERT INTO background_job_gate(job,"ranAt")
-    VALUES('active-trade-market-data',date_trunc('hour',now())) ON CONFLICT(job) DO UPDATE SET "ranAt"=date_trunc('hour',now())
+    VALUES(${job},date_trunc('hour',now())) ON CONFLICT(job) DO UPDATE SET "ranAt"=date_trunc('hour',now())
     WHERE background_job_gate."ranAt"<date_trunc('hour',now()) RETURNING job`)
   return result.rows.length > 0
 }
@@ -41,16 +44,19 @@ export async function claimCollectHour(): Promise<boolean> {
 /** Only active trades create demand. Historical rows are never pruned here. */
 export async function runCandleCollect(options: {
   trigger?: 'cron' | 'manual'; force?: boolean; maxFetches?: number; timeBudgetMs?: number
+  phase?: CollectPhase
 }): Promise<CollectReport> {
+  const phase = options.phase ?? 'main'
+  if (!['main', 'limited-1', 'limited-2'].includes(phase)) throw new Error('Ungültige Sammelphase.')
   const instruments = await activeTradeInstruments()
   if (!instruments.length) return empty('Keine aktiven Trades.')
-  if (!await claimCollectHour()) return empty('Noch nicht fällig oder bereits reserviert.')
+  if (!await claimCollectHour(phase)) return empty('Noch nicht fällig oder bereits reserviert.')
   const deadline = Date.now() + (options.timeBudgetMs ?? TIME_BUDGET_MS)
   const [run] = await marketDb.insert(candleCollectRun).values({ trigger: options.trigger ?? 'cron' })
     .returning({ id: candleCollectRun.id })
   const report: CollectReport = { ...empty(''), ran: true, skipped: null }
   try {
-    if (Date.now() < deadline) {
+    if (phase === 'main' && Date.now() < deadline) {
       const current = await activeTradeInstruments()
       if (current.length) {
         const quotes = await runSymbolSync({ trigger: 'cron', onlyStockIds: current.map(i => i.id), maxResolves: 0 })
@@ -74,8 +80,16 @@ export async function runCandleCollect(options: {
           provider: (i.provider ?? 'yahoo') as ProviderName, interval, fetchedAt: previous?.fetchedAt ?? null })
       }
     }
-    report.seriesDue = series.size
-    for (const s of orderByStaleness([...series.values()]).slice(0, Math.max(1, options.maxFetches ?? MAX_FETCHES_PER_RUN))) {
+    const ordered = orderByStaleness([...series.values()])
+    const limited = ordered.filter(s => s.provider === 'twelvedata')
+    // One limited-source request per phase; the same hourly workflow spaces phases
+    // by 65 seconds. All calls still use the existing shared reservation budgets.
+    const selected = phase === 'main'
+      ? ordered.filter(s => s.provider !== 'twelvedata' || s === limited[0])
+      : limited.slice(0, 1)
+    report.seriesDue = phase === 'main' ? ordered.length : limited.length
+    report.seriesDeferred = Math.max(0, limited.length - 1)
+    for (const s of selected.slice(0, Math.max(1, options.maxFetches ?? MAX_FETCHES_PER_RUN))) {
       if (Date.now() >= deadline) break
       // Recheck after closure, preserving demand from another active owner/trade.
       if (!await hasActiveTradeDemand(s.symbol, s.provider)) continue

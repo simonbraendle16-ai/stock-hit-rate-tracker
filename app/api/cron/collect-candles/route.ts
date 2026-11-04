@@ -1,4 +1,4 @@
-import { runCandleCollect } from '@/lib/market-data/candle-collect'
+import { runCandleCollect, type CollectPhase } from '@/lib/market-data/candle-collect'
 import { NextRequest, NextResponse } from 'next/server'
 
 /** Server-only market-data maintenance. Independent of app activity.
@@ -25,7 +25,11 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const report = await runCandleCollect({ trigger: 'cron' })
+    const phase = req.nextUrl.searchParams.get('phase')
+    if (phase !== null && !['main', 'limited-1', 'limited-2'].includes(phase)) {
+      return NextResponse.json({ ok: false, error: 'Ungültige Sammelphase.' }, { status: 400 })
+    }
+    const report = await runCandleCollect({ trigger: 'cron', ...(phase ? { phase: phase as CollectPhase } : {}) })
 
     // Partial failures remain visible to the scheduler; stored history stays available.
     return NextResponse.json({
@@ -35,6 +39,7 @@ export async function GET(req: NextRequest) {
     seriesDue: report.seriesDue,
     seriesFetched: report.seriesFetched,
     seriesFailed: report.seriesFailed,
+    seriesDeferred: report.seriesDeferred,
     candlesAdded: report.candlesAdded,
     candlesPruned: report.candlesPruned,
     error: report.error,

@@ -47,6 +47,38 @@ async function addTrade(id: number, status = 'aktiv', stockId = 1, userId = 'syn
 async function nextHour() { await pg.exec(`UPDATE background_job_gate SET "ranAt"=now()-interval '61 minutes'`) }
 
 describe('isolated active-trade maintenance on PostgreSQL', () => {
+  it('finishes limited-provider intervals in three separately claimed phases without refetching ordinary series', async () => {
+    await addTrade(1)
+    await state.db.insert(stock).values({ id: 2, userId: 'synthetic', ticker: 'XAUUSD', name: 'Synthetic gold', market: 'forex',
+      providerSymbol: 'XAUUSD', provider: 'twelvedata', resolutionStatus: 'ok' })
+    await addTrade(2, 'aktiv', 2)
+    state.fetch.mockImplementation(async (symbol, market, interval) => {
+      await state.market.insert(candleSeries).values({ symbol, market, interval, candleCount: 1, fetchedAt: new Date() })
+        .onConflictDoUpdate({ target: [candleSeries.symbol, candleSeries.interval], set: { fetchedAt: new Date() } })
+      return []
+    })
+    expect(await runCandleCollect({})).toMatchObject({ seriesDeferred: 2, seriesFailed: 0 })
+    expect(await runCandleCollect({ phase: 'limited-1' })).toMatchObject({ seriesFetched: 1, seriesDeferred: 1, seriesFailed: 0 })
+    expect(await runCandleCollect({ phase: 'limited-2' })).toMatchObject({ seriesFetched: 1, seriesDeferred: 0, seriesFailed: 0 })
+    expect(state.fetch.mock.calls.filter(c => c[3].provider === 'twelvedata')).toHaveLength(3)
+    expect(new Set(state.fetch.mock.calls.filter(c => c[3].provider === 'twelvedata').map(c => c[2])).size).toBe(3)
+    expect(state.fetch.mock.calls.filter(c => c[3].provider === 'yahoo')).toHaveLength(COLLECTED_INTERVALS.length)
+    expect(state.quotes).toHaveBeenCalledTimes(1)
+    const calls = state.fetch.mock.calls.length
+    expect((await runCandleCollect({ phase: 'limited-1', force: true })).ran).toBe(false)
+    expect((await runCandleCollect({ phase: 'limited-2' })).ran).toBe(false)
+    expect(state.fetch).toHaveBeenCalledTimes(calls)
+  })
+  it('limited phases retain active-demand and error gates', async () => {
+    expect((await runCandleCollect({ phase: 'limited-1' })).ran).toBe(false)
+    await addTrade(1)
+    await state.db.update(stock).set({ provider: 'twelvedata', providerSymbol: 'XAUUSD' })
+    state.fetch.mockRejectedValue(new Error('synthetic provider failure'))
+    expect(await runCandleCollect({ phase: 'limited-1' })).toMatchObject({ seriesFailed: 1, seriesDeferred: 2 })
+    await state.db.update(trade).set({ status: 'abgeschlossen' })
+    expect((await runCandleCollect({ phase: 'limited-2' })).ran).toBe(false)
+    expect(state.quotes).not.toHaveBeenCalled()
+  })
   it.each(['none', 'geplant', 'abgeschlossen'])('no automatic calls for %s demand, independent of waves', async status => {
     if (status !== 'none') await addTrade(1, status)
     expect(await runCandleCollect({ force: true })).toMatchObject({ ran: false, seriesFetched: 0, candlesPruned: 0 })
