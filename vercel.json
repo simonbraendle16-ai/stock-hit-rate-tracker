@@ -1,8 +1,1 @@
-{
-  "crons": [
-    {
-      "path": "/api/cron/sync-symbols",
-      "schedule": "0 6 * * *"
-    }
-  ]
-}
+{}
