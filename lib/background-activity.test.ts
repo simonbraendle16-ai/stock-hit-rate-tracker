@@ -53,3 +53,9 @@ it('does not touch the database when disabled and returns legacy activity status
  delete process.env.BACKGROUND_ACTIVITY_GATE;const execute=vi.spyOn(state.db,'execute');
  try{expect(await recordAppActivity()).toEqual({enabled:false,active:true,intervalMinutes:0});expect(await backgroundDue('alerts')).toBe(true);expect(execute).not.toHaveBeenCalled()}finally{execute.mockRestore()}
 })
+
+it('refreshes an expired heartbeat and returns the stored timestamp',async()=>{
+ await recordAppActivity();await pg.exec(`UPDATE app_activity SET "seenAt"=now()-interval '6 minutes'`);
+ const status=await recordAppActivity();expect(status.active).toBe(true);
+ const stored=await backgroundActivityStatus();expect(stored.active).toBe(true);expect(status.lastActivity).toEqual(stored.lastActivity);
+})

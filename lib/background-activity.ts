@@ -9,10 +9,10 @@ export async function recordAppActivity(){
  WHERE app_activity."seenAt"<now()-interval '1 minute'
  RETURNING "seenAt"
  ) SELECT "seenAt" FROM recorded
- UNION ALL SELECT "seenAt" FROM app_activity WHERE id=1 AND NOT EXISTS(SELECT 1 FROM recorded)
+ UNION ALL SELECT "seenAt" FROM app_activity WHERE id=1 AND "seenAt">=now()-interval '1 minute' AND NOT EXISTS(SELECT 1 FROM recorded)
  LIMIT 1`)
- // A concurrent first heartbeat can win outside this statement's snapshot.
- // Its conflict row is necessarily fresh; lastActivity remains optional.
+ // A concurrent heartbeat can win outside this statement's snapshot.
+ // Its conflict row is fresh; never return a stale snapshot timestamp.
  return {enabled:true,active:true,intervalMinutes:15,lastActivity:result.rows[0]?.seenAt as string|undefined}
 }
 export async function backgroundDue(job:string){
