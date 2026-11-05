@@ -31,6 +31,7 @@ import {
 import type { SeriesCoverage } from './candle-merge'
 import { isFresh, mergeCandles, takeLast } from './candle-merge'
 import { providerByName, type ProviderName } from './index'
+import type { AutomaticCandlePlan } from '@/lib/automatic-candle-plan'
 import { reserveAutomaticCandles, finishAutomaticCandles } from '@/lib/automatic-candles'
 import type { ExecutionSession,SessionCandles } from './execution-session'
 
@@ -266,6 +267,7 @@ async function writeSeries(
 }
 
 export interface CandleQueryOptions {
+  automaticPlan?: AutomaticCandlePlan
   /** Exact confirmed provider; execution must not silently switch sources. */
   provider?: ProviderName
   /** Shared durable hourly budget for collection and demo reconciliation. */
@@ -341,15 +343,23 @@ export async function getStoredCandles(
   }
 
   const key = `${options.provider ?? 'chain'}|${market}|${symbol}|${interval}`
+  if (options.automatic) options.automaticPlan?.assertAvailable(key)
   const reservation = options.automatic ? await reserveAutomaticCandles(key, options.since,options.automaticRole) : null
   const withProof=(rows:Candle[],completedAt?:string)=>{
     if(completedAt)Object.defineProperty(rows,'automaticProof',{value:{key,completedAt}})
     return rows
   }
-  if (reservation?.reused) return withProof(schwanz,reservation.completedAt)
+  if (reservation?.reused) {
+    if (options.requireFresh && schwanz.length === 0)
+      throw new MarketDataError('Abgeschlossener Abruf ohne gespeicherte Kurskerzen; kein Frischenachweis.', 'upstream')
+    if (options.automaticPlan) options.automaticPlan.reused++
+    return withProof(schwanz,reservation.completedAt)
+  }
+  if (reservation?.token) options.automaticPlan?.reserved(key)
   try {
     const provider = options.provider ? providerByName(options.provider) : resolveProvider(market)
     const geliefert = await provider.getCandles(symbol === 'XAUUSD' && options.provider === 'twelvedata' ? 'XAU/USD' : symbol, interval, options.since)
+    if (options.requireFresh && geliefert.length === 0) throw new MarketDataError('Anbieter lieferte keine Kurskerzen.', 'upstream')
     const frisch = options.since == null ? geliefert : geliefert.filter((c) => c.time >= options.since!)
 
     // Compare inside PostgreSQL: no historical OHLCV comparison-window transfer.
@@ -361,6 +371,7 @@ export async function getStoredCandles(
     // das wir gerade in der Hand hatten.
     await writeSeries(symbol, interval, market, await readCoverage(symbol, interval), null, (geliefert as SessionCandles<Candle>).executionSession)
     const completedAt=reservation?.token?await finishAutomaticCandles(key, reservation.token, null):undefined
+    if (options.automaticPlan) options.automaticPlan.fetched++
 
     if (options.ascending) {
       return withProof(await readStoredCandles(symbol, interval, { limit, since: options.since, ascending: true }),completedAt)

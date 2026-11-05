@@ -54,7 +54,7 @@ describe('isolated active-trade maintenance on PostgreSQL', () => {
     const report = await runCandleCollect({})
     expect(report).toMatchObject({ ran: true, seriesFetched: COLLECTED_INTERVALS.length, seriesFailed: 0, candlesPruned: 0 })
     expect(state.fetch).toHaveBeenCalledTimes(COLLECTED_INTERVALS.length)
-    expect(state.quotes).toHaveBeenCalledExactlyOnceWith({ trigger: 'cron', onlyStockIds: [1], maxResolves: 0 })
+    expect(state.quotes).toHaveBeenCalledExactlyOnceWith({ trigger: 'cron', onlyStockIds: [1], maxResolves: 0, automaticPlan: expect.anything() })
     for (const call of state.fetch.mock.calls) expect(call[3]).toMatchObject({ limit: 1, automatic: true, automaticRole: 'archive', requireFresh: true, provider: 'yahoo' })
   })
   it('multiple owners and trades sharing the symbol do not duplicate series', async () => {

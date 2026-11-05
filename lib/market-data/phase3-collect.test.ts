@@ -3,7 +3,7 @@ import { PGlite } from '@electric-sql/pglite'
 import { drizzle } from 'drizzle-orm/pglite'
 import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core'
 import { eq } from 'drizzle-orm'
-import { stock, trade, candleSeries, candleCollectRun } from '@/lib/db/schema'
+import { stock, trade, candleSeries, candleCollectRun, quoteSnapshot } from '@/lib/db/schema'
 
 const state = vi.hoisted(() => ({ db: null as any, market: null as any, fetch: vi.fn(), quotes: vi.fn() }))
 vi.mock('@/lib/db', () => ({ get db() { return state.db } }))
@@ -19,7 +19,7 @@ beforeAll(async () => {
   pg = new PGlite(); state.db = drizzle(pg);marketPg=new PGlite();state.market=drizzle(marketPg)
   await marketPg.exec(readFileSync(new URL('../../drizzle-market/0001_market.sql',import.meta.url),'utf8'))
   const dialect = new PgDialect()
-  for (const table of [stock, trade]) {
+  for (const table of [stock, trade, quoteSnapshot]) {
     const config = getTableConfig(table)
     const columns = config.columns.map(c => {
       const v = c.default
@@ -67,7 +67,7 @@ describe('isolated active-trade maintenance on PostgreSQL', () => {
     expect(state.fetch.mock.calls.filter(c => c[3].provider === 'twelvedata')).toHaveLength(3)
     expect(new Set(state.fetch.mock.calls.filter(c => c[3].provider === 'twelvedata').map(c => c[2])).size).toBe(3)
     expect(state.fetch.mock.calls.filter(c => c[3].provider === 'yahoo')).toHaveLength(COLLECTED_INTERVALS.length)
-    expect(state.quotes).toHaveBeenCalledTimes(1)
+    expect(state.quotes).toHaveBeenCalledTimes(3)
     const calls = state.fetch.mock.calls.length
     expect((await runCandleCollect({ phase: 'limited-1', force: true })).ran).toBe(false)
     expect((await runCandleCollect({ phase: 'limited-2' })).ran).toBe(false)
@@ -81,7 +81,7 @@ describe('isolated active-trade maintenance on PostgreSQL', () => {
     expect(await runCandleCollect({ phase: 'limited-1' })).toMatchObject({ seriesFailed: 1, seriesDeferred: 2 })
     await state.db.update(trade).set({ status: 'abgeschlossen' })
     expect((await runCandleCollect({ phase: 'limited-2' })).ran).toBe(false)
-    expect(state.quotes).not.toHaveBeenCalled()
+    expect(state.quotes).toHaveBeenCalledTimes(1) // active gold snapshot may recover in a follow-up
   })
   it('fails closed on unavailable B metadata after an existing main claim and recovers without reopening that claim', async () => {
     await addTrade(1)
@@ -107,7 +107,7 @@ describe('isolated active-trade maintenance on PostgreSQL', () => {
     const report = await runCandleCollect({})
     expect(report).toMatchObject({ ran: true, seriesFetched: COLLECTED_INTERVALS.length, seriesFailed: 0, candlesPruned: 0 })
     expect(state.fetch).toHaveBeenCalledTimes(COLLECTED_INTERVALS.length)
-    expect(state.quotes).toHaveBeenCalledExactlyOnceWith({ trigger: 'cron', onlyStockIds: [1], maxResolves: 0 })
+    expect(state.quotes).toHaveBeenCalledExactlyOnceWith({ trigger: 'cron', onlyStockIds: [1], maxResolves: 0, automaticPlan: expect.anything() })
     for (const call of state.fetch.mock.calls) expect(call[3]).toMatchObject({ limit: 1, automatic: true, automaticRole: 'archive', requireFresh: true, provider: 'yahoo' })
   })
   it('multiple owners and trades sharing the symbol do not duplicate series', async () => {

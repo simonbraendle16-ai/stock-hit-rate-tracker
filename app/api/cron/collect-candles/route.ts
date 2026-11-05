@@ -34,6 +34,11 @@ export async function GET(req: NextRequest) {
     // Partial failures remain visible to the scheduler; stored history stays available.
     return NextResponse.json({
     ok: report.error === null && report.seriesFailed === 0,
+    complete: report.complete,
+    outcome: report.outcome,
+    providerFetched: report.providerFetched,
+    seriesReused: report.seriesReused,
+    quotesDeferred: report.quotesDeferred,
     ran: report.ran,
     skipped: report.skipped,
     seriesDue: report.seriesDue,

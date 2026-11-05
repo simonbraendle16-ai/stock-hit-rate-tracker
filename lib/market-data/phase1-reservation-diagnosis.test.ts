@@ -9,7 +9,7 @@ const state = vi.hoisted(() => ({ db: null as any, market: null as any, fetch: v
 vi.mock('@/lib/db', () => ({ get db() { return state.db } }))
 vi.mock('./candle-store', () => ({ getStoredCandles: state.fetch }))
 vi.mock('./sync', () => ({ runSymbolSync: state.quotes }))
-import { runCandleCollect, COLLECTED_INTERVALS, claimCollectHour } from './candle-collect'
+import { runCandleCollect, COLLECTED_INTERVALS, claimCollectHour } from './phase1-candle-collect.fixture'
 import { activeTradeInstruments } from './active-trade-demand'
 import { readFileSync } from 'node:fs'
 vi.mock('./database',()=>({get marketDb(){return state.market}}))

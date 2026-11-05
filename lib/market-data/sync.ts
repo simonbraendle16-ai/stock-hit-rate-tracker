@@ -20,6 +20,7 @@
 // auflösen lässt, darf die anderen 92 nicht aufhalten. Jeder Teilfehler landet
 // am Datensatz, nicht in einem Abbruch.
 
+import { AutomaticCandleDeferred, type AutomaticCandlePlan } from '@/lib/automatic-candle-plan'
 import { activeTradeInstruments } from './active-trade-demand'
 import { db } from '@/lib/db'
 import { quoteSnapshot, stock, symbolSyncRun } from '@/lib/db/schema'
@@ -66,6 +67,7 @@ export interface SyncReport {
   stillUnresolved: number
   quotesUpdated: number
   quotesFailed: number
+  quotesDeferred?: number
   /** Trades, die in diesem Lauf ein Instrument bekommen haben. */
   tradesLinked: number
   durationMs: number
@@ -253,6 +255,7 @@ export async function runSymbolSync(options: {
   /** Auflösung erzwingen, auch wenn der Turnus noch nicht fällig ist. */
   forceResolve?: boolean
   maxResolves?: number
+  automaticPlan?: AutomaticCandlePlan
 }): Promise<SyncReport> {
   if (options.trigger === 'cron') {
     const active = await activeTradeInstruments()
@@ -366,7 +369,7 @@ export async function runSymbolSync(options: {
       new Set(
         current
           .filter((s) => s.resolutionStatus === 'ok' && s.providerSymbol)
-          .map((s) => s.providerSymbol as string),
+          .map((s) => isSpotGoldTicker(s.providerSymbol!) ? 'XAUUSD' : s.providerSymbol as string),
       ),
     )
 
@@ -382,6 +385,7 @@ export async function runSymbolSync(options: {
         report.error = err instanceof Error ? err.message : 'Kursabruf fehlgeschlagen.'
       }
 
+      const deferred = new Set<string>()
       // Einzelne Lücken über den Chart-Endpunkt nachholen — der braucht keinen
       // Crumb und kommt durch, wenn die Batch-Abfrage klemmt.
       if (symbols.some(isSpotGoldTicker)) {
@@ -392,15 +396,20 @@ export async function runSymbolSync(options: {
             const { getStoredCandles } = await import('./candle-store')
             const candles = await getStoredCandles('XAUUSD', 'rohstoffe', '5min', {
               limit: 1, forceRefresh: true, requireFresh: true, automatic: true,
-              automaticRole: 'archive', provider: 'twelvedata' })
+              automaticRole: 'archive', provider: 'twelvedata', automaticPlan: options.automaticPlan })
             const last = candles.at(-1)
-            if (!last || !(last.close > 0)) throw new Error('Kein bestätigter Spotkurs.')
+            if (!last || !(last.close > 0) || last.time > Date.now() / 1000) throw new Error('Kein bestätigter Spotkurs.')
             q = { symbol: 'XAUUSD', price: last.close, time: last.time, name: 'Gold Spot / US Dollar',
               exchange: 'Commodity Aggregate', currency: 'USD', financialCurrency: null,
               previousClose: null, changePct: null, quoteType: 'COMMODITY', marketState: null, volume: null }
           } else q = await getSpotGoldQuote()
           quotes.set(q.symbol, q)
-        } catch { /* retain the prior spot quote and record this symbol's failure */ }
+        } catch (error) {
+          if (error instanceof AutomaticCandleDeferred && options.automaticPlan) {
+            deferred.add('XAUUSD'); report.quotesDeferred = deferred.size
+          }
+          // Other failures retain the prior quote and are counted below.
+        }
       }
       const missing = symbols.filter((s) => !isSpotGoldTicker(s) && !quotes.has(s.toUpperCase()))
       if (options.trigger !== 'cron' && missing.length > 0 && missing.length <= 15) {
@@ -414,7 +423,7 @@ export async function runSymbolSync(options: {
         })
       }
 
-      const { updated, failed } = await persistQuotes(quotes, symbols)
+      const { updated, failed } = await persistQuotes(quotes, symbols.filter(s => !deferred.has(s)))
       report.quotesUpdated = updated
       report.quotesFailed = failed.length
 

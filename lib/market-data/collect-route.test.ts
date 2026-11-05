@@ -30,6 +30,18 @@ it('authenticates both entries, ignores force bypass, and exposes partial/provid
   const failed = await GET(request())
   expect(failed.status).toBe(503); expect(JSON.stringify(await failed.json())).not.toContain('private')
 })
+it('distinguishes deferred, claimed, completed and actual failed work in the HTTP report', async () => {
+  vi.stubEnv('CRON_SECRET','isolated')
+  for(const outcome of ['deferred','claimed','complete','failed']) {
+    const failed=outcome==='failed',complete=outcome==='complete'
+    state.collect.mockResolvedValue({ran:outcome!=='claimed',skipped:null,error:failed?'synthetic provider outage':null,
+      seriesFailed:failed?1:0,seriesDeferred:complete?0:2,quotesDeferred:outcome==='deferred'?1:0,
+      seriesFetched:0,seriesReused:1,providerFetched:1,complete,outcome})
+    const response=await GET(request())
+    expect(response.status).toBe(failed?503:200)
+    expect(await response.json()).toMatchObject({ok:!failed,complete,outcome,providerFetched:1,seriesReused:1})
+  }
+})
 it('prepares an hourly server schedule outside executable workflows, without broker/demo/alert calls', () => {
   const template = readFileSync(new URL('../../.github/workflow-templates/active-trade-market-data.yml.disabled', import.meta.url), 'utf8')
   expect(template).toContain("cron: '17 * * * *'")
