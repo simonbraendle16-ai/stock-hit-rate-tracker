@@ -1,3 +1,4 @@
+import {maintenanceWindowOpen, MAINTENANCE_INTERVAL_MINUTES} from '@/lib/maintenance-window'
 import {backgroundDue} from '@/lib/background-activity'
 import { runAlertCheck } from '@/lib/alert-run'
 import { NextRequest, NextResponse } from 'next/server'
@@ -42,6 +43,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const manual = req.headers.get('x-alert-check-origin') === 'manual'
+  if(!(manual)&&!maintenanceWindowOpen()) return NextResponse.json({ok:true,ran:false,skipped:'reduced_schedule',intervalMinutes:MAINTENANCE_INTERVAL_MINUTES})
   if(!manual&&!await backgroundDue('alerts')) return NextResponse.json({ok:true,ran:false,skipped:'inactive_interval'})
     const report = await runAlertCheck({ trigger: 'cron', ...(manual ? { origin: 'manual' as const } : {}) })
     // 202 acknowledges accepted work needing another attempt (including a held

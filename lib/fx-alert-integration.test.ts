@@ -1,3 +1,5 @@
+// Business integration runs inside an admitted window; scheduling has its own route tests.
+vi.mock('@/lib/maintenance-window', () => ({ maintenanceWindowOpen: () => true, MAINTENANCE_INTERVAL_MINUTES: 15 }))
 import { beforeAll, afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { PGlite } from '@electric-sql/pglite'

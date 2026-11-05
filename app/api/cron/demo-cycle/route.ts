@@ -1,3 +1,4 @@
+import {maintenanceWindowOpen, MAINTENANCE_INTERVAL_MINUTES} from '@/lib/maintenance-window'
 import {backgroundDue} from '@/lib/background-activity'
 import { NextRequest, NextResponse } from 'next/server'
 import { alertCronAuthorized } from '@/lib/alert-cron-auth'
@@ -13,6 +14,7 @@ export async function GET(req: NextRequest) {
   if ([...req.nextUrl.searchParams.keys()].some(key=>key!=='manual') || (req.nextUrl.searchParams.has('manual')&&req.nextUrl.searchParams.get('manual')!=='1')) {
     return NextResponse.json({accepted:false,error:'Nur serverseitig gebundenes Depot; keine freie Scope-/Force-Auswahl.'},{status:400})
   }
+  if(!(req.nextUrl.searchParams.get('manual')==='1')&&!maintenanceWindowOpen()) return NextResponse.json({ok:true,ran:false,skipped:'reduced_schedule',intervalMinutes:MAINTENANCE_INTERVAL_MINUTES})
   if(req.nextUrl.searchParams.get('manual')!=='1'&&!await backgroundDue('demo')) return NextResponse.json({ok:true,ran:false,skipped:'inactive_interval'})
   try {
     return NextResponse.json(await runDemoCycle(scope,req.nextUrl.searchParams.get('manual')==='1'?'manual':'automatic'))
