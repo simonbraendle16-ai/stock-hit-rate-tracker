@@ -60,7 +60,8 @@ export async function getFib(userId: string, id: string) {
   const [row] = await db
     .select()
     .from(observation)
-    .where(and(eq(observation.id, id), eq(observation.userId, userId)));
+    .where(and(eq(observation.id, id), eq(observation.userId, userId)))
+    .limit(1);
   if (!row) throw new ApiError(404, "Beobachtung nicht gefunden.");
   const { userId: _, ...result } = row;
   return result;

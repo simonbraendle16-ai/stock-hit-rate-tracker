@@ -1,3 +1,4 @@
+import {compactFib,compactQuery} from '@/lib/fibonacci-compact';
 import { SUBDIVISIONS, SUBDIVISION_CONFIDENCES } from "@/lib/fibonacci-subdivision";
 import { db } from "@/lib/db";
 import { stock } from "@/lib/db/schema";
@@ -27,6 +28,9 @@ export async function GET(req: NextRequest) {
   try {
     const userId = await requireApiScope(req, "trades:read"),
       p = req.nextUrl.searchParams;
+    const view=p.get('view');
+    if(view==='compact')return NextResponse.json(await compactFib(userId,compactQuery(p)),{headers:{'Cache-Control':'private, no-store'}});
+    if(view!==null)throw new ApiError(400,'Unbekannter Lesemodus.');
     const request = fibQuery(p);
     const [rows, instruments] = await Promise.all([
       listFib(userId, request.filters.stockId),

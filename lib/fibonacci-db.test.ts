@@ -24,7 +24,8 @@ vi.mock("@/lib/db", () => ({
     return state.database;
   },
 }));
-vi.mock("@/lib/research-metrics-service", () => ({loadMetricSamples: async () => [], loadTradeCoverage: async () => []}));
+const metricsCalls=vi.hoisted(()=>({samples:vi.fn(async()=>[]),coverage:vi.fn(async()=>[])}));
+vi.mock("@/lib/research-metrics-service", () => ({loadMetricSamples: metricsCalls.samples, loadTradeCoverage: metricsCalls.coverage}));
 import * as schema from "./db/schema";
 import { saveFib, listFib, getFib } from "./fibonacci-service";
 import {
@@ -943,4 +944,60 @@ it('Phase 2: saves and statistically evaluates a running wave without any course
   expect((await result.json()).total).toBe(1);
   expect(marketCalls.candles).not.toHaveBeenCalled();
   expect(marketCalls.quotes).not.toHaveBeenCalled();
+});
+
+it('Phase3 compact API uses bounded projected SQL and a full count; stable pages and legacy statistics remain independent',async()=>{
+ const ids:string[]=[];
+ for(let i=0;i<7;i++){const id=crypto.randomUUID();ids.push(id);await saveFib('owner',id,{...input,contextId:id,sourceKey:'fixture-'+i,note:'wide note '.repeat(190)});}
+ await pg.query('UPDATE fibonacci_observation SET "createdAt"=$1, version=version+1',['2026-01-01']);
+ const foreign=crypto.randomUUID();await saveFib('other',foreign,{...input,stockId:2});
+ metricsCalls.samples.mockClear();metricsCalls.coverage.mockClear();egressQueries.length=0;
+ const response=await GET(request('?view=compact&limit=2'));
+ expect(response.status).toBe(200);expect(response.headers.get('cache-control')).toContain('no-store');
+ const first=await response.json();
+ expect(first).toMatchObject({view:'compact',total:7,nextOffset:2});expect(first.items).toHaveLength(2);
+ expect(first.items.every((r:any)=>!('note' in r)&&!('evidence' in r)&&!('userId' in r))).toBe(true);
+ expect(first).not.toHaveProperty('stats');expect(first).not.toHaveProperty('tradeCoverage');
+ const reads=egressQueries.filter(q=>q.sql.includes('from "fibonacci_observation"'));
+ expect(reads).toHaveLength(2);
+ expect(reads[0].sql).toContain('count(*)');expect(reads[0].sql).not.toContain('"note"');
+ expect(reads[1].sql).toMatch(/limit \$\d+/);expect(reads[1].params.at(-1)).toBe(2);
+ expect(reads[1].sql).not.toContain('"note"');expect(reads[1].sql).not.toContain('"evidence"');
+ expect(reads.every(q=>q.params.filter(v=>v==='owner').length===2)).toBe(true);
+ expect(metricsCalls.samples).not.toHaveBeenCalled();expect(metricsCalls.coverage).not.toHaveBeenCalled();
+ const pages=[] as any[];
+ for(let offset=0;offset<8;offset+=2){const page=await (await GET(request('?view=compact&limit=2&offset='+offset))).json();expect(page.total).toBe(7);pages.push(...page.items);}
+ expect(pages.map(r=>r.id)).toEqual([...ids].sort().reverse());
+ expect((await (await GET(request('?view=compact&limit=2&offset=8'))).json()).nextOffset).toBeNull();
+ const oldest=await (await GET(request('?view=compact&order=oldest&limit=2'))).json();expect(oldest.items.map((r:any)=>r.id)).toEqual([...ids].sort().slice(0,2));
+ const full=await (await GET(request('?limit=1'))).json();const full2=await (await GET(request('?limit=1&offset=1'))).json();
+ expect(full.total).toBe(7);expect(full.stats.n).toBe(7);expect(full2.stats).toEqual(full.stats);
+ expect(metricsCalls.samples).toHaveBeenCalledTimes(2);expect(metricsCalls.coverage).toHaveBeenCalledTimes(2);
+ const bytes={synthetic:true,population:7,pageSize:2,compactResponseBytes:Buffer.byteLength(JSON.stringify(first)),researchResponseBytes:Buffer.byteLength(JSON.stringify(full)),waveSelects:reads.map(q=>({sql:q.sql,params:q.params})),providerTransferMeasured:false};
+ writeFileSync('C:/Users/sabin/Documents/Trading-Assistent/runtime/phase3-benchmark.json',JSON.stringify(bytes,null,2));
+});
+
+it('Phase3 compact filters, targeted details and negative authorization cases',async()=>{
+ const id=crypto.randomUUID(),foreign=crypto.randomUUID();
+ await saveFib('owner',id,{...input,contextId:id,sourceKey:'exact-source'});
+ await saveFib('owner',crypto.randomUUID(),{...input,wave:'A',status:'laufend'});
+ await saveFib('other',foreign,{...input,stockId:2});
+ const filter='&stockId=1&market=aktien&wave=%20b%20&degree=Minor&timeframe=1d&measurementKind=retracement&status=abgeschlossen&contextId='+id+'&sourceKey=exact-source&observationId='+id;
+ expect((await (await GET(request('?view=compact'+filter))).json()).items.map((r:any)=>r.id)).toEqual([id]);
+ for(const suffix of ['&stockId=2','&observationId='+foreign,'&sourceKey=absent','&market=krypto','&wave=C','&timeframe=1h','&degree=Minute','&status=ungueltig','&measurementKind=expansion','&contextId='+foreign]){
+  const result=await (await GET(request('?view=compact'+suffix))).json();expect(result.total).toBe(0);expect(result.items).toEqual([]);
+ }
+ for(const suffix of ['&from=2020','&search=x','&waveScope=descendants','&order=deepest','&format=csv','&limit=0','&limit=501','&offset=-1','&stockId=bad','&observationId=bad','&limit=1&limit=2','&status=bad'])expect((await GET(request('?view=compact'+suffix))).status).toBe(400);
+ expect((await GET(request('?view=unknown'))).status).toBe(400);
+ expect((await GET(request('?view=compact',null))).status).toBe(401);
+ expect((await GET(request('?view=compact',tokens.read))).status).toBe(200);
+ const ctx={params:Promise.resolve({id})};egressQueries.length=0;
+ const detail=await detailGET(request('/'+id),ctx);expect(detail.status).toBe(200);expect((await detail.json()).sourceKey).toBe('exact-source');
+ const detailReads=egressQueries.filter(q=>q.sql.includes('from "fibonacci_observation"'));expect(detailReads).toHaveLength(1);expect(detailReads[0].sql).toMatch(/limit \$\d+/);expect(detailReads[0].params).toEqual([id,'owner',1]);
+ expect((await detailGET(request('/'+id,tokens.other),ctx)).status).toBe(404);
+ expect((await detailGET(request('/'+foreign),{params:Promise.resolve({id:foreign})})).status).toBe(404);
+ expect((await detailGET(request('/bad'),{params:Promise.resolve({id:'bad'})})).status).toBe(400);
+ await pg.query('UPDATE assistant_api_token SET scopes=$2 WHERE "tokenHash"=$1',[hashToken(tokens.read),'[]']);
+ try{expect((await GET(request('?view=compact',tokens.read))).status).toBe(403);}
+ finally{await pg.query('UPDATE assistant_api_token SET scopes=$2 WHERE "tokenHash"=$1',[hashToken(tokens.read),'["trades:read"]']);}
 });
