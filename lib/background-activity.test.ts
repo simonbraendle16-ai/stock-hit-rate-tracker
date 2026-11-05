@@ -22,3 +22,34 @@ it('keeps visible authenticated usage active then expires it',async()=>{
  expect(await backgroundDue('alerts')).toBe(true);expect(await backgroundDue('alerts')).toBe(false)
 })
 it('keeps legacy behavior when disabled',async()=>{delete process.env.BACKGROUND_ACTIVITY_GATE;expect(await backgroundDue('alerts')).toBe(true);expect(await backgroundDue('alerts')).toBe(true)})
+
+it('uses one statement and no explicit transaction for a due check',async()=>{
+ const execute=vi.spyOn(state.db,'execute');const transaction=vi.spyOn(state.db,'transaction');
+ try{expect(await backgroundDue('alerts')).toBe(true);expect(execute).toHaveBeenCalledTimes(1);expect(transaction).not.toHaveBeenCalled()}finally{execute.mockRestore();transaction.mockRestore()}
+})
+it('keeps an active check from consuming the later idle claim',async()=>{
+ await recordAppActivity();expect(await backgroundDue('alerts')).toBe(true);
+ expect((await pg.query('SELECT * FROM background_job_gate')).rows).toHaveLength(0);
+ await pg.exec(`UPDATE app_activity SET "seenAt"=now()-interval '6 minutes'`);
+ expect(await backgroundDue('alerts')).toBe(true);expect(await backgroundDue('alerts')).toBe(false)
+})
+it('propagates database failure instead of admitting unverified work',async()=>{
+ const execute=vi.spyOn(state.db,'execute').mockRejectedValueOnce(new Error('synthetic unavailable'));
+ try{await expect(backgroundDue('alerts')).rejects.toThrow('synthetic unavailable')}finally{execute.mockRestore()}
+})
+
+it('returns recorded activity status in one statement without rewriting a recent heartbeat',async()=>{
+ const execute=vi.spyOn(state.db,'execute');
+ try{const first=await recordAppActivity();expect(first).toMatchObject({enabled:true,active:true,intervalMinutes:15});expect(execute).toHaveBeenCalledTimes(1);
+ const second=await recordAppActivity();expect(second.lastActivity).toEqual(first.lastActivity);expect(execute).toHaveBeenCalledTimes(2)
+ }finally{execute.mockRestore()}
+})
+
+it('admits just one repeated idle claim and keeps different jobs independent',async()=>{
+ const results=await Promise.all([backgroundDue('alerts'),backgroundDue('alerts'),backgroundDue('demo')]);
+ expect(results).toEqual([true,false,true]);
+})
+it('does not touch the database when disabled and returns legacy activity status',async()=>{
+ delete process.env.BACKGROUND_ACTIVITY_GATE;const execute=vi.spyOn(state.db,'execute');
+ try{expect(await recordAppActivity()).toEqual({enabled:false,active:true,intervalMinutes:0});expect(await backgroundDue('alerts')).toBe(true);expect(execute).not.toHaveBeenCalled()}finally{execute.mockRestore()}
+})
