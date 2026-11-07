@@ -1,3 +1,4 @@
+import { waveDurationFromDays } from "./fibonacci-wave-duration";
 import { subdivisionStats } from "./fibonacci-subdivision";
 import { residenceConflict, reversalConflict } from "./fibonacci-duration-compatibility";
 import { ZONE_TO_PIVOT } from "./fibonacci-duration-definitions";
@@ -46,7 +47,8 @@ function durationOf(
     return { duration: null, reason: "Zielzone nicht erreicht" };
   if (type === "residence" && residenceConflict(e)) return {duration:null,reason:residenceConflict(e)!};
   if (type === "reversal" && reversalConflict(e)) return {duration:null,reason:reversalConflict(e)!};
-  const d = e?.durations?.[type];
+  // Reported calendar days take precedence; preserve legacy classes as fallback.
+  const d = type === "wave" ? waveDurationFromDays(e?.durationDays) ?? e?.durations?.wave : e?.durations?.[type];
   if (d)
     return d.bucket === "unknown"
       ? { duration: null, reason: "Dauer unbekannt" }

@@ -20,7 +20,7 @@ export function researchTimeModel(selected: readonly FibObservation[]) {
     for(const r of rows) {
       const t=historicalTime(r);
       if(historicalTimeError(t) || !t.start) {missing.push(r.id);continue;}
-      const b=t.start, label=`${b.date.slice(0,4)} · ${b.approximate ? 'ungefähr · ' : ''}${{day:'taggenau',month:'monatsgenau',year:'jahresgenau'}[b.precision]}`;
+      const b=t.start, label=`${b.precision === "year" ? b.date : b.date.slice(0,7)} · ${b.approximate ? 'ungefähr · ' : ''}${{day:'taggenau',month:'monatsgenau',year:'jahresgenau'}[b.precision]}`;
       const g=chronology.get(label) ?? {label,n:0,ids:[]};g.n++;g.ids.push(r.id);chronology.set(label,g);
     }
     const n=rows.length-missing.length;

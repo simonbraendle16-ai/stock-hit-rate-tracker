@@ -28,3 +28,15 @@ export function HistoricalTimeFields({value,onChange}:{value:HistoricalTime;onCh
     <BoundaryInput label="Historisches Ende" value={value.end} onChange={end=>onChange({...value,end})}/>
   </FieldGroup>;
 }
+
+/** Month-level entry; older precise/uncertain boundaries remain editable without conversion. */
+export function WaveMonthField({value,onChange}:{value:HistoricalTime;onChange:(v:HistoricalTime)=>void}) {
+  const id=useId();
+  const legacy=!!value.end || !!value.source || !!value.start && (value.start.precision !== "month" || !!value.start.approximate);
+  if(legacy) return <details><summary className="cursor-pointer text-sm font-medium">Bisheriger historischer Zeitraum · Angaben vorhanden</summary><div className="mt-3"><HistoricalTimeFields value={value} onChange={onChange}/></div></details>;
+  return <Field>
+    <FieldLabel htmlFor={id}>Wellenbeginn · Monat und Jahr</FieldLabel>
+    <Input id={id} type="month" min="0001-01" max="9999-12" value={value.start?.date ?? ""} onChange={event=>onChange({...value,start:event.target.value ? {date:event.target.value,precision:"month"} : null})}/>
+    <FieldDescription>Monat und Jahr, in dem die Welle begonnen hat. Die Dauer wird separat in Tagen erfasst. Leer = unbekannt.</FieldDescription>
+  </Field>;
+}

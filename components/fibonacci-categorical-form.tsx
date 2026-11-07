@@ -3,8 +3,9 @@ import { collectionChoices } from '@/app/actions/collection';
 
 import { SUBDIVISIONS } from "@/lib/fibonacci-subdivision";
 import { WAVE_VARIANTS, waveChoice } from "@/lib/fibonacci-wave-variants";
-import { HistoricalTimeFields } from "@/components/fibonacci-time-fields";
+import { WaveMonthField } from "@/components/fibonacci-time-fields";
 import { newEntryEvidence, entryEvidence } from "@/lib/fibonacci-entry";
+import { waveDurationFromDays } from "@/lib/fibonacci-wave-duration";
 import { historicalTime } from "@/lib/fibonacci-time";
 import { ResidenceEditor } from "@/components/fibonacci-residence";
 import { ReversalEditor } from "@/components/fibonacci-reversal";
@@ -431,17 +432,17 @@ function CategoricalFibEntry({
           </FieldSet>
           <FieldSet>
             <FieldLegend>4 · Zeitraum und Verhalten</FieldLegend>
-            <HistoricalTimeFields value={time} onChange={setTime}/>
-            <DurationChoice
-              label="Wellendauer"
-              type="wave"
-              value={evidence.durations?.wave}
-              onChange={(v) =>
-                setE({ durations: { ...evidence.durations, wave: v } })
-              }
-            />
-            <details><summary className="cursor-pointer text-sm font-medium">Genaue Dauern und Zielzonenverhalten{(evidence.durationDays != null || evidence.targetZoneReversal || evidence.targetZoneResidence || evidence.durations?.reversal || evidence.durations?.residence) ? " · Angaben vorhanden" : ""}</summary><FieldGroup className="mt-3">
-            <Field><FieldLabel htmlFor={prefix+"durationDays"}>Exakte Wellendauer · Kalendertage · optional</FieldLabel><Input id={prefix+"durationDays"} type="number" min="0" step="any" value={evidence.durationDays ?? ""} onChange={event=>setE({durationDays:event.target.value === "" ? null : Number(event.target.value)})}/><FieldDescription>Nur einen tatsächlich bekannten Wert eintragen. Für eine ungefähre Dauer genügt die Dauerklasse oben.</FieldDescription></Field>
+            <WaveMonthField value={time} onChange={setTime}/>
+            <Field>
+              <FieldLabel htmlFor={prefix+"durationDays"}>Wellendauer · Kalendertage</FieldLabel>
+              <Input id={prefix+"durationDays"} type="number" min="0.000001" step="any" value={evidence.durationDays ?? ""} onChange={event=>{
+                const days=event.target.value === "" ? null : Number(event.target.value);
+                setE({durationDays:days,durations:{...evidence.durations,wave:waveDurationFromDays(days)}});
+              }}/>
+              <FieldDescription>Die Tageszahl wird bei der Auswertung automatisch in die bisherigen Dauerklassen einsortiert. Zum Beispiel: 15 Tage → 7–30 Tage. Leer = unbekannt; Dezimalwerte sind möglich.</FieldDescription>
+            </Field>
+            {((evidence.durationDays == null && evidence.durations?.wave) || evidence.targetZoneReversal || evidence.targetZoneResidence || evidence.durations?.reversal || evidence.durations?.residence) && <details><summary className="cursor-pointer text-sm font-medium">Bisherige Dauer- und Zielzonenangaben</summary><FieldGroup className="mt-3">
+            {evidence.durationDays == null && evidence.durations?.wave && <DurationChoice label="Bisherige Wellendauerklasse" type="wave" value={evidence.durations.wave} onChange={v=>setE({durations:{...evidence.durations,wave:v}})}/>}
             {evidence.targetContact === "not_reached" ? (
               <p className="text-sm text-muted-foreground">
                 Zielzone nicht erreicht: keine Aufenthaltsdauer oder Dauer ab Zielzonenkontakt. Bereits
@@ -490,7 +491,7 @@ function CategoricalFibEntry({
                 Aufenthaltsangaben ausdrücklich entfernen
               </Button>
             )}
-            </FieldGroup></details>
+            </FieldGroup></details>}
           </FieldSet>
           <details onToggle={event=>setLinksOpen(event.currentTarget.open)}>
               <summary className="cursor-pointer text-sm font-medium">
