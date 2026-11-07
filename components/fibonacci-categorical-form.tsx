@@ -1,7 +1,7 @@
 "use client";
 import { collectionChoices } from '@/app/actions/collection';
 
-import { SUBDIVISIONS, SUBDIVISION_CONFIDENCES } from "@/lib/fibonacci-subdivision";
+import { SUBDIVISIONS } from "@/lib/fibonacci-subdivision";
 import { WAVE_VARIANTS, waveChoice } from "@/lib/fibonacci-wave-variants";
 import { HistoricalTimeFields } from "@/components/fibonacci-time-fields";
 import { newEntryEvidence, entryEvidence } from "@/lib/fibonacci-entry";
@@ -253,23 +253,7 @@ function CategoricalFibEntry({
                 }
               />
               <Choice label="Innere Unterteilung" value={evidence.subdivision ?? "unknown"} options={SUBDIVISIONS.map(v=>[v.code,v.label] as const)} onChange={v=>setE({subdivision:v as FibEvidence["subdivision"]})} />
-              <Choice label="Sicherheit der Unterteilung" value={evidence.subdivisionConfidence ?? "unbekannt"} options={SUBDIVISION_CONFIDENCES.map(v=>[v.code,v.label] as const)} onChange={v=>setE({subdivisionConfidence:v as FibEvidence["subdivisionConfidence"]})} />
               <FieldDescription className="sm:col-span-2">Unterteilung und Muster beschreiben diese Welle. Das Muster der übergeordneten Korrektur gehört zur Elternwelle. Unbekannte Angaben können offenbleiben.</FieldDescription>
-              <Choice
-                label="Sicherheit des Musters"
-                value={evidence.structureConfidence ?? "unbekannt"}
-                options={[
-                  ["unbekannt", "Unbekannt"],
-                  ["bestaetigt", "Bestätigt"],
-                  ["vermutet", "Vermutet"],
-                ]}
-                onChange={(v) =>
-                  setE({
-                    structureConfidence:
-                      v as FibEvidence["structureConfidence"],
-                  })
-                }
-              />
               <Choice
                 label="Wellengrad"
                 value={form.degree}
@@ -335,7 +319,7 @@ function CategoricalFibEntry({
             </FieldDescription>
             <ZoneChoice
               label="Erwartete Fibonacci-Zielzone"
-              defaultMode={existing ? "point" : "range"}
+              range
               value={evidence.targetZone}
               onChange={(v) => setE({ targetZone: v })}
             />
@@ -447,36 +431,6 @@ function CategoricalFibEntry({
           </FieldSet>
           <FieldSet>
             <FieldLegend>4 · Zeitraum und Verhalten</FieldLegend>
-            <FieldGroup className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <Choice
-                label="Wellenstatus"
-                value={form.status}
-                options={[
-                  ["laufend", "Laufend"],
-                  ["abgeschlossen", "Abgeschlossen"],
-                  ["unklar", "Unklar"],
-                  ["ungueltig", "Ungültig"],
-                ]}
-                onChange={(v) => set("status", v)}
-              />
-              {(
-                [
-                  ["observedOn", "Erfasst am"],
-                ] as const
-              ).map(([k, l]) => (
-                <Field key={k}>
-                  <FieldLabel htmlFor={prefix + k}>{l}</FieldLabel>
-                  <Input
-                    id={prefix + k}
-                    type="date"
-                    value={form[k]}
-                    required={k === "observedOn"}
-                    max={new Date().toISOString().slice(0, 10)}
-                    onChange={(e) => set(k, e.target.value)}
-                  />
-                </Field>
-              ))}
-            </FieldGroup>
             <HistoricalTimeFields value={time} onChange={setTime}/>
             <DurationChoice
               label="Wellendauer"
