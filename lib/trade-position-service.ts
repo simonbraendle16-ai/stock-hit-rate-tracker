@@ -1,6 +1,7 @@
 import { invalidateTradeAnalysis } from '@/lib/invalidate-trade-analysis'
 import { requireFrozenFxRate, portfolioCurrency } from '@/lib/money-currency'
 import { TradeInputError } from '@/lib/trade-input-error'
+import { hasTradePlan } from './execution-import'
 
 import { normalizePlanContext, planGaps, requireCompletePlan, demoExecutionGaps, planningSnapshot, type PlanContext } from '@/lib/plan-context'
 import { createTradeForUser } from '@/lib/create-trade-service'
@@ -415,12 +416,13 @@ async function loadTradeTargets(userId: string, tradeId: number): Promise<TradeT
 }
 
 
-async function loadOwnedTrade(userId: string, id: number): Promise<TradeRow> {
+async function loadOwnedTrade(userId: string, id: number): Promise<TradeRow & {stopLoss:number;takeProfit:number}> {
   const [t] = await db
     .select()
     .from(trade)
     .where(and(eq(trade.id, id), eq(trade.userId, userId)))
   if (!t) throw new Error('Trade nicht gefunden.')
+  if (!hasTradePlan(t)) throw new TradeInputError('Importierter Brokerbeleg ohne ursprünglichen Plan: keine manuellen Plan- oder Ausführungsänderungen.')
   return t
 }
 

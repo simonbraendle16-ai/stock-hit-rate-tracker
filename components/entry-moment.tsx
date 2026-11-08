@@ -134,7 +134,7 @@ export function EntryMoment({
         </p>
         <dl className="grid grid-cols-2 gap-x-4 gap-y-3 font-mono text-sm sm:grid-cols-4">
           <PlanRow label="Einstieg" value={fmt(trade.entryPrice)} />
-          <PlanRow label="Stop" value={fmt(trade.stopLoss)} tone="neg" />
+          <PlanRow label="Stop" value={trade.stopLoss == null ? '?' : fmt(trade.stopLoss)} tone="neg" />
           <PlanRow
             label={stufen.length > 1 ? `Ziel 1 von ${stufen.length}` : 'Ziel'}
             value={stufen.length > 0 ? fmt(stufen[0].price) : '—'}

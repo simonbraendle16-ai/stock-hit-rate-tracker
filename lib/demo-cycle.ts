@@ -1,4 +1,5 @@
 import { marketDb } from '@/lib/market-data/database'
+import { importedExecution } from './execution-import'
 import { randomUUID } from 'node:crypto'
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import { db,withDatabaseDeadline } from '@/lib/db'
@@ -54,6 +55,7 @@ async function initialWork(scope: CycleScope, asOf: number) {
   const linked = new Set(links.map(x => x.id)), results: Record<string, CycleResult> = {}, sources: Source[] = [], pending: number[] = []
   rows.sort((a,b) => Number(a.t.status !== 'aktiv') - Number(b.t.status !== 'aktiv') || Number(Boolean(a.t.demoIssue))-Number(Boolean(b.t.demoIssue)) || a.t.id-b.t.id)
   for (const {t,s} of rows) {
+    if (importedExecution(t)) { results[t.id] = {status:'broker',reason:'Importierter Brokerbeleg; keine Simulation.'}; continue }
     const gaps = t.status === 'geplant' ? demoExecutionGaps(t) : []
     const issue = demoSourceIssue(s, t.market, t.ticker) || (!s?.provider || !['yahoo','twelvedata','binance'].includes(s.provider) ? 'Bestätigter Kursanbieter fehlt.' : null)
       || (!t.quoteCurrency || !t.accountCurrency ? 'Währungszuordnung des Altbestands fehlt.' : null)
@@ -127,7 +129,7 @@ async function performDemoCycle(scope: CycleScope, trigger: 'automatic'|'manual'
       for (const tradeId of [...work.pending]) {
         if (Date.now()+12_000 > deadline) break
         const [current] = await db.select().from(trade).where(and(eq(trade.id,tradeId),eq(trade.userId,scope.userId),eq(trade.portfolioId,scope.portfolioId)))
-        if (!current || !['geplant','aktiv'].includes(current.status)) {
+        if (!current || importedExecution(current) || !['geplant','aktiv'].includes(current.status)) {
           const execution=current?await cycleBookings(scope,tradeId,cycleId!):{bookings:0,rejectedReason:null}
           results[tradeId]=execution.rejectedReason?{status:'blocked',reason:execution.rejectedReason}:execution.bookings?{status:'booked',bookings:execution.bookings,checkedAt:current.demoCheckedAt?.toISOString()??null}:{ status:'changed', reason:'Fall inzwischen geändert oder abgeschlossen.' }
           work.pending=work.pending.filter(x=>x!==tradeId); await save('process'); continue

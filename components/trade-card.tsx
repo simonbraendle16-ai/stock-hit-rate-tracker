@@ -1,6 +1,8 @@
 'use client'
 
 import { demoExecutionGaps, planGaps } from '@/lib/plan-context'
+import { importedExecution } from '@/lib/execution-import'
+import { ImportedExecutionCard } from '@/components/imported-execution-card'
 
 import { frozenFxRate } from '@/lib/money-currency'
 import { InlineNotice } from '@/components/form-frame'
@@ -167,6 +169,8 @@ export function TradeCard({
   }
 
   const isLong = t.direction === 'long'
+
+  if (importedExecution(t)) return <ImportedExecutionCard t={t} />
 
   return (
     <div
@@ -489,7 +493,7 @@ export function MoneyPanel({ t, currency = 'EUR', events = [] }: { t: TradeRow; 
           fees,
         })
       : null
-  const sl = !closed
+  const sl = !closed && t.stopLoss != null
     ? projectStopLoss({
         invested,
         entry: t.entryPrice,

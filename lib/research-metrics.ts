@@ -6,6 +6,7 @@ import {
 import { settlePosition } from "@/lib/trade-events";
 import { uniqueTrades } from "@/lib/trade-research-coverage";
 import { frozenFxRate } from "@/lib/money-currency";
+import { importedExecution } from './execution-import';
 export type MetricSample = {
   id: number;
   stockId: number | null;
@@ -24,7 +25,8 @@ export function metricSamples(
     .map((t) => {
       const es = events.get(t.id) ?? [];
       let net: number | null = null;
-      if (es.length) {
+      if (importedExecution(t)) net = tradeNetPnl(t);
+      else if (es.length) {
         const settled = settlePosition(t, es);
         if (
           settled.moneyComplete &&

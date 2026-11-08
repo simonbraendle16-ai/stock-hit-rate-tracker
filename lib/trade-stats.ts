@@ -6,6 +6,7 @@
 // keine zweite Rechenlogik daneben.
 
 import type { trade } from '@/lib/db/schema'
+import { importedExecution } from './execution-import'
 import { frozenFxRate, settledFxRate } from './money-currency'
 import {
   EMOTION_TAGS,
@@ -72,6 +73,8 @@ export function tradeFees(t: TradeRow): number {
  * Erwartungswert heraus, statt sie zu verfälschen.
  */
 export function tradeGrossPnl(t: TradeRow): number | null {
+  const imported = importedExecution(t)
+  if (imported) return imported.closeTime ? imported.gross : null
   const rate = settledFxRate(t)
   if (rate === null || t.positionSize == null || t.positionSize <= 0) return null
   if (t.result === 'breakeven' || !t.result) return 0
@@ -82,6 +85,8 @@ export function tradeGrossPnl(t: TradeRow): number | null {
 
 /** Netto-P&L: Brutto minus eingefrorene Gebühren. `null`, wenn nicht berechenbar. */
 export function tradePnl(t: TradeRow): number | null {
+  const imported = importedExecution(t)
+  if (imported) return imported.closeTime ? imported.net : null
   const gross = tradeGrossPnl(t)
   return gross === null ? null : gross - tradeFees(t)
 }
@@ -96,6 +101,7 @@ export function hasPnl(t: TradeRow): boolean {
  * Der Hebel steckt bereits in `positionSize` und wirkt daher automatisch mit.
  */
 export function tradeRisk(t: TradeRow): number {
+  if (t.stopLoss === null || importedExecution(t)) return NaN
   const rate = frozenFxRate(t)
   if (rate === null || t.positionSize == null || t.positionSize <= 0) return NaN
   const r = Math.abs(t.entryPrice - t.stopLoss) * t.positionSize * rate
@@ -198,6 +204,7 @@ function eventsOf(map: TradeEventsByTrade | undefined, id: number): TradeEventRo
 
 /** Netto-P&L eines Trades — event-aware. `null`, wenn nicht berechenbar (nur Row-Pfad). */
 export function tradeNetPnl(t: TradeRow, events: TradeEventRow[] = []): number | null {
+  if (importedExecution(t)) return tradePnl(t)
   if (events.length > 0) {
     const net = settlePosition(t, events).totalNet
     return Number.isFinite(net) ? net : null
@@ -281,7 +288,7 @@ export function medianRiskFraction(
   if (!Number.isFinite(investedCapital) || investedCapital <= 0) return null
 
   const fractions = rows
-    .filter((t) => t.tradedWithMoney && Math.abs(t.entryPrice - t.stopLoss) > 0)
+    .filter((t) => t.tradedWithMoney && t.stopLoss != null && Math.abs(t.entryPrice - t.stopLoss) > 0)
     .map((t) => {
       const events = eventsOf(eventsByTrade, t.id)
       const risk = events.length > 0 ? settlePosition(t, events).plannedRiskMoney : tradeRisk(t)
@@ -392,7 +399,7 @@ export function computeEquityStats(
   cashflows: CashflowRow[] = [],
   eventsByTrade?: TradeEventsByTrade,
 ): EquityStats {
-  const money = rows.filter((t) => t.tradedWithMoney && hasNetPnl(t, eventsOf(eventsByTrade, t.id)))
+  const money = rows.filter((t) => t.tradedWithMoney && tradeNetPnl(t, eventsOf(eventsByTrade, t.id)) !== null)
   if (!Number.isFinite(startCapital) || rows.some(t => t.tradedWithMoney && tradeNetPnl(t, eventsOf(eventsByTrade, t.id)) === null) ||
       new Set(money.map(t => t.accountCurrency)).size > 1) {
     return { startCapital, points: [], maxDrawdown: NaN, maxDrawdownPct: NaN, worstLossStreak: 0, currentLossStreak: 0 }

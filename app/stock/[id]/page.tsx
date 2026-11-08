@@ -1,3 +1,4 @@
+import {hasTradePlan} from '@/lib/execution-import'
 import { FibonacciPanel } from '@/components/fibonacci-panel'
 import { getFibonacciData } from '@/app/actions/fibonacci'
 import { auth } from '@/lib/auth'
@@ -55,7 +56,7 @@ export default async function StockDetailPage({
   const hasData = detail.total > 0
 
   // Plan-Overlay: Linien aus offenen Trades (geplant/aktiv), richtungsabhängig beschriftet.
-  const openTrades = trades.filter((t) => t.status === 'geplant' || t.status === 'aktiv')
+  const openTrades = trades.filter(hasTradePlan).filter((t) => t.status === 'geplant' || t.status === 'aktiv')
 
   // Teilziele (Etappe 13) in EINER Abfrage für alle offenen Trades — jede Stufe
   // bekommt ihre eigene Linie. Ein Staffelplan, von dem nur die erste Stufe im

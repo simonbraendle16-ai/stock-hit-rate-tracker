@@ -116,7 +116,7 @@ export function projectFriendTrades(rows: TradeRow[]): FriendTrade[] {
         // tradeRisk() gibt nie 0 zurück (Fallback size×10), der Guard ist die
         // zweite Linie, damit hier niemals durch 0 geteilt wird.
         r: isClosed && pnl !== null && risk > 0 ? pnl / risk : null,
-        plannedRR: computeRiskReward(t.entryPrice, t.stopLoss, t.takeProfit),
+        plannedRR: t.stopLoss == null || t.takeProfit == null ? null : computeRiskReward(t.entryPrice, t.stopLoss, t.takeProfit),
         followedPlan: t.followedPlan === true,
         createdAt: new Date(t.createdAt).toISOString(),
         closedAt: t.closedAt ? new Date(t.closedAt).toISOString() : null,

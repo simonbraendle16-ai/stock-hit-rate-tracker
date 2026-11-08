@@ -1,3 +1,4 @@
+import {hasTradePlan,importedExecution} from './execution-import'
 import { marketDb } from '@/lib/market-data/database'
 // Demo orders are evaluated on completed 5-minute candles, at their planned
 // prices. A durable cursor replaces the old two-hour lookback. Every batch
@@ -67,7 +68,7 @@ export async function runDemoFills(
     const brokerLinks = await db.select({ linkedTradeId: brokerOrder.linkedTradeId }).from(brokerOrder)
       .where(inArray(brokerOrder.portfolioId, ids))
     const brokerTradeIds = new Set(brokerLinks.map((row) => row.linkedTradeId))
-    trades = trades.filter((row) => !brokerTradeIds.has(row.id) &&
+    trades = trades.filter((row) => !importedExecution(row) && !brokerTradeIds.has(row.id) &&
       !(row.status === 'geplant' && demoExecutionGaps(row).length))
     // Healthy trades first so repeatedly failing symbols cannot starve the rest.
     // A shared symbol is refreshed again if a later trade needs older history.
@@ -252,6 +253,7 @@ async function verarbeiteTrade(args: {
   kerzen: Candle[]; vorherKurs: number | null; trocken: boolean; archive?: boolean; interval?: Interval; source?: { symbol: string; provider: string | null }; cycleId?: string
 }) {
   const { t } = args
+  if (!hasTradePlan(t)) throw new Error('Brokerbelege ohne Plan werden nicht simuliert.')
   let status = t.status
   let stufen = args.targetRows
   const events = [...args.events]
@@ -577,6 +579,7 @@ function ergebnisAus(netto: number): 'gewinn' | 'verlust' | 'breakeven' {
 /** Explicit, one-off recovery from authentic stored archive bars. Live scheduling stays 5min. */
 export async function repairDemoArchive(userId: string, tradeId: number, until: number, trocken = true) {
   return withTradeLock(userId, tradeId, async (t, depot) => {
+    if (!hasTradePlan(t)) throw new Error('Brokerbelege ohne Plan werden nicht simuliert.')
     if (normalizePortfolioKind(depot.kind) !== 'demo') throw new Error('Archiv-Reparatur ist nur für Demo erlaubt.')
     if (!['geplant', 'aktiv'].includes(t.status)) return { skipped: true, gap: false, zeilen: [] }
     if (!(t.positionSize != null && t.positionSize > 0)) throw new Error('Archiv-Reparatur erfordert eine bekannte Positionsgröße.')

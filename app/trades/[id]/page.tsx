@@ -1,4 +1,5 @@
 import { TradeReview } from '@/components/trade-review'
+import { importedExecution } from '@/lib/execution-import'
 import { ExecutionCorrection } from '@/components/execution-correction'
 import { TradePlanHistory } from '@/components/trade-plan-history'
 import { listTradeEventRevisions } from '@/app/actions/trade-history'
@@ -36,6 +37,16 @@ export default async function TradeDetailPage({
   const { id } = await params
   const t = await getTrade(Number(id))
   if (!t) notFound()
+
+  if (importedExecution(t)) return <div className="min-h-svh">
+    <CockpitHeader userLabel={session.user.name || session.user.email} />
+    <main id="cockpit-content" tabIndex={-1} className="mx-auto max-w-3xl space-y-4 px-4 py-6">
+      <Link href="/trades" className="text-sm text-primary">Zurück zu Trades</Link>
+      <TradeCard t={t}/>
+      <p className="panel p-4 text-sm">{t.notes}</p>
+      <Link href={`/journal?tradeId=${t.id}`} className="text-sm text-primary">Journal zu diesem Trade</Link>
+    </main>
+  </div>
 
   const [chartUrl, settings, events, targets, excursion, kontext, alerts, revisions] = await Promise.all([
     t.stockId != null ? getStockChartUrl(t.stockId) : Promise.resolve(null),

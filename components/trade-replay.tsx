@@ -1,3 +1,4 @@
+import {hasTradePlan} from '@/lib/execution-import'
 import { getCachedCandles } from '@/lib/market-data/cached'
 import { createSymbolResolver } from '@/lib/market-data/lookup'
 import type { Candle } from '@/lib/market-data/types'
@@ -27,6 +28,7 @@ const PAD = { top: 18, right: 118, bottom: 22, left: 14 }
  * vortäuschen, die es nicht gibt.
  */
 export async function TradeReplay({ t }: { t: TradeRow }) {
+  if (!hasTradePlan(t)) return null
   let candles: Candle[] = []
   let fehler: string | null = null
 

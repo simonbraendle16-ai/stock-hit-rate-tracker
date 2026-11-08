@@ -319,7 +319,7 @@ export const trade = pgTable('trade', {
   version: integer('version').notNull().default(1),
   externalRequestKey: text('externalRequestKey'),
   externalRequestHash: text('externalRequestHash'),
-  externalSource: jsonb('externalSource').$type<{ kind: string; capturedAt: string }>(),
+  externalSource: jsonb('externalSource').$type<{ kind: string; capturedAt: string; execution?: import('../execution-import').ExecutionImport }>(),
   // Das Depot, in das dieser Trade gebucht ist (Etappe 12). Pflicht — und die
   // QUELLE der Handelsart: `tradedWithMoney` weiter unten ist nur die
   // abgeleitete Schreibweise von `portfolio.kind`. Jede Auswertung filtert
@@ -342,12 +342,12 @@ export const trade = pgTable('trade', {
   // --- Plan (locked once status = aktiv) ---
   direction: text('direction').notNull(), // long | short
   entryPrice: doublePrecision('entryPrice').notNull(),
-  stopLoss: doublePrecision('stopLoss').notNull(),
+  stopLoss: doublePrecision('stopLoss'),
   // Das Kursziel — PFLICHT seit Migration 0032, und es ist die ÄUSSERSTE Stufe
   // des Plans (vorher trug es bei gestaffelten Trades die erste). Der nicht
   // verteilte Rest der Position gehört ihm. Gebaut wird der Plan ausschließlich
   // über `buildTargetPlan` (`lib/trade-targets.ts`).
-  takeProfit: doublePrecision('takeProfit').notNull(),
+  takeProfit: doublePrecision('takeProfit'),
   positionSize: doublePrecision('positionSize'),
   // Frozen planning conversion: 1 quote currency unit = rate account units.
   quoteCurrency: text('quoteCurrency'),

@@ -13,6 +13,7 @@ import type { trade, tradeEvent } from '@/lib/db/schema'
 import { directionalDiff, parseViolations } from '@/lib/trade-stats'
 import { frozenFxRate, settledFxRate } from './money-currency'
 import { receiptFromPayload } from './settlement-receipt'
+import { importedExecution } from './execution-import'
 
 export type TradeRow = import('./trade-stats').TradeRow
 export type TradeEventRow = typeof tradeEvent.$inferSelect
@@ -116,6 +117,15 @@ const EPS = 1e-9
  * der ersten Stop-Verschiebung, sonst der aktuelle Stop (nie verschoben).
  */
 export function settlePosition(t: TradeRow, events: TradeEventRow[]): PositionSettlement {
+  const imported = importedExecution(t)
+  if (imported) {
+    const closed = imported.closeTime !== null
+    return {moneyComplete:closed, openQty:closed?0:NaN, avgEntry:imported.openPrice,
+      totalEntered:NaN,totalExited:closed?NaN:0,realizedGross:imported.gross??NaN,
+      realizedExitFees:closed?-imported.commission-imported.swap:NaN,entryFees:0,
+      realizedNet:imported.net??NaN,totalNet:imported.net??NaN,plannedRiskMoney:NaN,
+      realizedR:NaN,isFullyClosed:closed,hasEvents:events.length>0}
+  }
   const withMoney = t.tradedWithMoney
   const fee = (raw: number | null | undefined) => (withMoney ? (raw ?? 0) : 0)
   const sorted = chronological(events)
@@ -135,7 +145,7 @@ export function settlePosition(t: TradeRow, events: TradeEventRow[]): PositionSe
   const realizedRate = settledFxRate(t)
   let moneyComplete = initialQty > 0 && Number.isFinite(initialQty) && Number.isFinite(initialEntry)
   const riskEntry = original?.entryPrice ?? initialEntry, riskQty = original?.positionSize ?? initialQty
-  const plannedRiskMoney = rate === null || !(riskQty > 0) ? NaN : Math.abs(riskEntry - initialStop) * riskQty * rate
+  const plannedRiskMoney = rate === null || initialStop == null || !(riskQty > 0) ? NaN : Math.abs(riskEntry - initialStop) * riskQty * rate
 
   let openQty = initialQty
   let avgEntry = initialEntry

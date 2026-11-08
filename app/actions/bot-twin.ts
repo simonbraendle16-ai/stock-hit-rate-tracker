@@ -11,6 +11,7 @@
 // täglich). Persistiert werden nur die von Hand nachgetragenen Ausgänge für die
 // Trades, bei denen es schlicht keine Kursdaten mehr gibt.
 
+import {hasTradePlan} from '@/lib/execution-import'
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { botManualOutcome, trade, tradeEvent, tradeExcursion } from '@/lib/db/schema'
@@ -153,11 +154,11 @@ const dateLabel = (d: Date | null): string =>
  * wenn zwischendurch teilverkauft wurde. `null`, wenn ein Zeitstempel fehlt.
  */
 function toExcursionInput(t: TradeRow): ExcursionInput | null {
-  if (!t.openedAt || !t.closedAt) return null
+  if (!t.openedAt || !t.closedAt || !hasTradePlan(t)) return null
   return {
     direction: t.direction === 'short' ? 'short' : 'long',
     entryPrice: t.entryPrice,
-    riskDistance: Math.abs(t.entryPrice - t.stopLoss),
+    riskDistance: Math.abs(t.entryPrice - (t.stopLoss ?? NaN)),
     fromSec: Math.floor(new Date(t.openedAt).getTime() / 1000),
     toSec: Math.floor(new Date(t.closedAt).getTime() / 1000),
   }
@@ -171,7 +172,7 @@ function toBotTrade(
   /** ANBIETER-Symbol, nicht der Ticker des Trades — siehe `createSymbolResolver`. */
   symbol: string,
 ): BotTrade | null {
-  if (!from) return null
+  if (!from || !hasTradePlan(t)) return null
   return {
     id: t.id,
     ticker: symbol,
@@ -448,7 +449,7 @@ export async function measureExcursion(
     const ohneFenster: ExcursionInput = {
       direction: t.direction === 'short' ? 'short' : 'long',
       entryPrice: t.entryPrice,
-      riskDistance: Math.abs(t.entryPrice - t.stopLoss),
+      riskDistance: Math.abs(t.entryPrice - (t.stopLoss ?? NaN)),
       fromSec: 0,
       toSec: 0,
     }
