@@ -18,6 +18,9 @@ import {normalizeAssistantTradeInput} from './assistant-trade-input'
 import {runDemoFills} from './demo-run'
 import {hashToken} from './assistant-api'
 import {POST} from '../app/api/assistant/v1/trades/import/route'
+import {POST as closeImportPOST} from '../app/api/assistant/v1/trades/[id]/execution-import/route'
+import {mutateTrade} from './trade-mutation-service'
+import {closeImportedExecution} from './execution-import-close'
 
 let pg:PGlite
 const capturedAt='2026-11-08T12:00:00Z'
@@ -25,7 +28,7 @@ const execution:ExecutionImport={broker:'match_trader',accountFingerprint:'a'.re
 const body=(id='synthetic-position')=>({portfolioId:1,ticker:'SYNTH.c',market:'sonstiges',direction:'long',capturedAt,execution:{...execution,positionId:id}})
 beforeAll(async()=>{
   pg=new PGlite();state.database=drizzle(pg,{schema});const dialect=new PgDialect()
-  for(const table of [schema.portfolio,schema.trade,schema.brokerOrder,schema.assistantApiToken]){
+  for(const table of [schema.portfolio,schema.trade,schema.brokerOrder,schema.assistantApiToken,schema.tradeEvent,schema.tradeActionRequest]){
     const c=getTableConfig(table)
     const columns=c.columns.map(col=>{
       const v=col.default,def=v===undefined?'':' DEFAULT '+(typeof v==='string'?`'${v.replaceAll("'","''")}'`:typeof v==='number'||typeof v==='boolean'?String(v):dialect.sqlToQuery(v as any).sql)
@@ -94,5 +97,46 @@ describe('outcome import without inventing an original plan',()=>{
     const created=await POST(request(token));expect(created.status).toBe(201)
     const response=await created.json();expect(response.userId).toBeUndefined();expect(response.externalRequestHash).toBeUndefined()
     expect((await POST(request(token))).status).toBe(200)
+  })
+  it('closes the same imported position, preserves the original receipt and replays safely',async()=>{
+    const raw={...body('closing-open'),execution:{...execution,positionId:'closing-open',closingUid:null,closeTime:null,closePrice:null,closeReason:null,gross:null,net:null}}
+    const {row}=await importExecution('owner',raw)
+    const receipt={import:body('closing-open'),reason:'Observed broker close'}
+    const key='00000000-0000-4000-8000-000000000001'
+    const apply=()=>mutateTrade('owner',row.id,row.version,key,'execution-import-close',receipt,t=>closeImportedExecution('owner',t,receipt))
+    const saved=await apply() as any, again=await apply() as any
+    expect(saved.id).toBe(row.id);expect(saved.version).toBe(row.version+1);expect(saved.status).toBe('abgeschlossen')
+    expect(saved.stopLoss).toBeNull();expect(saved.takeProfit).toBeNull();expect(saved.positionSize).toBeNull()
+    expect(saved.reviewStatus).toBe(row.reviewStatus);expect(saved.notes).toBe(row.notes)
+    expect(saved.externalSource.execution.net).toBe(-10.06);expect(again.id).toBe(row.id)
+    const notes=await pg.query('SELECT * FROM trade_event WHERE "tradeId"=$1',[row.id])
+    expect(notes.rows).toHaveLength(1);expect(JSON.parse(String((notes.rows[0] as {payload:string}).payload)).before).toEqual(row.externalSource)
+    const reimport=await importExecution('owner',body('closing-open'))
+    expect(reimport.created).toBe(false);expect(reimport.row.id).toBe(row.id)
+    expect(tradeNetPnl(reimport.row)).toBe(-10.06)
+  })
+  it('rejects stale versions, identity changes, different owners and closed-receipt rewrites',async()=>{
+    const raw={...body('guarded-open'),execution:{...execution,positionId:'guarded-open',closingUid:null,closeTime:null,closePrice:null,closeReason:null,gross:null,net:null}}
+    const {row}=await importExecution('owner',raw)
+    const receipt={import:body('guarded-open'),reason:'Observed close'}
+    const mutate=(owner:string,version:number,key:string,b:any)=>mutateTrade(owner,row.id,version,key,'execution-import-close',b,t=>closeImportedExecution(owner,t,b))
+    await expect(mutate('other',row.version,'guard-owner',receipt)).rejects.toThrow('nicht gefunden')
+    await expect(mutate('owner',row.version+1,'guard-version',receipt)).rejects.toThrow('inzwischen')
+    for(const executionPatch of [{positionId:'different'},{openPrice:101},{volumeLots:0.02}]){
+      await expect(mutate('owner',row.version,JSON.stringify(executionPatch),{...receipt,import:{...receipt.import,execution:{...receipt.import.execution,...executionPatch}}})).rejects.toThrow('Brokeridentität')
+    }
+    await mutate('owner',row.version,'guard-success',receipt)
+    await expect(mutate('owner',row.version+1,'guard-reclose',receipt)).rejects.toThrow('offen importierte')
+    expect((await pg.query('SELECT * FROM trade_event WHERE "tradeId"=$1',[row.id])).rows).toHaveLength(1)
+  })
+  it('requires authenticated write scope, version and key for the new close route',async()=>{
+    const {row}=await importExecution('owner',{...body('route-open-close'),execution:{...execution,positionId:'route-open-close',closingUid:null,closeTime:null,closePrice:null,closeReason:null,gross:null,net:null}})
+    const content={import:body('route-open-close'),reason:'Broker history'}
+    const request=(token?:string,withHeaders=true)=>new NextRequest('http://localhost/api/assistant/v1/trades/'+row.id+'/execution-import',{method:'POST',headers:{'content-type':'application/json',...(token?{authorization:'Bearer '+token}:{}),...(withHeaders?{'X-Expected-Version':String(row.version),'Idempotency-Key':'00000000-0000-4000-8000-000000000003'}:{})},body:JSON.stringify(content)})
+    const ctx={params:Promise.resolve({id:String(row.id)})}
+    expect((await closeImportPOST(request(),ctx)).status).toBe(401)
+    expect((await closeImportPOST(request('sat_'+'r'.repeat(43)),ctx)).status).toBe(403)
+    expect((await closeImportPOST(request('sat_'+'t'.repeat(43),false),ctx)).status).toBe(400)
+    expect((await closeImportPOST(request('sat_'+'t'.repeat(43)),ctx)).status).toBe(200)
   })
 })
