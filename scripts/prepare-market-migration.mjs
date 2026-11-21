@@ -11,7 +11,7 @@ if((aIdentity.port||'5432')===(bIdentity.port||'5432')&&aIdentity.pathname===bId
 const a=new Client({connectionString:aUrl,connectionTimeoutMillis:2000,statement_timeout:60000}),b=new Client({connectionString:bUrl,connectionTimeoutMillis:2000,statement_timeout:60000})
 try{await a.connect();await b.connect()
  if(args[0]==='schema'){
-  for(const [client,files] of [[a,['drizzle-market-core/0001_control.sql']],[b,['drizzle-market/0001_market.sql','drizzle-market/0002_control.sql']]])
+  for(const [client,files] of [[a,['drizzle-market-core/0001_control.sql']],[b,['drizzle-market/0001_market.sql','drizzle-market/0002_control.sql','drizzle-market/0003_daily_sheet.sql']]])
    for(const file of files)await client.query(readFileSync(new URL('../'+file,import.meta.url),'utf8'))
   console.log('Getrennte lokale Schemata vorbereitet; keine Umschaltung.')
  }else{

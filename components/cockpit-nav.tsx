@@ -23,6 +23,7 @@ const items = [
   { href: '/trainer', label: 'Trainer', icon: Clapperboard },
   { href: '/trades', label: 'Trades', icon: ListChecks },
   { href: '/journal', label: 'Journal', icon: BookOpenText },
+  { href: '/daily-sheet', label: 'Daily Sheet', icon: ListChecks },
   { href: '/collection?fib.basis=1', label: 'Datensammlung', icon: BookOpenText },
   { href: '/analysis#fibonacci', label: 'Wellenstatistik', icon: Target },
   { href: '/forecasts', label: 'Prognoseprüfung', icon: LineChart },

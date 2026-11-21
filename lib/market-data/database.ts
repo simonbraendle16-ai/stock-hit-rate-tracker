@@ -10,14 +10,18 @@ let targetPool: Pool | undefined
 const configured = { MARKET_DATA_ROUTING_VERSION: process.env.MARKET_DATA_ROUTING_VERSION,
   MARKET_DATA_LOCATION: process.env.MARKET_DATA_LOCATION, MARKET_DATABASE_URL: process.env.MARKET_DATABASE_URL,
   DATABASE_URL: process.env.DATABASE_URL }
+export function projectBPool(): Pool {
+  if (!targetPool) {
+    const location = marketLocation({ ...configured, MARKET_DATA_LOCATION: 'B', MARKET_DATA_ROUTING_VERSION: '1' })
+    targetPool = new Pool({ connectionString: location.connectionString, ...MARKET_POOL_OPTIONS })
+    targetPool.on('error', () => { lastPoolError = true })
+  }
+  return targetPool
+}
 function database(): typeof db {
   const location = marketLocation(configured)
   if (location.location === 'A') return db
-  if (!target) {
-    targetPool = new Pool({ connectionString: location.connectionString, ...MARKET_POOL_OPTIONS })
-    targetPool.on('error', () => { lastPoolError = true })
-    target = drizzle(targetPool, { schema: { candleCache, candleSeries, candleCollectRun } })
-  }
+  target ??= drizzle(projectBPool(), { schema: { candleCache, candleSeries, candleCollectRun } })
   // B never inherits the AsyncLocalStorage transaction in A. No distributed commit.
   return target as typeof db
 }
