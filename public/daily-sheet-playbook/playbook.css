@@ -74,3 +74,87 @@ main{padding-top:clamp(32px,5vw,72px)}
 .risk .scale i{position:absolute;top:50%;width:2px;height:18px;background:#ccb8f1;transform:translate(-50%,-50%)}
 .risk .scale i:first-child{left:16%}.risk .scale i:last-child{left:84%}
 .risk-range{grid-template-columns:32% 36% 32%;gap:0}.risk-range span:first-child,.risk-range span:last-child{text-align:center}
+
+.choose-panel {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: clamp(22px, 5vw, 64px);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: radial-gradient(circle at 88% 100%, #4a2380, transparent 55%), #08050f;
+  color: white;
+}
+.choose-panel > h2 {
+  font: 800 clamp(1.8rem, 5vw, 3.5rem)/1.05 "Segoe UI", sans-serif;
+  letter-spacing: -0.02em;
+  color: #c4a8ff;
+}
+.choose-panel > h2 span { color: white; }
+.choose-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(24px, 7vw, 112px);
+}
+.choose-option { --choice-color: #00ff6a; }
+.choose-option + .choose-option { --choice-color: #ff2d4a; }
+.choose-option h3 {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  color: var(--choice-color);
+  font-size: clamp(1.1rem, 3vw, 1.875rem);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.choose-option h3::after {
+  content: "";
+  flex: 1;
+  height: 2px;
+  background: currentColor;
+  opacity: 0.5;
+}
+.choose-option figure {
+  position: relative;
+  margin: 0;
+  overflow: hidden;
+  border: 3px solid var(--choice-color);
+  border-radius: 12px;
+}
+.choose-option img {
+  display: block;
+  width: 100%;
+  height: clamp(150px, 22vw, 200px);
+  object-fit: cover;
+}
+.choose-option:first-child figure:first-of-type img { object-position: center 10%; }
+.choose-option:nth-child(2) figure:first-of-type img { object-position: center 45%; }
+.choose-option figcaption {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: linear-gradient(to top, #000d, transparent 58%);
+}
+.choose-option small {
+  padding: 2px 12px;
+  border-radius: 999px;
+  background: var(--choice-color);
+  color: black;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.choose-option strong { font-size: clamp(1.15rem, 3vw, 2rem); line-height: 1.15; }
+.choose-arrow {
+  display: block;
+  color: var(--choice-color);
+  font-size: 2.8rem;
+  line-height: 1.45;
+  text-align: center;
+}
+@media (max-width: 680px) {
+  .choose-options { grid-template-columns: 1fr; }
+}

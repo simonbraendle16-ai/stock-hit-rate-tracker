@@ -42,7 +42,7 @@ const questions = [
 const moodMarkup = `<form class="mood-form" id="mood-form">${questions.map(([question,options],i)=>`<label>${question}<select required name="answer-${i}"><option value="">Bitte auswählen</option>${options.map(([label],j)=>`<option value="${j}">${label}</option>`).join('')}</select></label>`).join('')}<button>Passende Zustände anzeigen</button></form><p id="mood-suggestions" role="status">Beantworte die drei Fragen oder wähle direkt im Spektrum.</p><div class="spectrum-scroll" tabindex="0" aria-label="Gefühlsspektrum, horizontal scrollbar"><div class="spectrum-board"><h3>Das emotionale Spektrum beim Trading</h3><div class="spectrum">${states.map(([name,color,signs,hint],i)=>`<div class="state" style="--state:${color}"><label><input type="checkbox" value="${i}"><span>${name}</span></label><p class="muted">${signs}</p><small>${hint}</small></div>`).join('')}</div><div class="spectrum-transitions" aria-label="Beispiele für emotionale Übergänge"><div>Impulsiver Verlusttrade</div><div>Eine Gelegenheit taucht auf</div><div>Der Trade wird ausgestoppt</div><div>Trade außerhalb des Plans</div><div>Profitablen Trade ausgelassen</div><div>Großer Gewinn am Ziel</div></div></div></div><small id="mood-status" role="status"></small>`;
 const content = sections.map(renderSection).join('');
 
-app.innerHTML = `<section aria-labelledby="mood-title"><h1 id="mood-title">Wie fühle ich mich heute?</h1>${moodMarkup}</section>${content}`;
+app.insertAdjacentHTML('afterbegin', `<section aria-labelledby="mood-title"><h1 id="mood-title">Wie fühle ich mich heute?</h1>${moodMarkup}</section>${content}`);
 const moodInputs = [...app.querySelectorAll('input[type=checkbox]')];
 const moodStatus = document.querySelector('#mood-status');
 
